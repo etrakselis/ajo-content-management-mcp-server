@@ -1,0 +1,540 @@
+export const landingPageHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AJO Content MCP Server</title>
+  <style>
+    :root {
+      --adobe-red: #FA0F00;
+      --adobe-dark: #2C2C2C;
+      --adobe-mid: #4A4A4A;
+      --adobe-light: #F8F7F5;
+      --adobe-border: #E5E3DE;
+      --adobe-success: #268E6C;
+      --adobe-warn: #E68619;
+      --surface: #FFFFFF;
+      --font-display: 'Adobe Clean', 'Inter', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-display);
+      background: var(--adobe-light);
+      color: var(--adobe-dark);
+      min-height: 100vh;
+    }
+    header {
+      background: var(--adobe-dark);
+      padding: 0 40px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: white;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .logo-mark {
+      width: 32px;
+      height: 32px;
+      background: var(--adobe-red);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 16px;
+      color: white;
+      border-radius: 4px;
+    }
+    .badge {
+      font-size: 11px;
+      background: rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.8);
+      padding: 2px 8px;
+      border-radius: 100px;
+      font-weight: 500;
+    }
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    .hero {
+      margin-bottom: 40px;
+    }
+    .hero h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--adobe-dark);
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin-bottom: 10px;
+    }
+    .hero p {
+      font-size: 15px;
+      color: var(--adobe-mid);
+      line-height: 1.6;
+    }
+    .step-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--adobe-red);
+      margin-bottom: 8px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--adobe-border);
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .card p {
+      font-size: 13px;
+      color: var(--adobe-mid);
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+    .dropzone {
+      border: 2px dashed var(--adobe-border);
+      border-radius: 6px;
+      padding: 32px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s;
+      position: relative;
+    }
+    .dropzone:hover, .dropzone.drag-over {
+      border-color: var(--adobe-red);
+      background: rgba(250, 15, 0, 0.02);
+    }
+    .dropzone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .dropzone-icon {
+      width: 40px;
+      height: 40px;
+      margin: 0 auto 12px;
+      background: var(--adobe-light);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .dropzone-icon svg { width: 20px; height: 20px; opacity: 0.5; }
+    .dropzone-text { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
+    .dropzone-sub { font-size: 12px; color: var(--adobe-mid); }
+    .file-accepted {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      background: rgba(38, 142, 108, 0.06);
+      border: 1px solid rgba(38, 142, 108, 0.25);
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--adobe-success);
+    }
+    .file-accepted.show { display: flex; }
+    .file-accepted svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .field-group { display: flex; flex-direction: column; gap: 6px; }
+    label { font-size: 13px; font-weight: 500; }
+    input[type="text"] {
+      height: 40px;
+      border: 1px solid var(--adobe-border);
+      border-radius: 6px;
+      padding: 0 12px;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+      width: 100%;
+    }
+    input[type="text"]:focus { border-color: var(--adobe-red); }
+    .hint { font-size: 12px; color: var(--adobe-mid); }
+    .btn-primary {
+      width: 100%;
+      height: 44px;
+      background: var(--adobe-red);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: opacity 0.15s;
+      font-family: inherit;
+    }
+    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary:hover:not(:disabled) { opacity: 0.88; }
+    .status-panel {
+      display: none;
+      background: var(--surface);
+      border: 1px solid var(--adobe-border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .status-panel.show { display: block; }
+    .status-header {
+      padding: 16px 24px;
+      background: rgba(38, 142, 108, 0.06);
+      border-bottom: 1px solid var(--adobe-border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-dot {
+      width: 8px; height: 8px;
+      background: var(--adobe-success);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .status-title { font-size: 14px; font-weight: 600; color: var(--adobe-success); }
+    .endpoints {
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .endpoint-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .endpoint-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--adobe-mid); width: 64px; padding-top: 2px; flex-shrink: 0; }
+    .endpoint-value { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; color: var(--adobe-dark); }
+    .copy-btn {
+      margin-left: auto;
+      padding: 4px 10px;
+      border: 1px solid var(--adobe-border);
+      background: white;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      font-family: inherit;
+      color: var(--adobe-mid);
+      flex-shrink: 0;
+    }
+    .copy-btn:hover { background: var(--adobe-light); }
+    .divider { height: 1px; background: var(--adobe-border); margin: 0 24px; }
+    .connect-section { padding: 20px 24px; }
+    .connect-section h3 { font-size: 13px; font-weight: 600; margin-bottom: 14px; }
+    .client-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+    .tab-btn {
+      padding: 5px 12px;
+      border: 1px solid var(--adobe-border);
+      background: white;
+      border-radius: 100px;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: inherit;
+      color: var(--adobe-mid);
+      transition: all 0.1s;
+    }
+    .tab-btn.active { background: var(--adobe-dark); border-color: var(--adobe-dark); color: white; }
+    .code-block {
+      background: var(--adobe-dark);
+      border-radius: 6px;
+      padding: 14px 16px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      color: #E5E3DE;
+      overflow-x: auto;
+      white-space: pre;
+      line-height: 1.6;
+      position: relative;
+    }
+    .code-copy {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      padding: 4px 8px;
+      background: rgba(255,255,255,0.1);
+      border: none;
+      border-radius: 4px;
+      color: rgba(255,255,255,0.6);
+      font-size: 11px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .code-copy:hover { background: rgba(255,255,255,0.18); color: white; }
+    .error-msg { font-size: 13px; color: #C9252D; padding: 12px; background: rgba(201,37,45,0.06); border-radius: 6px; display: none; }
+    .error-msg.show { display: block; }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-mark">A</div>
+      AJO Content MCP Server
+    </div>
+    <span class="badge" id="statusBadge">Not configured</span>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Connect to Adobe Journey Optimizer</h1>
+      <p>Upload your credentials file and configure a sandbox to activate the MCP server. LLM clients can then manage content templates and fragments via standardized tools.</p>
+    </div>
+
+    <!-- Step 1: Credentials -->
+    <div class="step-label">Step 1 — Credentials</div>
+    <div class="card">
+      <h2>Upload environment file</h2>
+      <p>Drag and drop your <code>environment-variables.json</code> file or click to browse. Credentials are stored in memory only — never written to disk or logged.</p>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept=".json" />
+        <div class="dropzone-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+          </svg>
+        </div>
+        <div class="dropzone-text">Drop environment-variables.json here</div>
+        <div class="dropzone-sub">or click to browse</div>
+      </div>
+      <div class="file-accepted" id="fileAccepted">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M20 6L9 17l-5-5"/>
+        </svg>
+        <span id="fileName">File loaded</span>
+      </div>
+    </div>
+
+    <!-- Step 2: Sandbox -->
+    <div class="step-label">Step 2 — Sandbox</div>
+    <div class="card">
+      <h2>Select sandbox</h2>
+      <p>Enter the Adobe Experience Platform sandbox name to target. All API calls will be scoped to this sandbox.</p>
+      <div class="field-group">
+        <label for="sandboxInput">Sandbox name</label>
+        <input type="text" id="sandboxInput" placeholder="e.g. prod or cjm-team" autocomplete="off" />
+        <span class="hint">Find this in the Adobe Experience Platform sandbox switcher.</span>
+      </div>
+    </div>
+
+    <!-- Step 3: Start -->
+    <div class="step-label">Step 3 — Launch</div>
+    <div class="card">
+      <div class="error-msg" id="errorMsg"></div>
+      <button class="btn-primary" id="startBtn" disabled>
+        Start MCP Server
+      </button>
+    </div>
+
+    <!-- Status Panel (shown after start) -->
+    <div class="status-panel" id="statusPanel">
+      <div class="status-header">
+        <div class="status-dot"></div>
+        <span class="status-title">MCP Server Active</span>
+      </div>
+      <div class="endpoints">
+        <div class="endpoint-row">
+          <span class="endpoint-label">HTTP</span>
+          <span class="endpoint-value" id="httpEndpoint">http://localhost:3000/mcp</span>
+          <button class="copy-btn" onclick="copyText('httpEndpoint')">Copy</button>
+        </div>
+        <div class="endpoint-row">
+          <span class="endpoint-label">STDIO</span>
+          <span class="endpoint-value">docker exec -i ajo-content-mcp node dist/server/index.js --stdio</span>
+          <button class="copy-btn" onclick="copyText('stdioCmd')">Copy</button>
+        </div>
+        <span id="stdioCmd" style="display:none">docker exec -i ajo-content-mcp node dist/server/index.js --stdio</span>
+      </div>
+      <div class="divider"></div>
+      <div class="connect-section">
+        <h3>Connection instructions</h3>
+        <div class="client-tabs">
+          <button class="tab-btn active" onclick="showClient('claude-code')">Claude Code</button>
+          <button class="tab-btn" onclick="showClient('claude-desktop')">Claude Desktop</button>
+          <button class="tab-btn" onclick="showClient('cursor')">Cursor</button>
+          <button class="tab-btn" onclick="showClient('continue')">Continue</button>
+          <button class="tab-btn" onclick="showClient('generic')">Generic</button>
+        </div>
+        <div class="code-block" id="clientCode">
+          <button class="code-copy" onclick="copyCode()">Copy</button>
+          <span id="codeContent"></span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let credentials = null;
+    let serverUrl = window.location.origin;
+
+    const configs = {
+      'claude-code': () => \`# Add to your Claude Code MCP config (~/.claude/mcp.json):
+{
+  "mcpServers": {
+    "ajo-content": {
+      "type": "http",
+      "url": "\${serverUrl}/mcp"
+    }
+  }
+}\`,
+      'claude-desktop': () => \`# Add to Claude Desktop config:
+# macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
+{
+  "mcpServers": {
+    "ajo-content": {
+      "command": "docker",
+      "args": ["exec", "-i", "ajo-content-mcp", "node", "dist/server/index.js", "--stdio"]
+    }
+  }
+}\`,
+      'cursor': () => \`# Cursor Settings → MCP Servers → Add:
+{
+  "ajo-content": {
+    "url": "\${serverUrl}/mcp",
+    "type": "http"
+  }
+}\`,
+      'continue': () => \`# .continue/config.json:
+{
+  "experimental": {
+    "modelContextProtocolServers": [{
+      "transport": {
+        "type": "streamableHttp",
+        "url": "\${serverUrl}/mcp"
+      }
+    }]
+  }
+}\`,
+      'generic': () => \`# HTTP Streamable MCP endpoint:
+\${serverUrl}/mcp
+
+# STDIO (via Docker):
+docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
+    };
+
+    function showClient(id) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().replace(' ', '-') === id || (id === 'claude-code' && b.textContent === 'Claude Code') || (id === 'claude-desktop' && b.textContent === 'Claude Desktop')));
+      // simpler active toggle
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById('codeContent').textContent = configs[id]();
+    }
+
+    function copyText(id) {
+      const el = document.getElementById(id);
+      navigator.clipboard.writeText(el.textContent);
+    }
+
+    function copyCode() {
+      navigator.clipboard.writeText(document.getElementById('codeContent').textContent);
+    }
+
+    // Init code display
+    setTimeout(() => {
+      document.getElementById('codeContent').textContent = configs['claude-code']();
+    }, 100);
+
+    // File drop/select
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+
+    ['dragenter', 'dragover'].forEach(e => {
+      dropzone.addEventListener(e, (ev) => { ev.preventDefault(); dropzone.classList.add('drag-over'); });
+    });
+    ['dragleave', 'drop'].forEach(e => {
+      dropzone.addEventListener(e, () => dropzone.classList.remove('drag-over'));
+    });
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+
+    function handleFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          credentials = JSON.parse(e.target.result);
+          document.getElementById('fileAccepted').classList.add('show');
+          document.getElementById('fileName').textContent = file.name + ' — ' + (credentials.values?.length || 0) + ' values';
+          dropzone.style.display = 'none';
+          checkReady();
+        } catch {
+          showError('Invalid JSON file. Please check the file format.');
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    document.getElementById('sandboxInput').addEventListener('input', checkReady);
+
+    function checkReady() {
+      const sandbox = document.getElementById('sandboxInput').value.trim();
+      document.getElementById('startBtn').disabled = !credentials || !sandbox;
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('errorMsg');
+      el.textContent = msg;
+      el.classList.add('show');
+    }
+
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('startBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<div class="spinner"></div> Authenticating...';
+      document.getElementById('errorMsg').classList.remove('show');
+
+      const sandbox = document.getElementById('sandboxInput').value.trim();
+
+      try {
+        const res = await fetch('/api/configure', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credentials, sandboxName: sandbox })
+        });
+        const data = await res.json();
+
+        if (!data.success) {
+          showError(data.error || 'Configuration failed.');
+          btn.disabled = false;
+          btn.innerHTML = 'Start MCP Server';
+          return;
+        }
+
+        document.getElementById('statusBadge').textContent = sandbox + ' · Active';
+        document.getElementById('httpEndpoint').textContent = serverUrl + '/mcp';
+        document.getElementById('statusPanel').classList.add('show');
+        document.getElementById('codeContent').textContent = configs['claude-code']();
+        btn.innerHTML = '✓ Server Active';
+        btn.style.background = 'var(--adobe-success)';
+      } catch (err) {
+        showError('Network error: ' + err.message);
+        btn.disabled = false;
+        btn.innerHTML = 'Start MCP Server';
+      }
+    });
+  </script>
+</body>
+</html>`;

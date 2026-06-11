@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+tests/
+*.env
+.env*
+environment-variables.json
+*.log
+.git/
+README.md
