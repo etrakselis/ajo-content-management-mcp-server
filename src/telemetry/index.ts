@@ -20,7 +20,9 @@ export const logger = winston.createLogger({
     })()
   ),
   transports: [
-    new winston.transports.Console({
+    // All logs go to stderr — stdout is reserved for the STDIO MCP transport
+    new winston.transports.Stream({
+      stream: process.stderr,
       format: winston.format.combine(
         winston.format.colorize(),
         winston.format.simple()

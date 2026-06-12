@@ -12,11 +12,12 @@ import {
 import { toolCallCounter, toolCallDuration, createRequestLogger } from '../telemetry/index.js';
 
 function notConfiguredError() {
+  const port = process.env.PORT || '3000';
   return {
     success: false,
     error: {
       code: 'NOT_CONFIGURED',
-      message: 'MCP server is not configured. Please upload credentials and select a sandbox first.',
+      message: `MCP server is not configured. Open http://localhost:${port} in your browser, upload your credentials JSON file, and enter your sandbox name to get started.`,
       details: {}
     }
   };
@@ -225,7 +226,7 @@ export async function handleUpdateContentTemplate(args: unknown) {
     const { templateId, etag, ...payload } = parsed.data;
     try {
       const result = await updateTemplate(templateId, payload, etag);
-      return { success: true, ...result };
+      return { ...result, success: true };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -314,7 +315,7 @@ export async function handleDeleteContentTemplate(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const result = await deleteTemplate(parsed.data.templateId);
-      return { success: true, ...result };
+      return { ...result, success: true };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }

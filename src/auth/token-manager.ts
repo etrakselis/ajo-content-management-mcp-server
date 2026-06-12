@@ -120,6 +120,12 @@ export class TokenManager {
     this.cache = null;
   }
 
+  reset(): void {
+    this.credentials = null;
+    this.cache = null;
+    this.refreshPromise = null;
+  }
+
   getStatus(): { configured: boolean; tokenCached: boolean; expiresAt?: string } {
     return {
       configured: this.credentials !== null,

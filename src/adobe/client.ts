@@ -81,6 +81,11 @@ export function isClientConfigured(): boolean {
   return clientConfig !== null && httpClient !== null;
 }
 
+export function resetAdobeClient(): void {
+  clientConfig = null;
+  httpClient = null;
+}
+
 function getClient(): AxiosInstance {
   if (!httpClient) throw new Error('Adobe API client not configured');
   return httpClient;

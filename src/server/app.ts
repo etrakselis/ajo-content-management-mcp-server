@@ -4,7 +4,8 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
 import { tokenManager, AdobeCredentials } from '../auth/token-manager.js';
-import { configureAdobeClient } from '../adobe/client.js';
+import axios from 'axios';
+import { configureAdobeClient, resetAdobeClient, listTemplates } from '../adobe/client.js';
 import { CredentialsFileSchema } from '../validation/schemas.js';
 import { createMcpServer, createHttpTransport } from '../mcp/server.js';
 import { logger, metricsRegistry } from '../telemetry/index.js';
@@ -83,7 +84,7 @@ export function createExpressApp(): express.Application {
 
   // ─── Configuration API ────────────────────────────────────────────────────
 
-  app.post('/api/configure', authLimiter, (req: Request, res: Response) => {
+  app.post('/api/configure', authLimiter, async (req: Request, res: Response) => {
     const { credentials, sandboxName } = req.body;
 
     if (!credentials || !sandboxName) {
@@ -135,16 +136,62 @@ export function createExpressApp(): express.Application {
       });
     }
 
-    // Configure token manager and Adobe client
+    // Apply configuration so we can run live validation calls
     tokenManager.setCredentials(creds as AdobeCredentials);
-
     configureAdobeClient({
       sandboxName,
       imsOrg: creds.IMS_ORG!,
       apiKey: creds.API_KEY!
     });
 
-    logger.info('Server configured', {
+    // ── Step 1: validate credentials by acquiring an IMS token ────────────────
+    try {
+      await tokenManager.getToken();
+    } catch (err) {
+      tokenManager.reset();
+      resetAdobeClient();
+      const detail = err instanceof Error ? err.message : String(err);
+      logger.warn('Credential validation failed during configure', { error: detail });
+      return res.status(401).json({
+        success: false,
+        error: `Invalid credentials: ${detail}. Check your CLIENT_SECRET, API_KEY, and TECHNICAL_ACCOUNT_ID.`
+      });
+    }
+
+    // ── Step 2: validate sandbox by making a lightweight read call ────────────
+    try {
+      await listTemplates({ limit: 1 });
+    } catch (err) {
+      tokenManager.reset();
+      resetAdobeClient();
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status;
+        const title = err.response?.data?.title || err.response?.data?.message || err.message;
+        if (status === 403) {
+          return res.status(400).json({
+            success: false,
+            error: `Sandbox "${sandboxName}" not found or your API key does not have AJO Content permissions for it. Verify the sandbox name in Adobe Experience Platform.`
+          });
+        }
+        if (status === 401) {
+          return res.status(401).json({
+            success: false,
+            error: `Access token was rejected by the API (401). Check that your API key and IMS org are correct.`
+          });
+        }
+        return res.status(400).json({
+          success: false,
+          error: `Sandbox validation failed (${status}): ${title}`
+        });
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      return res.status(400).json({
+        success: false,
+        error: `Sandbox validation failed: ${detail}`
+      });
+    }
+
+    logger.info('Server configured and validated', {
       sandboxName,
       imsOrg: creds.IMS_ORG,
       hasClientSecret: !!(creds.CLIENT_SECRET && creds.CLIENT_SECRET !== 'placeholder123')
@@ -172,30 +219,15 @@ export function createExpressApp(): express.Application {
     max: 500
   });
 
-  const mcpServer = createMcpServer();
-  const activeTransports: Map<string, ReturnType<typeof createHttpTransport>> = new Map();
-
   app.all('/mcp', mcpLimiter, async (req: Request, res: Response) => {
     try {
-      const sessionId = req.headers['mcp-session-id'] as string | undefined;
-      let transport: ReturnType<typeof createHttpTransport>;
-
-      if (sessionId && activeTransports.has(sessionId)) {
-        transport = activeTransports.get(sessionId)!;
-      } else {
-        transport = createHttpTransport();
-        const sid = (transport as unknown as { sessionId?: string }).sessionId;
-        if (sid) activeTransports.set(sid, transport);
-
-        await mcpServer.connect(transport);
-
-        transport.onclose = () => {
-          const tsid = (transport as unknown as { sessionId?: string }).sessionId;
-          if (tsid) activeTransports.delete(tsid);
-        };
-      }
-
-      await transport.handleRequest(req, res);
+      // Stateless mode: each request gets its own server + transport instance.
+      // The SDK does not allow one server connected to multiple transports, and
+      // Claude Code uses stateless HTTP (no session handshake), so we match that.
+      const mcpServer = createMcpServer();
+      const transport = createHttpTransport();
+      await mcpServer.connect(transport);
+      await transport.handleRequest(req, res, req.body);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error('MCP transport error', { error: msg });

@@ -3,17 +3,15 @@ import { startStdioServer } from '../mcp/server.js';
 import { logger } from '../telemetry/index.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const isStdio = process.argv.includes('--stdio');
 
 async function main() {
-  if (isStdio) {
-    // STDIO transport mode for Claude Desktop, Claude Code, Cursor, etc.
-    logger.info('Starting MCP server in STDIO mode');
-    await startStdioServer();
-    return;
-  }
+  // STDIO transport — must be started before the HTTP server so the event loop is
+  // already listening on stdin before any async I/O can race with it.
+  // stdout is reserved exclusively for the STDIO MCP protocol; all other output
+  // (logs, banner) goes to stderr.
+  await startStdioServer();
 
-  // HTTP server mode
+  // HTTP streaming transport
   const app = createExpressApp();
 
   const server = app.listen(PORT, () => {
@@ -24,19 +22,20 @@ async function main() {
       health: `http://localhost:${PORT}/health`
     });
 
-    console.log(`
+    process.stderr.write(`
 ╔══════════════════════════════════════════════════════════╗
 ║         AJO Content MCP Server — Ready                  ║
 ╠══════════════════════════════════════════════════════════╣
 ║  UI      →  http://localhost:${PORT}                       ║
-║  MCP     →  http://localhost:${PORT}/mcp                   ║
+║  MCP     →  http://localhost:${PORT}/mcp (HTTP streaming) ║
+║  MCP     →  stdin / stdout        (STDIO)               ║
 ║  Health  →  http://localhost:${PORT}/health                ║
 ║  Metrics →  http://localhost:${PORT}/metrics               ║
 ╠══════════════════════════════════════════════════════════╣
 ║  Open the UI to upload credentials and configure the    ║
 ║  sandbox before connecting MCP clients.                 ║
 ╚══════════════════════════════════════════════════════════╝
-    `);
+\n`);
   });
 
   // ─── Graceful Shutdown ─────────────────────────────────────────────────────

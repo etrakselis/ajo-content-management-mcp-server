@@ -205,14 +205,19 @@ export function createMcpServer(): Server {
 export async function startStdioServer(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
+
+  transport.onclose = () => {
+    logger.info('STDIO transport closed (no client connected or client disconnected)');
+  };
+
   await server.connect(transport);
-  logger.info('MCP server running on STDIO transport');
+  logger.info('MCP STDIO transport active');
 }
 
 // ─── HTTP Transport ───────────────────────────────────────────────────────────
 
 export function createHttpTransport() {
   return new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => `session-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    sessionIdGenerator: undefined, // stateless — no session tracking, compatible with Claude Code
   });
 }

@@ -360,10 +360,8 @@ export const landingPageHtml = `<!DOCTYPE html>
         </div>
         <div class="endpoint-row">
           <span class="endpoint-label">STDIO</span>
-          <span class="endpoint-value">docker exec -i ajo-content-mcp node dist/server/index.js --stdio</span>
-          <button class="copy-btn" onclick="copyText('stdioCmd')">Copy</button>
+          <span class="endpoint-value">stdin / stdout (always active alongside HTTP)</span>
         </div>
-        <span id="stdioCmd" style="display:none">docker exec -i ajo-content-mcp node dist/server/index.js --stdio</span>
       </div>
       <div class="divider"></div>
       <div class="connect-section">
@@ -403,7 +401,7 @@ export const landingPageHtml = `<!DOCTYPE html>
   "mcpServers": {
     "ajo-content": {
       "command": "docker",
-      "args": ["exec", "-i", "ajo-content-mcp", "node", "dist/server/index.js", "--stdio"]
+      "args": ["run", "--rm", "-i", "-p", "3000:3000", "ajo-content-mcp"]
     }
   }
 }\`,
@@ -502,11 +500,22 @@ docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
 
     document.getElementById('startBtn').addEventListener('click', async () => {
       const btn = document.getElementById('startBtn');
+      const errorEl = document.getElementById('errorMsg');
       btn.disabled = true;
-      btn.innerHTML = '<div class="spinner"></div> Authenticating...';
-      document.getElementById('errorMsg').classList.remove('show');
+      errorEl.classList.remove('show');
 
       const sandbox = document.getElementById('sandboxInput').value.trim();
+
+      const steps = [
+        'Validating credentials…',
+        'Validating sandbox…'
+      ];
+      let stepIndex = 0;
+      btn.innerHTML = \`<div class="spinner"></div> \${steps[0]}\`;
+      const stepTimer = setInterval(() => {
+        stepIndex = Math.min(stepIndex + 1, steps.length - 1);
+        btn.innerHTML = \`<div class="spinner"></div> \${steps[stepIndex]}\`;
+      }, 2500);
 
       try {
         const res = await fetch('/api/configure', {
@@ -514,6 +523,7 @@ docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ credentials, sandboxName: sandbox })
         });
+        clearInterval(stepTimer);
         const data = await res.json();
 
         if (!data.success) {
@@ -530,6 +540,7 @@ docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
         btn.innerHTML = '✓ Server Active';
         btn.style.background = 'var(--adobe-success)';
       } catch (err) {
+        clearInterval(stepTimer);
         showError('Network error: ' + err.message);
         btn.disabled = false;
         btn.innerHTML = 'Start MCP Server';

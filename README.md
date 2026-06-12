@@ -37,11 +37,160 @@ This MCP server bridges LLM clients (Claude, Cursor, Continue, Codex) with the A
 
 ---
 
+## Example Prompts
+
+Once your LLM client is connected to this MCP server, you can talk to it in plain language. Below are ready-to-use prompts organised by what you're trying to do — copy them directly or use them as inspiration.
+
+---
+
+### 🔍 Browsing & Discovery
+
+**List everything**
+> "Show me all the content templates in this sandbox."
+
+> "List all content fragments, sorted by most recently modified."
+
+> "How many content templates do we have? Give me a summary grouped by channel."
+
+**Search and filter**
+> "Find all email templates whose name starts with 'Cyber Monday'."
+
+> "Show me all push notification templates created in the last 30 days."
+
+> "List all content fragments that are currently in DRAFT status."
+
+> "Find all fragments of type 'expression' on the shared channel."
+
+> "Are there any templates that came from AEM? List them."
+
+**Inspect a specific item**
+> "Get the full details of template ID b6d70a45-a149-453b-85ba-809a5d40066d."
+
+> "Show me the HTML content inside the 'Welcome Email' template."
+
+> "Fetch fragment b6d70a45-a149-453b-85ba-809a5d40066d and tell me what channel it targets and what its current status is."
+
+---
+
+### ✏️ Creating Content
+
+**Templates**
+> "Create an HTML email template called 'Summer Sale Header' with this HTML: `<div>Hi {{profile.person.name}}, our summer sale is live!</div>`"
+
+> "Create a push notification template called 'Flash Sale Alert' with the title 'Limited time offer 🔥' and message 'Tap to see deals ending in 2 hours.'"
+
+> "Create an SMS template called 'Order Shipped' with the text 'Hi {{profile.person.name}}, your order {{order.id}} has shipped and will arrive by {{order.estimatedDelivery}}.'"
+
+> "Create a new in-app message template called 'Loyalty Milestone' with an HTML body that congratulates the user on reaching Gold status."
+
+> "Create a direct mail template called 'Holiday Catalog 2025' with a fileName of 'holiday-catalog' and include fields for first name, last name, and postal address."
+
+> "Create a code-based template called 'Hero Banner JSON' on the code channel with subType JSON."
+
+**Fragments**
+> "Create an HTML fragment called 'Global Footer' with this content: `<footer>© 2025 Acme Corp | <a href='/unsubscribe'>Unsubscribe</a></footer>`. It should target the email channel."
+
+> "Create an expression fragment called 'Personalised Greeting' with the expression `Hello {{profile.person.firstName}}, welcome back!` on the shared channel."
+
+> "Create a new draft HTML fragment called 'Promo Banner' for the email channel. The content should be a red banner div with the text 'Up to 50% off selected items'."
+
+---
+
+### 🔄 Updating Content
+
+**Rename or re-describe**
+> "Rename template b6d70a45-... to 'Black Friday Email — v2'."
+
+> "Update the description of fragment b6d70a45-... to 'Used in all promotional campaigns Q4 2025'."
+
+> "Move template b6d70a45-... into folder a49dbe03-..."
+
+**Edit content**
+> "Update the 'Welcome Email' template. Keep everything the same but change the HTML to include a new hero image tag: `<img src='https://cdn.acme.com/hero.jpg' />`."
+
+> "The 'Order Shipped' SMS template needs updating. Change the text to also include a tracking URL: `Track here: {{order.trackingUrl}}`."
+
+> "I need to update fragment b6d70a45-... — fetch it first, then replace its HTML content with `<div class='banner'>New Year Sale — 40% off everything!</div>`."
+
+---
+
+### 🚀 Publishing Fragments
+
+> "Publish fragment b6d70a45-... so it's ready to use in campaigns."
+
+> "Publish the 'Global Footer' fragment and then check whether the publication succeeded."
+
+> "What is the publication status of fragment b6d70a45-...? Is it live yet?"
+
+> "Publish fragment b6d70a45-... and keep checking the status every few seconds until it's complete, then confirm it's live."
+
+> "Show me the live published content of fragment b6d70a45-... — what HTML is actually being served to campaigns right now?"
+
+---
+
+### 🗑️ Deleting Content
+
+> "Delete template b6d70a45-a149-453b-85ba-809a5d40066d."
+
+> "I need to clean up. List all templates with 'test' or 'draft' in the name, then delete them."
+
+> "Delete all email templates that haven't been modified since January 2024." *(The LLM will list first and confirm before deleting.)*
+
+---
+
+### 🔁 Multi-Step Workflows
+
+These prompts ask the LLM to chain multiple tools together autonomously.
+
+> "Create a complete email template called 'Abandoned Cart' with a subject of 'You left something behind…' and HTML body reminding the user of their cart items using `{{cart.items}}`. Then show me the ID so I can reference it."
+
+> "I want to set up a reusable unsubscribe footer fragment. Create an HTML fragment called 'Unsubscribe Footer' for the email channel, publish it, and confirm it's live."
+
+> "Clone the template at ID b6d70a45-... — fetch its full content, create a new template with the same content but named 'Copy of [original name]', and return the new ID."
+
+> "Audit our fragment library: list all fragments, identify which ones are still in DRAFT status, and give me a summary of how many are PUBLISHED vs DRAFT vs PUBLISHING."
+
+> "We're doing a Q4 cleanup. List all templates that have 'summer' in the name and delete each one. Walk me through what you're deleting before you do it."
+
+> "Create three SMS templates for an onboarding sequence: 'Onboarding Day 1', 'Onboarding Day 3', and 'Onboarding Day 7'. Each should have personalised text referencing `{{profile.person.firstName}}` and a relevant message for that day of onboarding."
+
+---
+
+### 💡 Tips for Best Results
+
+**Be specific about IDs when you have them.** If you know the template or fragment ID, include it — the LLM won't need to search first.
+
+> ✅ "Get template b6d70a45-a149-453b-85ba-809a5d40066d"
+> vs.
+> ⚠️ "Get my welcome email template" *(requires a search step)*
+
+**Mention the channel when creating.** The API requires exactly one channel per template or fragment.
+
+> ✅ "Create an email template called…"
+> ✅ "Create a push notification template called…"
+
+**For updates, you don't need to fetch the etag yourself.** Just ask the LLM to update something — it will automatically fetch the current version and etag before making the change.
+
+> ✅ "Update the description of template b6d70a45-... to 'New description'"
+
+**Publishing is async.** After asking to publish a fragment, the LLM can poll `get_fragment_publication_status` for you — just ask it to confirm when publication is complete.
+
+> ✅ "Publish fragment b6d70a45-... and tell me when it's done."
+
+**Pagination is handled automatically.** If you ask to list all templates, the LLM can page through results on your behalf.
+
+> ✅ "List all templates in this sandbox, even if there are more than 20."
+
+---
+
 ## Build Instructions
 
 ```bash
 # Clone or extract the project
 cd ajo-content-mcp
+
+# Install dependencies (generates package-lock.json, required by the Docker build)
+npm install
 
 # Build the Docker image
 docker build -t ajo-content-mcp .
@@ -111,17 +260,32 @@ The server authenticates once, caches the token, and begins accepting MCP connec
 ```
 
 ### Claude Desktop (STDIO via Docker)
+The server runs both HTTP streaming and STDIO transports simultaneously in the same container.
+Claude Desktop uses STDIO; Claude Code uses HTTP — no separate containers required.
+
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
     "ajo-content": {
       "command": "docker",
-      "args": ["exec", "-i", "ajo-content-mcp", "node", "dist/server/index.js", "--stdio"]
+      "args": ["run", "--rm", "-i", "-p", "3000:3000", "ajo-content-mcp"]
     }
   }
 }
 ```
+
+**First-time setup (required before using any tools):**
+1. Restart Claude Desktop — it will start the container automatically.
+2. Open `http://localhost:3000` in your browser.
+3. Upload your `environment-variables.json` credentials file and enter your sandbox name.
+4. Click **Start MCP Server** — credentials are stored in memory for the life of the container.
+5. Return to Claude Desktop — all tools are now available.
+
+> The STDIO connection stays open while Claude Desktop is running. If you try a tool before completing setup, the server will return an error telling you to visit `http://localhost:3000`.
+
+Claude Desktop spawns the container with stdin attached (STDIO transport). The same container
+also listens on `http://localhost:3000/mcp`, so Claude Code can connect to it simultaneously.
 
 ### Cursor
 Settings → MCP Servers → Add Server:
