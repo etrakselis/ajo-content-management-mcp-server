@@ -6,7 +6,7 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 
 ## Overview
 
-This MCP server bridges LLM clients (Claude, Cursor, Continue, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 15 tools covering the full template and fragment lifecycle, handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 15 tools covering the full template and fragment lifecycle, handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
 
 ---
 
@@ -298,20 +298,17 @@ Settings → MCP Servers → Add Server:
 }
 ```
 
-### Continue
-`.continue/config.json`:
-```json
-{
-  "experimental": {
-    "modelContextProtocolServers": [{
-      "transport": {
-        "type": "streamableHttp",
-        "url": "http://localhost:3000/mcp"
-      }
-    }]
-  }
-}
+### Codex CLI
+`codex mcp add` only supports stdio servers, so add the streamable HTTP endpoint
+to `~/.codex/config.toml`:
+```toml
+[mcp_servers.ajo-content]
+url = "http://localhost:3000/mcp"
 ```
+
+### Codex Desktop
+The Codex IDE extension / desktop app reads the same config file as the CLI.
+Add the block above to `~/.codex/config.toml`, then restart Codex.
 
 ### Generic HTTP Client
 ```

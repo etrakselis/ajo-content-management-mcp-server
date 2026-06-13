@@ -242,45 +242,6 @@ export const landingPageHtml = `<!DOCTYPE html>
     .divider { height: 1px; background: var(--adobe-border); margin: 0 24px; }
     .connect-section { padding: 20px 24px; }
     .connect-section h3 { font-size: 13px; font-weight: 600; margin-bottom: 14px; }
-    .client-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
-    .tab-btn {
-      padding: 5px 12px;
-      border: 1px solid var(--adobe-border);
-      background: white;
-      border-radius: 100px;
-      font-size: 12px;
-      cursor: pointer;
-      font-family: inherit;
-      color: var(--adobe-mid);
-      transition: all 0.1s;
-    }
-    .tab-btn.active { background: var(--adobe-dark); border-color: var(--adobe-dark); color: white; }
-    .code-block {
-      background: var(--adobe-dark);
-      border-radius: 6px;
-      padding: 14px 16px;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: 12px;
-      color: #E5E3DE;
-      overflow-x: auto;
-      white-space: pre;
-      line-height: 1.6;
-      position: relative;
-    }
-    .code-copy {
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      padding: 4px 8px;
-      background: rgba(255,255,255,0.1);
-      border: none;
-      border-radius: 4px;
-      color: rgba(255,255,255,0.6);
-      font-size: 11px;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    .code-copy:hover { background: rgba(255,255,255,0.18); color: white; }
     .error-msg { font-size: 13px; color: #C9252D; padding: 12px; background: rgba(201,37,45,0.06); border-radius: 6px; display: none; }
     .error-msg.show { display: block; }
     .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; }
@@ -325,6 +286,22 @@ export const landingPageHtml = `<!DOCTYPE html>
       line-height: 1.5;
       margin-bottom: 4px;
     }
+    .clients-list { display: flex; flex-direction: column; gap: 8px; }
+    .clients-empty { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--adobe-mid); }
+    .clients-empty .status-dot { background: var(--adobe-warn); }
+    .client-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid rgba(38,142,108,0.3);
+      background: rgba(38,142,108,0.05);
+      border-radius: 6px;
+    }
+    .client-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--adobe-success); flex-shrink: 0; animation: pulse 2s infinite; }
+    .client-name { font-size: 14px; font-weight: 600; color: var(--adobe-dark); }
+    .client-meta { margin-left: auto; font-size: 12px; color: var(--adobe-mid); font-family: 'SF Mono', 'Fira Code', monospace; }
+    .clients-hint { font-size: 12px; color: var(--adobe-mid); margin-top: 14px; line-height: 1.5; }
   </style>
 </head>
 <body>
@@ -428,19 +405,11 @@ export const landingPageHtml = `<!DOCTYPE html>
       </div>
       <div class="divider"></div>
       <div class="connect-section">
-        <h3>Connection instructions</h3>
-        <div class="client-tabs" id="clientTabs">
-          <button class="tab-btn active" data-client="claude-code">Claude Code</button>
-          <button class="tab-btn" data-client="claude-desktop">Claude Desktop</button>
-          <button class="tab-btn" data-client="cursor">Cursor</button>
-          <button class="tab-btn" data-client="codex-cli">Codex CLI</button>
-          <button class="tab-btn" data-client="codex-desktop">Codex Desktop</button>
-          <button class="tab-btn" data-client="generic">Generic</button>
+        <h3>Connected client</h3>
+        <div class="clients-list" id="clientsList">
+          <div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>
         </div>
-        <div class="code-block" id="clientCode">
-          <button class="code-copy" onclick="copyCode()">Copy</button>
-          <span id="codeContent"></span>
-        </div>
+        <p class="clients-hint">Connecting another client (Claude Code, Cursor, Codex…)? See the <strong>README</strong> on GitHub for per-client setup.</p>
       </div>
     </div>
   </main>
@@ -449,72 +418,61 @@ export const landingPageHtml = `<!DOCTYPE html>
     let credentials = null;
     let serverUrl = window.location.origin;
 
-    const configs = {
-      'claude-code': () => \`# Add to your Claude Code MCP config (~/.claude/mcp.json):
-{
-  "mcpServers": {
-    "ajo-content": {
-      "type": "http",
-      "url": "\${serverUrl}/mcp"
-    }
-  }
-}\`,
-      'claude-desktop': () => \`# Add to Claude Desktop config:
-# macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
-{
-  "mcpServers": {
-    "ajo-content": {
-      "command": "docker",
-      "args": ["run", "--rm", "-i", "-p", "3000:3000", "ajo-content-mcp"]
-    }
-  }
-}\`,
-      'cursor': () => \`# Cursor Settings → MCP Servers → Add:
-{
-  "ajo-content": {
-    "url": "\${serverUrl}/mcp",
-    "type": "http"
-  }
-}\`,
-      'codex-cli': () => \`# Codex CLI — \\\`codex mcp add\\\` only supports stdio servers,
-# so add the streamable HTTP endpoint to ~/.codex/config.toml:
-
-[mcp_servers.ajo-content]
-url = "\${serverUrl}/mcp"\`,
-      'codex-desktop': () => \`# Codex IDE extension / desktop app reads the same
-# config file as the CLI. Add to ~/.codex/config.toml,
-# then restart Codex:
-
-[mcp_servers.ajo-content]
-url = "\${serverUrl}/mcp"\`,
-      'generic': () => \`# HTTP Streamable MCP endpoint:
-\${serverUrl}/mcp
-
-# STDIO (via Docker):
-docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
-    };
-
-    document.getElementById('clientTabs').addEventListener('click', (e) => {
-      const btn = e.target.closest('.tab-btn');
-      if (!btn) return;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('codeContent').textContent = configs[btn.dataset.client]();
-    });
-
     function copyText(id) {
       const el = document.getElementById(id);
       navigator.clipboard.writeText(el.textContent);
     }
 
-    function copyCode() {
-      navigator.clipboard.writeText(document.getElementById('codeContent').textContent);
+    // ─── Connected-client polling ──────────────────────────────────────────────
+    let clientPollTimer = null;
+    const KNOWN_CLIENTS = {
+      'claude-ai': 'Claude Desktop',
+      'claude-code': 'Claude Code',
+      'cursor-vscode': 'Cursor',
+      'cursor': 'Cursor',
+      'codex': 'Codex',
+      'codex-cli': 'Codex CLI',
+      'mcp-remote': 'mcp-remote bridge'
+    };
+
+    function prettyClient(name) { return KNOWN_CLIENTS[name] || name; }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
     }
 
-    // Init code display
-    setTimeout(() => {
-      document.getElementById('codeContent').textContent = configs['claude-code']();
-    }, 100);
+    function renderClients(clients) {
+      const list = document.getElementById('clientsList');
+      if (!clients || !clients.length) {
+        list.innerHTML = '<div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>';
+        return;
+      }
+      list.innerHTML = clients.map(c =>
+        '<div class="client-row">' +
+          '<span class="client-dot"></span>' +
+          '<span class="client-name">' + escapeHtml(prettyClient(c.name)) + '</span>' +
+          '<span class="client-meta">' + escapeHtml(c.transport) + (c.version ? ' · v' + escapeHtml(c.version) : '') + '</span>' +
+        '</div>'
+      ).join('');
+    }
+
+    async function pollClients() {
+      try {
+        const res = await fetch('/api/connected-clients');
+        const data = await res.json();
+        renderClients(data.clients);
+      } catch { /* transient — keep last render */ }
+    }
+
+    function startClientPolling() {
+      pollClients();
+      if (clientPollTimer) clearInterval(clientPollTimer);
+      clientPollTimer = setInterval(pollClients, 3000);
+    }
+
+    function stopClientPolling() {
+      if (clientPollTimer) { clearInterval(clientPollTimer); clientPollTimer = null; }
+    }
 
     // File drop/select
     const dropzone = document.getElementById('dropzone');
@@ -562,6 +520,8 @@ docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
     // Reset everything that activation produced, back to the pre-launch state
     function resetActivationUI() {
       needsOrg = false;
+      stopClientPolling();
+      renderClients([]);
       const btn = document.getElementById('startBtn');
       btn.innerHTML = 'Start MCP Server';
       btn.style.background = '';
@@ -674,9 +634,9 @@ docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
       document.getElementById('statusBadge').textContent = 'Active';
       document.getElementById('httpEndpoint').textContent = serverUrl + '/mcp';
       document.getElementById('statusPanel').classList.add('show');
-      document.getElementById('codeContent').textContent = configs[document.querySelector('.tab-btn.active').dataset.client]();
       document.getElementById('connSandbox').textContent = sandbox;
       document.getElementById('connInfo').classList.add('show');
+      startClientPolling();
 
       const connNs = document.getElementById('connNamespace');
       if (data.tenantNamespace) {

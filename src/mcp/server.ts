@@ -9,6 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { tokenManager } from '../auth/token-manager.js';
 import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId } from '../adobe/client.js';
+import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { logger } from '../telemetry/index.js';
 
 // Template tools
@@ -70,7 +71,7 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   get_fragment_publication_status: handleGetFragmentPublicationStatus
 };
 
-export function createMcpServer(): Server {
+export function createMcpServer(transport: TransportKind = 'http'): Server {
   const sandbox = getConfiguredSandboxName();
   const orgName = getConfiguredOrgName();
   const tenantId = getConfiguredTenantId();
@@ -106,6 +107,16 @@ export function createMcpServer(): Server {
       instructions
     }
   );
+
+  // Capture the connecting client's identity from the initialize handshake so
+  // the landing page can show which client this server is serving.
+  server.oninitialized = () => {
+    const info = server.getClientVersion();
+    if (info?.name) {
+      recordClient(info.name, info.version, transport);
+      logger.info('MCP client connected', { client: info.name, version: info.version, transport });
+    }
+  };
 
   // ─── Tool Discovery ────────────────────────────────────────────────────────
 
@@ -234,10 +245,13 @@ export function createMcpServer(): Server {
 // ─── STDIO Transport ──────────────────────────────────────────────────────────
 
 export async function startStdioServer(): Promise<void> {
-  const server = createMcpServer();
+  const server = createMcpServer('stdio');
   const transport = new StdioServerTransport();
 
   transport.onclose = () => {
+    // A stdio server is 1:1 with a client; drop it from the connected list on close
+    const info = server.getClientVersion();
+    if (info?.name) removeClient(info.name, 'stdio');
     logger.info('STDIO transport closed (no client connected or client disconnected)');
   };
 
