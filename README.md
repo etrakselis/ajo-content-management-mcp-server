@@ -233,20 +233,27 @@ Navigate to `http://localhost:3000` in your browser.
 
 ### 2. Upload environment file
 
-Drag and drop your `environment-variables.json` credentials file. The expected format matches the Postman environment export from Adobe:
+Drag and drop your credentials file. The expected format matches the Postman environment export from Adobe — a `values` array (each entry has `key`, `value`, `type`, and `enabled`) plus a top-level `name`. See [`sample_ajo_api_environment_vars.json`](sample_ajo_api_environment_vars.json) for a blank template.
 
 ```json
 {
   "values": [
-    { "key": "CLIENT_SECRET", "value": "your-secret", "enabled": true },
-    { "key": "API_KEY",       "value": "your-api-key", "enabled": true },
-    { "key": "IMS_ORG",       "value": "org@AdobeOrg", "enabled": true },
-    { "key": "TECHNICAL_ACCOUNT_ID", "value": "tech@techacct.adobe.com", "enabled": true },
-    { "key": "IMS",           "value": "ims-na1.adobelogin.com", "enabled": true },
-    { "key": "ACCESS_TOKEN",  "value": "your-token-if-pre-obtained", "enabled": true }
-  ]
+    { "type": "text", "value": "your-client-secret", "key": "CLIENT_SECRET", "enabled": true },
+    { "type": "text", "value": "your-api-key", "key": "API_KEY", "enabled": true },
+    { "type": "text", "value": "your-token-if-pre-obtained", "key": "ACCESS_TOKEN", "enabled": true },
+    { "type": "text", "value": ["openid", "AdobeID", "additional_info.projectedProductContext"], "key": "SCOPES", "enabled": true },
+    { "type": "text", "value": "tech@techacct.adobe.com", "key": "TECHNICAL_ACCOUNT_ID", "enabled": true },
+    { "type": "text", "value": "ims-na1.adobelogin.com", "key": "IMS", "enabled": true },
+    { "type": "text", "value": "org@AdobeOrg", "key": "IMS_ORG", "enabled": true }
+  ],
+  "name": "Credential in Edwin AJO Content Management"
 }
 ```
+
+Notes:
+- **`SCOPES`** is an array of strings (not a comma-separated string).
+- **`name`** labels the credential set — it's shown on the landing page after upload so you can confirm you loaded the right file.
+- Only `API_KEY` and `IMS_ORG` are strictly required; provide `CLIENT_SECRET` (+ `TECHNICAL_ACCOUNT_ID`, `IMS`, `SCOPES`) for the OAuth server-to-server flow, or a pre-obtained `ACCESS_TOKEN` instead.
 
 > Credentials are stored in memory only. They are never written to disk, logged, or returned through tools.
 
@@ -262,6 +269,8 @@ The server authenticates once, caches the token, and begins accepting MCP connec
 
 ## MCP Connection Examples
 
+> **Prerequisite:** finish [Build & Run](#build--run) and [Configuration](#configuration) first. There is **one** long-lived container (started by `docker compose up -d`) that you configure once at `http://localhost:3000`. Every client below connects to that same running server at `http://localhost:3000/mcp` — no client starts its own container, so the configuration you entered is shared by all of them and survives client restarts.
+
 ### Claude Code (HTTP)
 ```json
 {
@@ -274,33 +283,45 @@ The server authenticates once, caches the token, and begins accepting MCP connec
 }
 ```
 
-### Claude Desktop (STDIO via Docker)
-The server runs both HTTP streaming and STDIO transports simultaneously in the same container.
-Claude Desktop uses STDIO; Claude Code uses HTTP — no separate containers required.
+### Claude Desktop (via `mcp-remote` bridge)
+Claude Desktop's config only speaks STDIO, so it can't point at an HTTP URL directly. The
+[`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge connects it to the already-running
+container — **do not** have Claude Desktop launch its own container, or it would collide with the
+one from `docker compose up` (port 3000) and start unconfigured.
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+**Install Node.js first.** `npx` is not a standalone tool — it ships with npm, which ships with
+[Node.js](https://nodejs.org/en/download). Without Node installed, Claude Desktop's `npx` command
+fails with `spawn npx ENOENT`. This is the one client that needs Node locally; everything else
+talks to the container directly over HTTP. After installing, verify with:
+```bash
+npx --version
+```
+You do **not** need to install `mcp-remote` separately — `npx -y mcp-remote` downloads and caches it
+on first run (needs network access the first time).
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows), then restart Claude Desktop:
 ```json
 {
   "mcpServers": {
     "ajo-content": {
-      "command": "docker",
-      "args": ["run", "--rm", "-i", "-p", "3000:3000", "ajo-content-mcp"]
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:3000/mcp"]
     }
   }
 }
 ```
 
-**First-time setup (required before using any tools):**
-1. Restart Claude Desktop — it will start the container automatically.
-2. Open `http://localhost:3000` in your browser.
-3. Upload your `environment-variables.json` credentials file and enter your sandbox name.
-4. Click **Start MCP Server** — credentials are stored in memory for the life of the container.
-5. Return to Claude Desktop — all tools are now available.
+> **If Claude Desktop still reports `npx` not found after installing Node:** Claude Desktop launches
+> `npx` using the GUI app's `PATH`, which on macOS is often **not** the same as your terminal's
+> `PATH` (common with `nvm`- or Homebrew-managed installs). Fix it either by installing Node via the
+> official `.pkg` (macOS) / `.msi` (Windows) installer, which puts it in a standard system location,
+> or by using the absolute path in the config — find it with `which npx` (macOS) / `where npx`
+> (Windows) and set e.g. `"command": "/usr/local/bin/npx"`.
 
-> The STDIO connection stays open while Claude Desktop is running. If you try a tool before completing setup, the server will return an error telling you to visit `http://localhost:3000`.
-
-Claude Desktop spawns the container with stdin attached (STDIO transport). The same container
-also listens on `http://localhost:3000/mcp`, so Claude Code can connect to it simultaneously.
+The container from [Build & Run](#build--run) must already be running and configured. Because that
+container is long-lived, your credentials persist across Claude Desktop restarts — you only
+configure once at `http://localhost:3000`.
 
 ### Cursor
 Settings → MCP Servers → Add Server:
@@ -457,7 +478,24 @@ npm run dev
 ### Tool not working
 - Check `/ready` returns `{ "ready": true }`
 - Verify the MCP client is connected to `http://localhost:3000/mcp`
-- Review logs: `docker logs ajo-content-mcp --follow`
+- Review logs: `docker compose logs -f`
+
+### Which server actually handled a request?
+LLM clients **cannot reliably report their own MCP connections** — if you ask the model "which MCP servers are you connected to?" or "which server did you use?", it may omit this local server, list unrelated cloud connectors, or claim it was "proxied" through another server. That's the model guessing from tool names, not ground truth.
+
+To confirm this server did the work, use authoritative signals instead:
+- **Container logs** are the source of truth — every tool call is logged: `docker compose logs -f` (look for entries like `create_content_fragment`).
+- The landing page's **Connected client** panel at `http://localhost:3000` shows the live connection (e.g. `Claude Desktop · http`).
+- This server's tools are namespaced under **`ajo-content`** — that prefix is the real one.
+- `mcp-remote` connects **directly** to `http://localhost:3000/mcp`; it does not route through any cloud service.
+
+If a client also has **cloud Adobe/AJO connectors** enabled (e.g. via its connectors UI), their tools overlap in purpose with this server's and the model may conflate them. Disable the ones you aren't using so `ajo-content` is unambiguous.
+
+### Connected-client list keeps showing a client after it closed
+The **Connected client** panel tracks the live MCP connection and clears a client within ~10 seconds of it disconnecting (the landing page polls every few seconds). If a client lingers longer:
+- Give it the full grace window — HTTP clients are removed shortly after their session stream closes, not instantly.
+- For Claude Desktop, make sure the app fully quit (not just the window closed) so the `mcp-remote` bridge process actually exits.
+- The list reflects connections to the **running container**; restarting the container (`docker compose restart`) clears it entirely.
 
 ---
 

@@ -9,7 +9,7 @@ import { configureAdobeClient, resetAdobeClient, listTemplates } from '../adobe/
 
 import { CredentialsFileSchema } from '../validation/schemas.js';
 import { createMcpServer, createHttpTransport } from '../mcp/server.js';
-import { getConnectedClients, recordClient } from '../mcp/connected-clients.js';
+import { getConnectedClients, recordClient, openStream, closeStream } from '../mcp/connected-clients.js';
 import { logger, metricsRegistry } from '../telemetry/index.js';
 import { landingPageHtml } from '../ui/landing.js';
 
@@ -379,6 +379,11 @@ export function createExpressApp(): express.Application {
     max: 500
   });
 
+  // Most-recent HTTP client from an `initialize` POST. Used to attribute the
+  // subsequent standalone GET SSE stream (which carries no clientInfo) to a
+  // client so its open/close lifecycle drives the connected-clients display.
+  let lastHttpInit: { name: string; version?: string } | null = null;
+
   app.all('/mcp', mcpLimiter, async (req: Request, res: Response) => {
     try {
       // In stateless mode each request gets its own server instance, so the
@@ -389,8 +394,22 @@ export function createExpressApp(): express.Application {
       for (const m of msgs) {
         if (m && typeof m === 'object' && m.method === 'initialize') {
           const ci = m.params?.clientInfo;
-          if (ci?.name) recordClient(String(ci.name), ci.version ? String(ci.version) : undefined, 'http');
+          if (ci?.name) {
+            const name = String(ci.name);
+            const version = ci.version ? String(ci.version) : undefined;
+            recordClient(name, version, 'http');
+            lastHttpInit = { name, version };
+          }
         }
+      }
+
+      // The standalone GET SSE stream is held open for the life of the session.
+      // Track it as a live connection and drop the client when it closes — this
+      // is the signal that e.g. Claude Desktop (via mcp-remote) has exited.
+      if (req.method === 'GET' && lastHttpInit) {
+        const { name, version } = lastHttpInit;
+        openStream(name, version);
+        res.on('close', () => closeStream(name));
       }
 
       // Stateless mode: each request gets its own server + transport instance.

@@ -497,7 +497,9 @@ export const landingPageHtml = `<!DOCTYPE html>
         try {
           credentials = JSON.parse(e.target.result);
           document.getElementById('fileAccepted').classList.add('show');
-          document.getElementById('fileName').textContent = file.name + ' — ' + (credentials.values?.length || 0) + ' values';
+          // Prefer the credential set's own name (top-level "name" in the export); fall back to the filename
+          const credName = (typeof credentials.name === 'string' && credentials.name.trim()) ? credentials.name.trim() : file.name;
+          document.getElementById('fileName').textContent = credName + ' — ' + (credentials.values?.length || 0) + ' values';
           dropzone.style.display = 'none';
           checkReady();
         } catch {

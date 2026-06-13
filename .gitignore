@@ -6,3 +6,4 @@ coverage/
 environment-variables.json
 *.log
 retrieve-tenant-namespace.md
+sample_ajo_api_environment_vars.json
