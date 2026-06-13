@@ -275,4 +275,35 @@ export async function getLastPublicationStatus(fragmentId: string) {
   return response.data;
 }
 
+export async function archiveFragment(fragmentId: string) {
+  if (!clientConfig) throw new Error('Adobe API client not configured');
+  const token = await tokenManager.getToken();
+  const response = await axios.post(
+    'https://exc-unifiedcontent.experience.adobe.net/api/gql/profile/graphql/graphql?appId=cjmFragmentsUI',
+    {
+      operationName: 'updateAjoFragmentState',
+      query: `mutation updateAjoFragmentState($id: String!, $etag: String!, $state: AjoFragmentState!) {
+        updateAjoFragmentState(fragmentId: $id, etag: $etag, state: $state) { id etag }
+      }`,
+      variables: { id: fragmentId, etag: '', state: 'ARCHIVED' }
+    },
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'x-api-key': 'exc_app',
+        'x-gw-ims-org-id': clientConfig.imsOrg,
+        'x-sandbox-name': clientConfig.sandboxName
+      }
+    }
+  );
+  const gqlErrors = response.data?.errors;
+  if (gqlErrors?.length) {
+    throw new Error(`Archive mutation error: ${JSON.stringify(gqlErrors)}`);
+  }
+  const result = response.data?.data?.updateAjoFragmentState;
+  if (!result) throw new Error(`Archive mutation returned no data. Response: ${JSON.stringify(response.data)}`);
+  return { id: result.id, etag: result.etag };
+}
+
 export { buildError };

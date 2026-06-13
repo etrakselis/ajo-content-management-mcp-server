@@ -128,6 +128,10 @@ export const GetPublicationStatusSchema = z.object({
   fragmentId: UuidSchema
 });
 
+export const ArchiveFragmentSchema = z.object({
+  fragmentId: UuidSchema
+});
+
 export const ListFragmentsSchema = PaginationSchema;
 
 // ─── Credentials File Schema ──────────────────────────────────────────────────

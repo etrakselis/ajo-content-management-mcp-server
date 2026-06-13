@@ -53,6 +53,7 @@ This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journ
 | `publish_fragment` | Alias for publish_content_fragment |
 | `get_live_fragment` | Get content from last successful publication |
 | `get_fragment_publication_status` | Poll publication progress |
+| `archive_content_fragment` | Archive a fragment (fragments cannot be deleted via the API) |
 
 ---
 
@@ -147,13 +148,17 @@ Once your LLM client is connected to this MCP server, you can talk to it in plai
 
 ---
 
-### 🗑️ Deleting Content
+### 🗑️ Deleting & Archiving Content
 
 > "Delete template b6d70a45-a149-453b-85ba-809a5d40066d."
 
 > "I need to clean up. List all templates with 'test' or 'draft' in the name, then delete them."
 
 > "Delete all email templates that haven't been modified since January 2024." *(The LLM will list first and confirm before deleting.)*
+
+> "Archive fragment b6d70a45-... — I no longer need it in the active library."
+
+> "Archive all fragments that are still in DRAFT status and haven't been modified since January 2024."
 
 ---
 
@@ -421,6 +426,17 @@ Always fetch first to get the etag:
 { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 ```
 Publication is async. Poll `get_fragment_publication_status` until `status === "complete"`.
+
+### `archive_content_fragment`
+```json
+{ "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
+```
+Fragments cannot be deleted via the AJO Content REST API — archiving is the equivalent. An archived
+fragment is removed from the active library and can no longer be referenced in new campaigns or
+journeys.
+
+> **Note:** This tool calls an internal AJO GraphQL API (`exc-unifiedcontent.experience.adobe.net`)
+> that is not part of the public Content REST API. Adobe may change this endpoint without notice.
 
 ---
 

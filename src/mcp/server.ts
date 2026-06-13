@@ -32,7 +32,8 @@ import {
   publishContentFragmentDefinition, handlePublishContentFragment,
   publishFragmentDefinition,
   getLiveFragmentDefinition, handleGetLiveFragment,
-  getFragmentPublicationStatusDefinition, handleGetFragmentPublicationStatus
+  getFragmentPublicationStatusDefinition, handleGetFragmentPublicationStatus,
+  archiveContentFragmentDefinition, handleArchiveContentFragment
 } from '../tools/fragments.js';
 
 const ALL_TOOLS = [
@@ -50,7 +51,8 @@ const ALL_TOOLS = [
   publishContentFragmentDefinition,
   publishFragmentDefinition,
   getLiveFragmentDefinition,
-  getFragmentPublicationStatusDefinition
+  getFragmentPublicationStatusDefinition,
+  archiveContentFragmentDefinition
 ];
 
 const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
@@ -68,7 +70,8 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   publish_content_fragment: handlePublishContentFragment,
   publish_fragment: handlePublishContentFragment,
   get_live_fragment: handleGetLiveFragment,
-  get_fragment_publication_status: handleGetFragmentPublicationStatus
+  get_fragment_publication_status: handleGetFragmentPublicationStatus,
+  archive_content_fragment: handleArchiveContentFragment
 };
 
 export function createMcpServer(transport: TransportKind = 'http'): Server {

@@ -3,13 +3,13 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   listFragments, createFragment, getFragment,
   updateFragment, patchFragment, publishFragment,
-  getLiveFragment, getLastPublicationStatus,
+  getLiveFragment, getLastPublicationStatus, archiveFragment,
   buildError, isClientConfigured
 } from '../adobe/client.js';
 import {
   ListFragmentsSchema, CreateFragmentSchema, GetFragmentSchema,
   UpdateFragmentSchema, PatchFragmentSchema, PublishFragmentSchema,
-  GetLiveFragmentSchema, GetPublicationStatusSchema
+  GetLiveFragmentSchema, GetPublicationStatusSchema, ArchiveFragmentSchema
 } from '../validation/schemas.js';
 import { toolCallCounter, toolCallDuration, createRequestLogger } from '../telemetry/index.js';
 
@@ -144,7 +144,8 @@ export async function handleCreateContentFragment(args: unknown) {
     const parsed = CreateFragmentSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
     try {
-      const result = await createFragment(parsed.data);
+      const payload = { ...parsed.data, source: parsed.data.source ?? { origin: 'ajo' as const } };
+      const result = await createFragment(payload);
       return { success: true, ...result };
     } catch (err) {
       return { success: false, error: buildError(err) };
@@ -229,7 +230,8 @@ export async function handleUpdateContentFragment(args: unknown) {
   return withTelemetry('update_content_fragment', async () => {
     const parsed = UpdateFragmentSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
-    const { fragmentId, etag, ...payload } = parsed.data;
+    const { fragmentId, etag, ...rest } = parsed.data;
+    const payload = { ...rest, source: rest.source ?? { origin: 'ajo' as const } };
     try {
       const result = await updateFragment(fragmentId, payload, etag);
       return { ...result, success: true };
@@ -395,6 +397,42 @@ export async function handleGetFragmentPublicationStatus(args: unknown) {
     try {
       const data = await getLastPublicationStatus(parsed.data.fragmentId);
       return { success: true, data };
+    } catch (err) {
+      return { success: false, error: buildError(err) };
+    }
+  });
+}
+
+// ─── archive_content_fragment ─────────────────────────────────────────────────
+
+export const archiveContentFragmentDefinition = {
+  name: 'archive_content_fragment',
+  description: `Archive a content fragment in Adobe Journey Optimizer.
+Fragments cannot be deleted via the API — archiving is the equivalent. An archived fragment
+is removed from the active library and can no longer be used in new campaigns or journeys.
+
+Note: this operation calls an internal AJO GraphQL API (not the public REST API).
+
+Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
+
+Returns: { success: true, id: "<uuid>", etag: "<new-etag>" }`,
+  inputSchema: {
+    type: 'object' as const,
+    required: ['fragmentId'],
+    properties: {
+      fragmentId: { type: 'string', description: 'UUID of the fragment to archive' }
+    }
+  }
+};
+
+export async function handleArchiveContentFragment(args: unknown) {
+  if (!isClientConfigured()) return notConfiguredError();
+  return withTelemetry('archive_content_fragment', async () => {
+    const parsed = ArchiveFragmentSchema.safeParse(args);
+    if (!parsed.success) return validationError(parsed.error);
+    try {
+      const result = await archiveFragment(parsed.data.fragmentId);
+      return { success: true, ...result };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
