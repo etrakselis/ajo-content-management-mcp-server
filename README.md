@@ -252,7 +252,7 @@ Navigate to `http://localhost:3000` in your browser.
 
 ### 2. Upload environment file
 
-Drag and drop your credentials file. The expected format matches the Postman environment export from Adobe — a `values` array (each entry has `key`, `value`, `type`, and `enabled`) plus a top-level `name`. See [`sample_ajo_api_environment_vars.json`](sample_ajo_api_environment_vars.json) for a blank template.
+Drag and drop your credentials file. The expected format matches the Postman environment export from Adobe.
 
 ```json
 {
