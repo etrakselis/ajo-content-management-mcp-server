@@ -252,7 +252,7 @@ Navigate to `http://localhost:3000` in your browser.
 
 ### 2. Upload environment file
 
-Drag and drop your credentials file. The expected format matches the Postman environment export from Adobe.
+Drag and drop your credentials file. The expected format matches the Postman environment export from Adobe:
 
 ```json
 {
@@ -265,7 +265,7 @@ Drag and drop your credentials file. The expected format matches the Postman env
     { "type": "text", "value": "ims-na1.adobelogin.com", "key": "IMS", "enabled": true },
     { "type": "text", "value": "org@AdobeOrg", "key": "IMS_ORG", "enabled": true }
   ],
-  "name": "Credential in Edwin AJO Content Management"
+  "name": "name of the API project will display here"
 }
 ```
 
