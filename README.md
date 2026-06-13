@@ -183,29 +183,44 @@ These prompts ask the LLM to chain multiple tools together autonomously.
 
 ---
 
-## Build Instructions
+## Prerequisites
 
-```bash
-# Clone or extract the project
-cd ajo-content-mcp
+The only thing you need to build and run the server is **Docker Desktop** — dependencies are installed and the code is compiled inside the container, so you don't need Node.js installed on your machine. The steps are the same whether you're on **macOS** or **Windows**.
 
-# Install dependencies (generates package-lock.json, required by the Docker build)
-npm install
+### Docker Desktop
+- **Download:** [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)
+  - macOS: pick the **Apple Silicon** build for M1/M2/M3+ Macs, or the **Intel chip** build for older Macs.
+  - Windows: download **Docker Desktop for Windows** (requires Windows 10/11 64-bit; WSL 2 is enabled by the installer).
+- **After installing, launch Docker Desktop and wait until the whale icon shows "Docker Desktop is running."** The commands below will fail if the Docker engine isn't started.
+- **Verify** in a terminal (macOS) or PowerShell (Windows):
+  ```bash
+  docker --version
+  ```
 
-# Build the Docker image
-docker build -t ajo-content-mcp .
-```
+> **Only contributing to the code?** To run the test suite or type-check outside Docker (see [Development](#development)), you'll also need [Node.js 18+ (LTS)](https://nodejs.org/en/download). It is **not** required just to build and run the server.
 
 ---
 
-## Run Instructions
+## Build & Run
+
+From the project root, a single command builds the image and starts the server in the background. Everything — installing dependencies and compiling the code — happens inside the container, so you don't need to run `npm` yourself.
 
 ```bash
-# Start the server (UI available at http://localhost:3000)
-docker run -p 3000:3000 --name ajo-content-mcp ajo-content-mcp
+cd ajo-content-mcp
+docker compose up -d --build
+```
 
-# Or with docker-compose
-docker-compose up
+- `--build` builds the `ajo-content-mcp` image (only needed the first time, or after you change the code).
+- `-d` runs the container detached, so your terminal stays free.
+
+The setup UI is now available at **http://localhost:3000** — continue to [Configuration](#configuration).
+
+Common follow-up commands:
+
+```bash
+docker compose logs -f     # watch the server logs (Ctrl+C to stop watching)
+docker compose down        # stop and remove the container
+docker compose up -d       # start it again later (no rebuild needed)
 ```
 
 ---

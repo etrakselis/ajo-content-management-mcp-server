@@ -3,6 +3,7 @@ version: '3.8'
 services:
   ajo-content-mcp:
     build: .
+    image: ajo-content-mcp
     container_name: ajo-content-mcp
     ports:
       - "3000:3000"
