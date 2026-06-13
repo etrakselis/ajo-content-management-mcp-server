@@ -4,6 +4,25 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 
 ---
 
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Features](#features)
+3. [Example Prompts](#example-prompts)
+4. [Prerequisites](#prerequisites)
+5. [Build & Run](#build--run)
+6. [Configuration](#configuration)
+7. [MCP Connection Examples](#mcp-connection-examples)
+8. [Available Tools — Detailed](#available-tools--detailed)
+9. [Observability](#observability)
+10. [Security](#security)
+11. [Development](#development)
+12. [Troubleshooting](#troubleshooting)
+13. [Architecture](#architecture)
+14. [License](#license)
+
+---
+
 ## Overview
 
 This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 15 tools covering the full template and fragment lifecycle, handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
