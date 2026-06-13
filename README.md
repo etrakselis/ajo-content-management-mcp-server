@@ -296,15 +296,9 @@ The server authenticates once, caches the token, and begins accepting MCP connec
 > **Prerequisite:** finish [Build & Run](#build--run) and [Configuration](#configuration) first. There is **one** long-lived container (started by `docker compose up -d`) that you configure once at `http://localhost:3000`. Every client below connects to that same running server at `http://localhost:3000/mcp` — no client starts its own container, so the configuration you entered is shared by all of them and survives client restarts.
 
 ### Claude Code (HTTP)
-```json
-{
-  "mcpServers": {
-    "ajo-content": {
-      "type": "http",
-      "url": "http://localhost:3000/mcp"
-    }
-  }
-}
+Run this from your terminal — it registers the server in the right place automatically (no file editing needed):
+```bash
+claude mcp add --transport http et-ajo-content-mgmt http://localhost:3000/mcp
 ```
 
 ### Claude Desktop (via `mcp-remote` bridge)
@@ -328,7 +322,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 ```json
 {
   "mcpServers": {
-    "ajo-content": {
+    "et-ajo-content-mgmt": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "http://localhost:3000/mcp"]
     }
@@ -348,12 +342,15 @@ container is long-lived, your credentials persist across Claude Desktop restarts
 configure once at `http://localhost:3000`.
 
 ### Cursor
-Settings → MCP Servers → Add Server:
+Add via **Settings → MCP Servers → Add Server**, or edit `~/.cursor/mcp.json` (global) or
+`.cursor/mcp.json` (project root) directly:
 ```json
 {
-  "ajo-content": {
-    "url": "http://localhost:3000/mcp",
-    "type": "http"
+  "mcpServers": {
+    "et-ajo-content-mgmt": {
+      "url": "http://localhost:3000/mcp",
+      "type": "http"
+    }
   }
 }
 ```
@@ -362,7 +359,7 @@ Settings → MCP Servers → Add Server:
 `codex mcp add` only supports stdio servers, so add the streamable HTTP endpoint
 to `~/.codex/config.toml`:
 ```toml
-[mcp_servers.ajo-content]
+[mcp_servers.et-ajo-content-mgmt]
 url = "http://localhost:3000/mcp"
 ```
 
@@ -521,10 +518,10 @@ LLM clients **cannot reliably report their own MCP connections** — if you ask 
 To confirm this server did the work, use authoritative signals instead:
 - **Container logs** are the source of truth — every tool call is logged: `docker compose logs -f` (look for entries like `create_content_fragment`).
 - The landing page's **Connected client** panel at `http://localhost:3000` shows the live connection (e.g. `Claude Desktop · http`).
-- This server's tools are namespaced under **`ajo-content`** — that prefix is the real one.
+- This server's tools are namespaced under **`et-ajo-content-mgmt`** — that prefix is the real one.
 - `mcp-remote` connects **directly** to `http://localhost:3000/mcp`; it does not route through any cloud service.
 
-If a client also has **cloud Adobe/AJO connectors** enabled (e.g. via its connectors UI), their tools overlap in purpose with this server's and the model may conflate them. Disable the ones you aren't using so `ajo-content` is unambiguous.
+If a client also has **cloud Adobe/AJO connectors** enabled (e.g. via its connectors UI), their tools overlap in purpose with this server's and the model may conflate them. Disable the ones you aren't using so `et-ajo-content-mgmt` is unambiguous.
 
 ### Connected-client list keeps showing a client after it closed
 The **Connected client** panel tracks the live MCP connection and clears a client within ~10 seconds of it disconnecting (the landing page polls every few seconds). If a client lingers longer:

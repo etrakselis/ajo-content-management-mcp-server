@@ -99,7 +99,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
 
   const server = new Server(
     {
-      name: 'ajo-content-mcp',
+      name: 'et-ajo-content-mgmt',
       version: '1.0.0'
     },
     {
@@ -214,7 +214,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
           uri,
           mimeType: 'application/json',
           text: JSON.stringify({
-            serverName: 'ajo-content-mcp',
+            serverName: 'et-ajo-content-mgmt',
             version: '1.0.0',
             configured,
             authentication: authStatus,
