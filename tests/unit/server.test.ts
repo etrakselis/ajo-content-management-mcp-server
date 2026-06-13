@@ -1,5 +1,22 @@
 import request from 'supertest';
 import { createExpressApp } from '../../src/server/app';
+import { tokenManager } from '../../src/auth/token-manager';
+import axios from 'axios';
+import { listTemplates } from '../../src/adobe/client';
+
+// Bypass rate limiting so repeated calls to auth endpoints don't get 429 in tests.
+jest.mock('express-rate-limit', () => () => (_req: unknown, _res: unknown, next: () => void) => next());
+
+// Prevent real HTTP calls from detectTenantNamespace — it's non-fatal so
+// test paths that reach it still succeed when these reject.
+jest.mock('axios', () => {
+  const actual = jest.requireActual('axios');
+  return {
+    ...actual,
+    get: jest.fn().mockRejectedValue(new Error('network unavailable in tests')),
+    post: jest.fn(),
+  };
+});
 
 // Mock dependencies
 jest.mock('../../src/mcp/server', () => ({
@@ -31,13 +48,16 @@ jest.mock('../../src/auth/token-manager', () => ({
     isConfigured: jest.fn().mockReturnValue(false),
     setCredentials: jest.fn(),
     getStatus: jest.fn().mockReturnValue({ configured: false, tokenCached: false }),
-    getToken: jest.fn().mockResolvedValue('mock-token')
+    getToken: jest.fn().mockResolvedValue('mock-token'),
+    reset: jest.fn()
   }
 }));
 
 jest.mock('../../src/adobe/client', () => ({
   configureAdobeClient: jest.fn(),
-  isClientConfigured: jest.fn().mockReturnValue(false)
+  resetAdobeClient: jest.fn(),
+  isClientConfigured: jest.fn().mockReturnValue(false),
+  listTemplates: jest.fn().mockResolvedValue({ items: [] })
 }));
 
 const app = createExpressApp();
@@ -101,6 +121,340 @@ describe('Express App', () => {
         sandboxName: 'my-sandbox'
       });
       expect(res.status).toBe(400);
+    });
+
+    test('returns 400 when required credential fields are missing', async () => {
+      const res = await request(app).post('/api/configure').send({
+        credentials: { values: [{ key: 'CLIENT_SECRET', value: 'secret', enabled: true }], name: 'Test' },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/API_KEY|IMS_ORG/);
+    });
+
+    test('returns success when credentials and sandbox are valid', async () => {
+      const res = await request(app).post('/api/configure').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'my-api-key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test Credentials'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.mcpEndpoint).toBe('/mcp');
+    });
+  });
+
+  describe('GET /api/status', () => {
+    test('returns configured status', async () => {
+      const res = await request(app).get('/api/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('configured');
+      expect(res.body).toHaveProperty('auth');
+    });
+  });
+
+  describe('GET /api/connected-clients', () => {
+    test('returns clients array', async () => {
+      const res = await request(app).get('/api/connected-clients');
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('clients');
+      expect(Array.isArray(res.body.clients)).toBe(true);
+    });
+  });
+
+  describe('POST /api/detect-tenant', () => {
+    test('returns 400 when body is missing', async () => {
+      const res = await request(app).post('/api/detect-tenant').send({});
+      expect(res.status).toBe(400);
+    });
+
+    test('returns tenant detection result with valid credentials', async () => {
+      const res = await request(app).post('/api/detect-tenant').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'my-api-key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      // tenantId is omitted from JSON when undefined (axios.get is mocked to reject)
+      expect(res.body.tenantId).toBeUndefined();
+    });
+
+    test('returns 401 when token acquisition fails', async () => {
+      (tokenManager.getToken as jest.Mock).mockRejectedValueOnce(new Error('invalid_client'));
+      const res = await request(app).post('/api/detect-tenant').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'bad-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toContain('invalid_client');
+    });
+
+    test('returns tenantId when schema registry /stats succeeds', async () => {
+      (axios.get as jest.Mock).mockResolvedValueOnce({ data: { tenantId: 'mycompany' } });
+      const res = await request(app).post('/api/detect-tenant').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.tenantId).toBe('mycompany');
+      expect(res.body.tenantNamespace).toBe('_mycompany');
+    });
+
+    test('falls back to /tenant/schemas when /stats fails', async () => {
+      (axios.get as jest.Mock)
+        .mockRejectedValueOnce(new Error('stats 403'))
+        .mockResolvedValueOnce({ data: { results: [{ 'meta:altId': '_mycompany.schemas.abc' }] } });
+      const res = await request(app).post('/api/detect-tenant').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.tenantId).toBe('mycompany');
+    });
+
+    test('falls back to $id parsing when meta:altId is absent', async () => {
+      (axios.get as jest.Mock)
+        .mockRejectedValueOnce(new Error('stats failed'))
+        .mockResolvedValueOnce({ data: { results: [{ '$id': 'https://ns.adobe.com/acmecorp/schemas/abc123' }] } });
+      const res = await request(app).post('/api/detect-tenant').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.tenantId).toBe('acmecorp');
+    });
+
+    test('handles non-array schema registry response gracefully', async () => {
+      (axios.get as jest.Mock)
+        .mockRejectedValueOnce(new Error('stats failed'))
+        .mockResolvedValueOnce({ data: {} });
+      const res = await request(app).post('/api/detect-tenant').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.tenantId).toBeUndefined();
+    });
+
+    test('handles empty schema results gracefully', async () => {
+      (axios.get as jest.Mock)
+        .mockRejectedValueOnce(new Error('stats failed'))
+        .mockResolvedValueOnce({ data: { results: [] } });
+      const res = await request(app).post('/api/detect-tenant').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.tenantId).toBeUndefined();
+    });
+  });
+
+  describe('POST /api/configure - error paths', () => {
+    const VALID_CREDS = {
+      credentials: {
+        values: [
+          { key: 'API_KEY', value: 'my-api-key', enabled: true },
+          { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+          { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+        ],
+        name: 'Test'
+      },
+      sandboxName: 'my-sandbox'
+    };
+
+    test('returns 401 when token acquisition fails', async () => {
+      (tokenManager.getToken as jest.Mock).mockRejectedValueOnce(new Error('invalid creds'));
+      const res = await request(app).post('/api/configure').send(VALID_CREDS);
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toContain('invalid creds');
+    });
+
+    test('returns 400 when sandbox validation fails with 403', async () => {
+      const err403 = Object.assign(new Error('Forbidden'), { isAxiosError: true, response: { status: 403, data: {} } });
+      (listTemplates as jest.Mock).mockRejectedValueOnce(err403);
+      const res = await request(app).post('/api/configure').send(VALID_CREDS);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('not found');
+    });
+
+    test('returns 401 when sandbox validation fails with 401', async () => {
+      const err401 = Object.assign(new Error('Unauthorized'), { isAxiosError: true, response: { status: 401, data: {} } });
+      (listTemplates as jest.Mock).mockRejectedValueOnce(err401);
+      const res = await request(app).post('/api/configure').send(VALID_CREDS);
+      expect(res.status).toBe(401);
+      expect(res.body.error).toContain('401');
+    });
+
+    test('returns 400 for other axios sandbox errors', async () => {
+      const err500 = Object.assign(new Error('Server Error'), { isAxiosError: true, response: { status: 500, data: { title: 'Internal Error' } } });
+      (listTemplates as jest.Mock).mockRejectedValueOnce(err500);
+      const res = await request(app).post('/api/configure').send(VALID_CREDS);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('500');
+    });
+
+    test('returns 400 for non-axios sandbox errors', async () => {
+      (listTemplates as jest.Mock).mockRejectedValueOnce(new Error('connection refused'));
+      const res = await request(app).post('/api/configure').send(VALID_CREDS);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('connection refused');
+    });
+
+    test('skips credentials with enabled:false', async () => {
+      const res = await request(app).post('/api/configure').send({
+        credentials: {
+          values: [
+            { key: 'IGNORED_KEY', value: 'secret', enabled: false },
+            { key: 'API_KEY', value: 'my-api-key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    test('handles SCOPES as a comma-separated string', async () => {
+      const res = await request(app).post('/api/configure').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'my-api-key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true },
+            { key: 'SCOPES', value: 'openid,AdobeID', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    test('handles SCOPES as an array', async () => {
+      const res = await request(app).post('/api/configure').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'my-api-key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true },
+            { key: 'SCOPES', value: ['openid', 'AdobeID'], enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+  });
+
+  describe('POST /mcp', () => {
+    test('handles an initialize message and routes through transport', async () => {
+      const res = await request(app).post('/mcp').send({
+        jsonrpc: '2.0',
+        method: 'initialize',
+        id: 1,
+        params: {
+          clientInfo: { name: 'TestMcpClient', version: '2.0.0' },
+          capabilities: {}
+        }
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+    });
+
+    test('handles non-initialize messages', async () => {
+      const res = await request(app).post('/mcp').send({
+        jsonrpc: '2.0',
+        method: 'tools/list',
+        id: 2,
+        params: {}
+      });
+      expect(res.status).toBe(200);
+    });
+
+    test('handles a batch array of messages', async () => {
+      const res = await request(app).post('/mcp').send([
+        { jsonrpc: '2.0', method: 'tools/list', id: 1, params: {} }
+      ]);
+      expect(res.status).toBe(200);
+    });
+
+    test('handles initialize with missing clientInfo gracefully', async () => {
+      const res = await request(app).post('/mcp').send({
+        jsonrpc: '2.0',
+        method: 'initialize',
+        id: 3,
+        params: { capabilities: {} }
+      });
+      expect(res.status).toBe(200);
+    });
+
+    test('GET /mcp tracks SSE stream when lastHttpInit is set from prior initialize', async () => {
+      // lastHttpInit was set by 'handles an initialize message' test above (same app instance)
+      const res = await request(app).get('/mcp');
+      expect(res.status).toBe(200);
     });
   });
 });

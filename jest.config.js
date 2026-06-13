@@ -2,6 +2,11 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
+  globals: {
+    'ts-jest': {
+      tsconfig: '<rootDir>/tests/tsconfig.json'
+    }
+  },
   roots: ['<rootDir>/tests'],
   testMatch: ['**/*.test.ts'],
   collectCoverageFrom: [
@@ -17,6 +22,6 @@ module.exports = {
     }
   },
   moduleNameMapper: {
-    '^(.+)\\.js$': '$1'
+    '^(\\.{1,2}\\/.+)\\.js$': '$1'
   }
 };

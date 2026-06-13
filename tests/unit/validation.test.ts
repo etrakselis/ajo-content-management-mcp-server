@@ -2,7 +2,9 @@ import {
   CreateTemplateSchema,
   CreateFragmentSchema,
   PatchRequestSchema,
-  CredentialsFileSchema
+  CredentialsFileSchema,
+  ArchiveFragmentSchema,
+  UpdateFragmentSchema
 } from '../../src/validation/schemas';
 
 describe('Validation Schemas', () => {
@@ -101,6 +103,65 @@ describe('Validation Schemas', () => {
 
     test('rejects empty array', () => {
       const result = PatchRequestSchema.safeParse([]);
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('UpdateFragmentSchema — source field', () => {
+    test('accepts payload without source (optional)', () => {
+      const result = UpdateFragmentSchema.safeParse({
+        fragmentId: 'b6d70a45-a149-453b-85ba-809a5d40066d',
+        etag: '"v1"',
+        name: 'Updated Fragment',
+        type: 'html',
+        channels: ['email'],
+        fragment: { content: '<div>Hi</div>' }
+      });
+      expect(result.success).toBe(true);
+    });
+
+    test('accepts payload with explicit source', () => {
+      const result = UpdateFragmentSchema.safeParse({
+        fragmentId: 'b6d70a45-a149-453b-85ba-809a5d40066d',
+        etag: '"v1"',
+        name: 'Updated Fragment',
+        type: 'html',
+        channels: ['email'],
+        fragment: { content: '<div>Hi</div>' },
+        source: { origin: 'external' }
+      });
+      expect(result.success).toBe(true);
+    });
+
+    test('rejects unknown source origin', () => {
+      const result = UpdateFragmentSchema.safeParse({
+        fragmentId: 'b6d70a45-a149-453b-85ba-809a5d40066d',
+        etag: '"v1"',
+        name: 'Updated Fragment',
+        type: 'html',
+        channels: ['email'],
+        fragment: {},
+        source: { origin: 'aem' }
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('ArchiveFragmentSchema', () => {
+    test('accepts valid UUID', () => {
+      const result = ArchiveFragmentSchema.safeParse({
+        fragmentId: 'b6d70a45-a149-453b-85ba-809a5d40066d'
+      });
+      expect(result.success).toBe(true);
+    });
+
+    test('rejects non-UUID fragmentId', () => {
+      const result = ArchiveFragmentSchema.safeParse({ fragmentId: 'not-a-uuid' });
+      expect(result.success).toBe(false);
+    });
+
+    test('rejects missing fragmentId', () => {
+      const result = ArchiveFragmentSchema.safeParse({});
       expect(result.success).toBe(false);
     });
   });
