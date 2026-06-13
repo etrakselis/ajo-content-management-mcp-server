@@ -285,6 +285,46 @@ export const landingPageHtml = `<!DOCTYPE html>
     .error-msg.show { display: block; }
     .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .replace-btn {
+      margin-left: auto;
+      padding: 4px 10px;
+      border: 1px solid rgba(38,142,108,0.3);
+      background: white;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      font-family: inherit;
+      color: var(--adobe-success);
+      flex-shrink: 0;
+    }
+    .replace-btn:hover { background: rgba(38,142,108,0.06); }
+    .conn-info {
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 16px;
+      padding: 14px 16px;
+      border: 1px solid rgba(38,142,108,0.3);
+      background: rgba(38,142,108,0.05);
+      border-radius: 6px;
+    }
+    .conn-info.show { display: flex; }
+    .conn-row { display: flex; align-items: center; gap: 12px; }
+    .conn-key { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--adobe-mid); width: 150px; flex-shrink: 0; }
+    .conn-val { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px; font-weight: 600; color: var(--adobe-dark); word-break: break-all; }
+    .conn-val.warn { color: var(--adobe-warn); font-family: var(--font-display); font-weight: 500; }
+    .org-fallback { display: none; flex-direction: column; gap: 6px; margin-top: 16px; }
+    .org-fallback.show { display: flex; }
+    .org-fallback-note {
+      font-size: 12px;
+      color: var(--adobe-warn);
+      background: rgba(230,134,25,0.08);
+      border: 1px solid rgba(230,134,25,0.25);
+      border-radius: 6px;
+      padding: 10px 12px;
+      line-height: 1.5;
+      margin-bottom: 4px;
+    }
   </style>
 </head>
 <body>
@@ -299,14 +339,14 @@ export const landingPageHtml = `<!DOCTYPE html>
   <main>
     <div class="hero">
       <h1>Connect to Adobe Journey Optimizer</h1>
-      <p>Upload your credentials file and configure a sandbox to activate the MCP server. LLM clients can then manage content templates and fragments via standardized tools.</p>
+      <p>Upload your credentials file and define the sandbox to activate the MCP server. LLM clients can then manage content templates and fragments via standardized tools.</p>
     </div>
 
     <!-- Step 1: Credentials -->
     <div class="step-label">Step 1 — Credentials</div>
     <div class="card">
       <h2>Upload environment file</h2>
-      <p>Drag and drop your <code>environment-variables.json</code> file or click to browse. Credentials are stored in memory only — never written to disk or logged.</p>
+      <p>Drag and drop your <code>oauth_server_to_server.json</code> file or click to browse. Credentials are stored in memory only — never written to disk or logged.</p>
       <div class="dropzone" id="dropzone">
         <input type="file" id="fileInput" accept=".json" />
         <div class="dropzone-icon">
@@ -322,6 +362,7 @@ export const landingPageHtml = `<!DOCTYPE html>
           <path d="M20 6L9 17l-5-5"/>
         </svg>
         <span id="fileName">File loaded</span>
+        <button class="replace-btn" id="replaceFileBtn" type="button">Replace</button>
       </div>
     </div>
 
@@ -330,11 +371,6 @@ export const landingPageHtml = `<!DOCTYPE html>
     <div class="card">
       <h2>Select sandbox</h2>
       <p>Enter the Adobe Experience Platform sandbox name to target. All API calls will be scoped to this sandbox.</p>
-      <div class="field-group" style="margin-bottom:16px">
-        <label for="orgInput">Organization name <span style="font-weight:400;color:var(--adobe-mid)">(optional)</span></label>
-        <input type="text" id="orgInput" placeholder="e.g. Adobe, Acme Corp" autocomplete="off" />
-        <span class="hint">Your company or AJO customer name. Shown to the LLM to identify the tenant.</span>
-      </div>
       <div class="field-group">
         <label for="sandboxInput">Sandbox name</label>
         <input type="text" id="sandboxInput" placeholder="e.g. prod or cjm-team" autocomplete="off" />
@@ -349,6 +385,28 @@ export const landingPageHtml = `<!DOCTYPE html>
       <button class="btn-primary" id="startBtn" disabled>
         Start MCP Server
       </button>
+
+      <!-- Connection summary — shown right below the button once the server is active -->
+      <div class="conn-info" id="connInfo">
+        <div class="conn-row">
+          <span class="conn-key">Tenant namespace</span>
+          <span class="conn-val" id="connNamespace">—</span>
+        </div>
+        <div class="conn-row">
+          <span class="conn-key">Sandbox</span>
+          <span class="conn-val" id="connSandbox">—</span>
+        </div>
+      </div>
+
+      <!-- Organization name — revealed only if tenant namespace can't be auto-detected -->
+      <div class="org-fallback" id="orgFallback">
+        <div class="org-fallback-note">
+          We couldn't auto-detect your tenant namespace from the Schema Registry. Enter your organization name so the LLM can identify the tenant, then re-activate.
+        </div>
+        <label for="orgInput">Organization name</label>
+        <input type="text" id="orgInput" placeholder="e.g. Adobe, Acme Corp" autocomplete="off" />
+        <span class="hint">Your company or AJO customer name. Shown to the LLM to identify the tenant.</span>
+      </div>
     </div>
 
     <!-- Status Panel (shown after start) -->
@@ -371,12 +429,13 @@ export const landingPageHtml = `<!DOCTYPE html>
       <div class="divider"></div>
       <div class="connect-section">
         <h3>Connection instructions</h3>
-        <div class="client-tabs">
-          <button class="tab-btn active" onclick="showClient('claude-code')">Claude Code</button>
-          <button class="tab-btn" onclick="showClient('claude-desktop')">Claude Desktop</button>
-          <button class="tab-btn" onclick="showClient('cursor')">Cursor</button>
-          <button class="tab-btn" onclick="showClient('continue')">Continue</button>
-          <button class="tab-btn" onclick="showClient('generic')">Generic</button>
+        <div class="client-tabs" id="clientTabs">
+          <button class="tab-btn active" data-client="claude-code">Claude Code</button>
+          <button class="tab-btn" data-client="claude-desktop">Claude Desktop</button>
+          <button class="tab-btn" data-client="cursor">Cursor</button>
+          <button class="tab-btn" data-client="codex-cli">Codex CLI</button>
+          <button class="tab-btn" data-client="codex-desktop">Codex Desktop</button>
+          <button class="tab-btn" data-client="generic">Generic</button>
         </div>
         <div class="code-block" id="clientCode">
           <button class="code-copy" onclick="copyCode()">Copy</button>
@@ -417,17 +476,17 @@ export const landingPageHtml = `<!DOCTYPE html>
     "type": "http"
   }
 }\`,
-      'continue': () => \`# .continue/config.json:
-{
-  "experimental": {
-    "modelContextProtocolServers": [{
-      "transport": {
-        "type": "streamableHttp",
-        "url": "\${serverUrl}/mcp"
-      }
-    }]
-  }
-}\`,
+      'codex-cli': () => \`# Codex CLI — \\\`codex mcp add\\\` only supports stdio servers,
+# so add the streamable HTTP endpoint to ~/.codex/config.toml:
+
+[mcp_servers.ajo-content]
+url = "\${serverUrl}/mcp"\`,
+      'codex-desktop': () => \`# Codex IDE extension / desktop app reads the same
+# config file as the CLI. Add to ~/.codex/config.toml,
+# then restart Codex:
+
+[mcp_servers.ajo-content]
+url = "\${serverUrl}/mcp"\`,
       'generic': () => \`# HTTP Streamable MCP endpoint:
 \${serverUrl}/mcp
 
@@ -435,13 +494,13 @@ export const landingPageHtml = `<!DOCTYPE html>
 docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
     };
 
-    function showClient(id) {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().replace(' ', '-') === id || (id === 'claude-code' && b.textContent === 'Claude Code') || (id === 'claude-desktop' && b.textContent === 'Claude Desktop')));
-      // simpler active toggle
+    document.getElementById('clientTabs').addEventListener('click', (e) => {
+      const btn = e.target.closest('.tab-btn');
+      if (!btn) return;
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      event.target.classList.add('active');
-      document.getElementById('codeContent').textContent = configs[id]();
-    }
+      btn.classList.add('active');
+      document.getElementById('codeContent').textContent = configs[btn.dataset.client]();
+    });
 
     function copyText(id) {
       const el = document.getElementById(id);
@@ -490,11 +549,45 @@ docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
       reader.readAsText(file);
     }
 
-    document.getElementById('sandboxInput').addEventListener('input', checkReady);
+    // Allow swapping in a different credentials file without reloading the page
+    document.getElementById('replaceFileBtn').addEventListener('click', () => {
+      credentials = null;
+      fileInput.value = '';
+      document.getElementById('fileAccepted').classList.remove('show');
+      dropzone.style.display = '';
+      resetActivationUI();
+      checkReady();
+    });
+
+    // Reset everything that activation produced, back to the pre-launch state
+    function resetActivationUI() {
+      needsOrg = false;
+      const btn = document.getElementById('startBtn');
+      btn.innerHTML = 'Start MCP Server';
+      btn.style.background = '';
+      btn.disabled = false;
+      document.getElementById('statusPanel').classList.remove('show');
+      document.getElementById('connInfo').classList.remove('show');
+      document.getElementById('orgFallback').classList.remove('show');
+      document.getElementById('orgInput').value = '';
+      document.getElementById('statusBadge').textContent = 'Not configured';
+      document.getElementById('errorMsg').classList.remove('show');
+    }
+
+    let needsOrg = false;
+    const startBtn = document.getElementById('startBtn');
+
+    document.getElementById('sandboxInput').addEventListener('input', () => {
+      // Changing the sandbox invalidates any prior detection / activation
+      if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) {
+        resetActivationUI();
+      }
+      checkReady();
+    });
 
     function checkReady() {
       const sandbox = document.getElementById('sandboxInput').value.trim();
-      document.getElementById('startBtn').disabled = !credentials || !sandbox;
+      startBtn.disabled = !credentials || !sandbox;
     }
 
     function showError(msg) {
@@ -503,58 +596,105 @@ docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
       el.classList.add('show');
     }
 
-    document.getElementById('startBtn').addEventListener('click', async () => {
-      const btn = document.getElementById('startBtn');
-      const errorEl = document.getElementById('errorMsg');
-      btn.disabled = true;
-      errorEl.classList.remove('show');
+    function spinner(text) { return '<div class="spinner"></div> ' + text; }
 
+    function failStart(msg) {
+      showError(msg);
+      startBtn.disabled = false;
+      startBtn.innerHTML = needsOrg ? 'Activate MCP Server' : 'Start MCP Server';
+    }
+
+    async function postJson(url, body) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      return res.json();
+    }
+
+    startBtn.addEventListener('click', async () => {
       const sandbox = document.getElementById('sandboxInput').value.trim();
       const org = document.getElementById('orgInput').value.trim();
+      document.getElementById('errorMsg').classList.remove('show');
 
-      const steps = [
-        'Validating credentials…',
-        'Detecting tenant…',
-        'Validating sandbox…'
-      ];
-      let stepIndex = 0;
-      btn.innerHTML = \`<div class="spinner"></div> \${steps[0]}\`;
-      const stepTimer = setInterval(() => {
-        stepIndex = Math.min(stepIndex + 1, steps.length - 1);
-        btn.innerHTML = \`<div class="spinner"></div> \${steps[stepIndex]}\`;
-      }, 2500);
-
-      try {
-        const res = await fetch('/api/configure', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credentials, sandboxName: sandbox, orgName: org || undefined })
-        });
-        clearInterval(stepTimer);
-        const data = await res.json();
-
-        if (!data.success) {
-          showError(data.error || 'Configuration failed.');
-          btn.disabled = false;
-          btn.innerHTML = 'Start MCP Server';
+      // Phase 1: probe for the tenant namespace BEFORE activating, so the org
+      // input can be revealed up front when detection isn't possible.
+      if (!needsOrg) {
+        startBtn.disabled = true;
+        startBtn.innerHTML = spinner('Detecting tenant…');
+        let detect;
+        try {
+          detect = await postJson('/api/detect-tenant', { credentials, sandboxName: sandbox });
+        } catch (err) {
+          return failStart('Network error: ' + err.message);
+        }
+        if (!detect.success) {
+          return failStart(detect.error || 'Could not validate credentials.');
+        }
+        if (!detect.tenantNamespace) {
+          // No namespace — reveal the org input and wait for the user before activating
+          needsOrg = true;
+          document.getElementById('orgFallback').classList.add('show');
+          startBtn.disabled = false;
+          startBtn.innerHTML = 'Activate MCP Server';
+          document.getElementById('orgInput').focus();
           return;
         }
+        // Namespace found — fall through and activate immediately
+      }
 
-        const nsLabel = data.tenantNamespace ? data.tenantNamespace + ' · ' : '';
-        const orgLabel = org ? org + ' · ' : '';
-        document.getElementById('statusBadge').textContent = orgLabel + nsLabel + sandbox + ' · Active';
-        document.getElementById('httpEndpoint').textContent = serverUrl + '/mcp';
-        document.getElementById('statusPanel').classList.add('show');
-        document.getElementById('codeContent').textContent = configs['claude-code']();
-        btn.innerHTML = '✓ Server Active';
-        btn.style.background = 'var(--adobe-success)';
+      await activate(sandbox, org);
+    });
+
+    async function activate(sandbox, org) {
+      startBtn.disabled = true;
+      const steps = ['Validating credentials…', 'Detecting tenant…', 'Validating sandbox…'];
+      let i = 0;
+      startBtn.innerHTML = spinner(steps[0]);
+      const stepTimer = setInterval(() => {
+        i = Math.min(i + 1, steps.length - 1);
+        startBtn.innerHTML = spinner(steps[i]);
+      }, 2000);
+
+      let data;
+      try {
+        data = await postJson('/api/configure', { credentials, sandboxName: sandbox, orgName: org || undefined });
       } catch (err) {
         clearInterval(stepTimer);
-        showError('Network error: ' + err.message);
-        btn.disabled = false;
-        btn.innerHTML = 'Start MCP Server';
+        return failStart('Network error: ' + err.message);
       }
-    });
+      clearInterval(stepTimer);
+
+      if (!data.success) {
+        return failStart(data.error || 'Configuration failed.');
+      }
+
+      // Server is active — render the connection summary right below the button
+      document.getElementById('statusBadge').textContent = 'Active';
+      document.getElementById('httpEndpoint').textContent = serverUrl + '/mcp';
+      document.getElementById('statusPanel').classList.add('show');
+      document.getElementById('codeContent').textContent = configs[document.querySelector('.tab-btn.active').dataset.client]();
+      document.getElementById('connSandbox').textContent = sandbox;
+      document.getElementById('connInfo').classList.add('show');
+
+      const connNs = document.getElementById('connNamespace');
+      if (data.tenantNamespace) {
+        connNs.textContent = data.tenantNamespace;
+        connNs.classList.remove('warn');
+        document.getElementById('orgFallback').classList.remove('show');
+      } else if (org) {
+        connNs.textContent = org + ' (manual)';
+        connNs.classList.remove('warn');
+      } else {
+        connNs.textContent = 'Not auto-detected';
+        connNs.classList.add('warn');
+      }
+
+      startBtn.disabled = true;
+      startBtn.innerHTML = '✓ Server Active';
+      startBtn.style.background = 'var(--adobe-success)';
+    }
   </script>
 </body>
 </html>`;

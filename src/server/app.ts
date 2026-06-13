@@ -12,6 +12,153 @@ import { createMcpServer, createHttpTransport } from '../mcp/server.js';
 import { logger, metricsRegistry } from '../telemetry/index.js';
 import { landingPageHtml } from '../ui/landing.js';
 
+// ─── Shared configuration helpers ──────────────────────────────────────────
+
+type ParsedConfigRequest =
+  | { ok: true; creds: AdobeCredentials; sandboxName: string; orgName?: string }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Validate an /api/configure or /api/detect-tenant request body and extract a
+ * normalized set of Adobe credentials. Shared so both endpoints apply identical
+ * validation rules.
+ */
+function parseConfigRequest(body: Record<string, unknown>): ParsedConfigRequest {
+  const { credentials, sandboxName, orgName } = body as {
+    credentials?: unknown;
+    sandboxName?: string;
+    orgName?: unknown;
+  };
+
+  if (!credentials || !sandboxName) {
+    return { ok: false, status: 400, error: 'credentials and sandboxName are required' };
+  }
+
+  if (!sandboxName.match(/^[a-zA-Z0-9_-]{1,50}$/)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'Invalid sandbox name. Use alphanumeric characters, hyphens, and underscores only.'
+    };
+  }
+
+  const parsed = CredentialsFileSchema.safeParse(credentials);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'Invalid credentials file format: ' + parsed.error.errors.map(e => e.message).join(', ')
+    };
+  }
+
+  const creds: Partial<AdobeCredentials> = {};
+  for (const val of parsed.data.values) {
+    if (!val.enabled && val.enabled !== undefined) continue;
+    const key = val.key as keyof AdobeCredentials;
+    if (key === 'SCOPES') {
+      (creds as Record<string, unknown>)[key] = Array.isArray(val.value)
+        ? val.value
+        : String(val.value).split(',').map(s => s.trim());
+    } else {
+      (creds as Record<string, unknown>)[key] = Array.isArray(val.value)
+        ? val.value.join(',')
+        : String(val.value);
+    }
+  }
+
+  const required: (keyof AdobeCredentials)[] = ['API_KEY', 'IMS_ORG'];
+  const missing = required.filter(k => !creds[k]);
+  if (missing.length > 0) {
+    return { ok: false, status: 400, error: `Missing required credential fields: ${missing.join(', ')}` };
+  }
+
+  return {
+    ok: true,
+    creds: creds as AdobeCredentials,
+    sandboxName,
+    orgName: typeof orgName === 'string' && orgName.trim() ? orgName.trim() : undefined
+  };
+}
+
+/**
+ * Attempt to auto-detect the AEP tenant namespace via the Schema Registry.
+ * Non-fatal: returns undefined if detection isn't possible. Logs the HTTP
+ * status/body of each attempt to make 403s (missing permission) distinguishable
+ * from an empty sandbox.
+ */
+async function detectTenantNamespace(
+  accessToken: string,
+  apiKey: string,
+  imsOrg: string,
+  sandboxName: string
+): Promise<string | undefined> {
+  const schemaRegistryHeaders = {
+    'Authorization': `Bearer ${accessToken}`,
+    'x-api-key': apiKey,
+    'x-gw-ims-org-id': imsOrg,
+    'x-sandbox-name': sandboxName,
+    'Accept': 'application/json'
+  };
+
+  let detectedTenantId: string | undefined;
+
+  // Primary: /stats endpoint (requires Schema Registry permission)
+  try {
+    const statsResp = await axios.get(
+      'https://platform.adobe.io/data/foundation/schemaregistry/stats',
+      { headers: schemaRegistryHeaders, timeout: 8000 }
+    );
+    if (statsResp.data?.tenantId) {
+      detectedTenantId = String(statsResp.data.tenantId);
+      logger.info('Auto-detected tenant namespace via /stats', { tenantId: detectedTenantId });
+    }
+  } catch (statsErr) {
+    const statsStatus = axios.isAxiosError(statsErr) ? statsErr.response?.status : null;
+    const statsBody = axios.isAxiosError(statsErr) ? statsErr.response?.data : null;
+    logger.warn('Schema Registry /stats failed', { status: statsStatus, body: statsBody });
+
+    // Fallback: parse tenant from first custom schema's $id or meta:altId
+    try {
+      const schemasResp = await axios.get(
+        'https://platform.adobe.io/data/foundation/schemaregistry/tenant/schemas',
+        {
+          headers: { ...schemaRegistryHeaders, 'Accept': 'application/vnd.adobe.xed-id+json' },
+          params: { limit: 1 },
+          timeout: 8000
+        }
+      );
+      const results = schemasResp.data?.results ?? schemasResp.data;
+      const first = Array.isArray(results) ? results[0] : null;
+      if (first) {
+        // meta:altId: "_acme.schemas.xxx" → "acme"
+        const altId: string = first['meta:altId'] ?? '';
+        const altMatch = altId.match(/^_([^.]+)\./);
+        if (altMatch) {
+          detectedTenantId = altMatch[1];
+        } else {
+          // $id: "https://ns.adobe.com/acme/schemas/xxx" → "acme"
+          const id: string = first['$id'] ?? '';
+          const idMatch = id.match(/ns\.adobe\.com\/([^/]+)\/schemas\//);
+          if (idMatch) detectedTenantId = idMatch[1];
+        }
+        if (detectedTenantId) {
+          logger.info('Auto-detected tenant namespace via /tenant/schemas', { tenantId: detectedTenantId });
+        } else {
+          logger.warn('Schema Registry /tenant/schemas returned data but could not extract tenantId', { first });
+        }
+      } else {
+        logger.warn('Schema Registry /tenant/schemas returned no schemas', { data: schemasResp.data });
+      }
+    } catch (fallbackErr) {
+      const fallbackStatus = axios.isAxiosError(fallbackErr) ? fallbackErr.response?.status : null;
+      const fallbackBody = axios.isAxiosError(fallbackErr) ? fallbackErr.response?.data : null;
+      logger.warn('Schema Registry /tenant/schemas also failed', { status: fallbackStatus, body: fallbackBody });
+    }
+  }
+
+  return detectedTenantId;
+}
+
 export function createExpressApp(): express.Application {
   const app = express();
 
@@ -85,60 +232,53 @@ export function createExpressApp(): express.Application {
 
   // ─── Configuration API ────────────────────────────────────────────────────
 
-  app.post('/api/configure', authLimiter, async (req: Request, res: Response) => {
-    const { credentials, sandboxName, orgName } = req.body;
-
-    if (!credentials || !sandboxName) {
-      return res.status(400).json({
-        success: false,
-        error: 'credentials and sandboxName are required'
-      });
+  // Lightweight probe: validate credentials and attempt tenant-namespace
+  // detection WITHOUT activating the server. The landing page calls this before
+  // configuring so it can reveal the org-name input up front when the namespace
+  // can't be auto-detected.
+  app.post('/api/detect-tenant', authLimiter, async (req: Request, res: Response) => {
+    const parsedReq = parseConfigRequest(req.body);
+    if (!parsedReq.ok) {
+      return res.status(parsedReq.status).json({ success: false, error: parsedReq.error });
     }
-
-    if (!sandboxName.match(/^[a-zA-Z0-9_-]{1,50}$/)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid sandbox name. Use alphanumeric characters, hyphens, and underscores only.'
-      });
-    }
-
-    // Validate credentials structure
-    const parsed = CredentialsFileSchema.safeParse(credentials);
-    if (!parsed.success) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid credentials file format: ' + parsed.error.errors.map(e => e.message).join(', ')
-      });
-    }
-
-    // Extract credential values
-    const creds: Partial<AdobeCredentials> = {};
-    for (const val of parsed.data.values) {
-      if (!val.enabled && val.enabled !== undefined) continue;
-      const key = val.key as keyof AdobeCredentials;
-      if (key === 'SCOPES') {
-        (creds as Record<string, unknown>)[key] = Array.isArray(val.value)
-          ? val.value
-          : String(val.value).split(',').map(s => s.trim());
-      } else {
-        (creds as Record<string, unknown>)[key] = Array.isArray(val.value)
-          ? val.value.join(',')
-          : String(val.value);
-      }
-    }
-
-    // Validate required fields
-    const required: (keyof AdobeCredentials)[] = ['API_KEY', 'IMS_ORG'];
-    const missing = required.filter(k => !creds[k]);
-    if (missing.length > 0) {
-      return res.status(400).json({
-        success: false,
-        error: `Missing required credential fields: ${missing.join(', ')}`
-      });
-    }
+    const { creds, sandboxName } = parsedReq;
 
     // Apply credentials so the token manager can acquire an IMS token
-    tokenManager.setCredentials(creds as AdobeCredentials);
+    tokenManager.setCredentials(creds);
+
+    let accessToken: string;
+    try {
+      accessToken = await tokenManager.getToken();
+    } catch (err) {
+      tokenManager.reset();
+      const detail = err instanceof Error ? err.message : String(err);
+      logger.warn('Credential validation failed during detect-tenant', { error: detail });
+      return res.status(401).json({
+        success: false,
+        error: `Invalid credentials: ${detail}. Check your CLIENT_SECRET, API_KEY, and TECHNICAL_ACCOUNT_ID.`
+      });
+    }
+
+    const detectedTenantId = await detectTenantNamespace(
+      accessToken, creds.API_KEY!, creds.IMS_ORG!, sandboxName
+    );
+
+    return res.json({
+      success: true,
+      tenantId: detectedTenantId,
+      tenantNamespace: detectedTenantId ? `_${detectedTenantId}` : undefined
+    });
+  });
+
+  app.post('/api/configure', authLimiter, async (req: Request, res: Response) => {
+    const parsedReq = parseConfigRequest(req.body);
+    if (!parsedReq.ok) {
+      return res.status(parsedReq.status).json({ success: false, error: parsedReq.error });
+    }
+    const { creds, sandboxName, orgName } = parsedReq;
+
+    // Apply credentials so the token manager can acquire an IMS token
+    tokenManager.setCredentials(creds);
 
     // ── Step 1: validate credentials by acquiring an IMS token ────────────────
     let accessToken: string;
@@ -155,76 +295,16 @@ export function createExpressApp(): express.Application {
     }
 
     // ── Step 2: auto-detect tenant namespace via Schema Registry (non-fatal) ──
-    const schemaRegistryHeaders = {
-      'Authorization': `Bearer ${accessToken}`,
-      'x-api-key': creds.API_KEY!,
-      'x-gw-ims-org-id': creds.IMS_ORG!,
-      'x-sandbox-name': sandboxName,
-      'Accept': 'application/json'
-    };
-
-    let detectedTenantId: string | undefined;
-
-    // Primary: /stats endpoint (requires Schema Registry permission)
-    try {
-      const statsResp = await axios.get(
-        'https://platform.adobe.io/data/foundation/schemaregistry/stats',
-        { headers: schemaRegistryHeaders, timeout: 8000 }
-      );
-      if (statsResp.data?.tenantId) {
-        detectedTenantId = String(statsResp.data.tenantId);
-        logger.info('Auto-detected tenant namespace via /stats', { tenantId: detectedTenantId });
-      }
-    } catch (statsErr) {
-      const statsStatus = axios.isAxiosError(statsErr) ? statsErr.response?.status : null;
-      const statsBody = axios.isAxiosError(statsErr) ? statsErr.response?.data : null;
-      logger.warn('Schema Registry /stats failed', { status: statsStatus, body: statsBody });
-
-      // Fallback: parse tenant from first custom schema's $id or meta:altId
-      try {
-        const schemasResp = await axios.get(
-          'https://platform.adobe.io/data/foundation/schemaregistry/tenant/schemas',
-          {
-            headers: { ...schemaRegistryHeaders, 'Accept': 'application/vnd.adobe.xed-id+json' },
-            params: { limit: 1 },
-            timeout: 8000
-          }
-        );
-        const results = schemasResp.data?.results ?? schemasResp.data;
-        const first = Array.isArray(results) ? results[0] : null;
-        if (first) {
-          // meta:altId: "_acme.schemas.xxx" → "acme"
-          const altId: string = first['meta:altId'] ?? '';
-          const altMatch = altId.match(/^_([^.]+)\./);
-          if (altMatch) {
-            detectedTenantId = altMatch[1];
-          } else {
-            // $id: "https://ns.adobe.com/acme/schemas/xxx" → "acme"
-            const id: string = first['$id'] ?? '';
-            const idMatch = id.match(/ns\.adobe\.com\/([^/]+)\/schemas\//);
-            if (idMatch) detectedTenantId = idMatch[1];
-          }
-          if (detectedTenantId) {
-            logger.info('Auto-detected tenant namespace via /tenant/schemas', { tenantId: detectedTenantId });
-          } else {
-            logger.warn('Schema Registry /tenant/schemas returned data but could not extract tenantId', { first });
-          }
-        } else {
-          logger.warn('Schema Registry /tenant/schemas returned no schemas', { data: schemasResp.data });
-        }
-      } catch (fallbackErr) {
-        const fallbackStatus = axios.isAxiosError(fallbackErr) ? fallbackErr.response?.status : null;
-        const fallbackBody = axios.isAxiosError(fallbackErr) ? fallbackErr.response?.data : null;
-        logger.warn('Schema Registry /tenant/schemas also failed', { status: fallbackStatus, body: fallbackBody });
-      }
-    }
+    const detectedTenantId = await detectTenantNamespace(
+      accessToken, creds.API_KEY!, creds.IMS_ORG!, sandboxName
+    );
 
     // Configure client with all info (including auto-detected tenant ID)
     configureAdobeClient({
       sandboxName,
       imsOrg: creds.IMS_ORG!,
       apiKey: creds.API_KEY!,
-      orgName: typeof orgName === 'string' && orgName.trim() ? orgName.trim() : undefined,
+      orgName,
       tenantId: detectedTenantId
     });
 
