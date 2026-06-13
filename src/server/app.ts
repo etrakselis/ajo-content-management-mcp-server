@@ -397,15 +397,26 @@ export function createExpressApp(): express.Application {
           if (ci?.name) {
             const name = String(ci.name);
             const version = ci.version ? String(ci.version) : undefined;
-            recordClient(name, version, 'http');
-            lastHttpInit = { name, version };
+            // recordClient returns false for filtered names (e.g. mcp-remote's
+            // probe) — only adopt it as the current client if it stuck.
+            if (recordClient(name, version, 'http')) {
+              lastHttpInit = { name, version };
+            }
           }
         }
       }
 
+      // Any request (tool call, ping, notification, SSE stream) is activity for
+      // the current client. clientInfo only rides on `initialize`, so without
+      // this a connected client would silently age off the list between
+      // handshakes even while actively running tools.
+      if (lastHttpInit) {
+        recordClient(lastHttpInit.name, lastHttpInit.version, 'http');
+      }
+
       // The standalone GET SSE stream is held open for the life of the session.
-      // Track it as a live connection and drop the client when it closes — this
-      // is the signal that e.g. Claude Desktop (via mcp-remote) has exited.
+      // Track it as a live connection so the client shows even while idle, and
+      // refresh on close so it ages out only after it truly disconnects.
       if (req.method === 'GET' && lastHttpInit) {
         const { name, version } = lastHttpInit;
         openStream(name, version);

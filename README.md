@@ -1,6 +1,6 @@
 # AJO Content MCP Server
 
-A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Journey Optimizer Content Management APIs to LLM-powered clients. AI agents can create, retrieve, update, delete,   content templates and create, retrieve, update, delete and publish content fragments directly through natural language.
+A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Journey Optimizer Content Management APIs to LLM-powered clients. AI agents can create, retrieve, update, delete,   content templates and create, retrieve, update, archive and publish content fragments directly through natural language.
 
 ---
 
@@ -274,16 +274,31 @@ Drag and drop your credentials file. The expected format matches the Postman env
 }
 ```
 
-Notes:
-- **`SCOPES`** is an array of strings (not a comma-separated string).
-- **`name`** labels the credential set — it's shown on the landing page after upload so you can confirm you loaded the right file.
-- Only `API_KEY` and `IMS_ORG` are strictly required; provide `CLIENT_SECRET` (+ `TECHNICAL_ACCOUNT_ID`, `IMS`, `SCOPES`) for the OAuth server-to-server flow, or a pre-obtained `ACCESS_TOKEN` instead.
+#### What each field is for
+
+**Always required** — every setup needs these two:
+
+| Field | What it is |
+|-------|------------|
+| `API_KEY` | Your integration's Client ID from the Adobe Developer Console. |
+| `IMS_ORG` | Your Adobe organization ID (looks like `XXedwin@AdobeOrg`). |
+
+**Authentication — pick *one* of these two approaches:**
+
+- **Option A — let the server log in for you (recommended).** Provide `CLIENT_SECRET`, `TECHNICAL_ACCOUNT_ID`, `IMS`, and `SCOPES`. The server uses these to fetch an access token automatically and refreshes it as needed. In this case you can leave `ACCESS_TOKEN` blank.
+- **Option B — supply your own token.** Paste a token you already obtained into `ACCESS_TOKEN` and leave the Option A fields blank. Note the server **cannot refresh** this token, so it stops working once the token expires and you'll need to upload a new one.
+
+**Formatting / informational:**
+
+- **`SCOPES`** must be a JSON **array of strings** (e.g. `["openid", "AdobeID", ...]`), not a single comma-separated string.
+- **`name`** is just a label for the credential set. After you upload the file it's displayed on the landing page so you can confirm you loaded the right one.
+- **`type`** and **`enabled`** come from Adobe's Postman export — leave them as they are.
 
 > Credentials are stored in memory only. They are never written to disk, logged, or returned through tools.
 
 ### 3. Enter sandbox name
 
-Type the target Adobe Experience Platform sandbox (e.g. `prod` or `cjm-team`).
+You can find the sandbox name from the url of your AJO instance, look for the parameter called "sname:". Traditionally the sandboxes are named like "dev", "staging", "prod" but the exact name needs to be verified since they aren't enforced and can vary slightly between the orgs.
 
 ### 4. Click "Start MCP Server"
 
@@ -523,27 +538,47 @@ To confirm this server did the work, use authoritative signals instead:
 
 If a client also has **cloud Adobe/AJO connectors** enabled (e.g. via its connectors UI), their tools overlap in purpose with this server's and the model may conflate them. Disable the ones you aren't using so `et-ajo-content-mgmt` is unambiguous.
 
-### Connected-client list keeps showing a client after it closed
-The **Connected client** panel tracks the live MCP connection and clears a client within ~10 seconds of it disconnecting (the landing page polls every few seconds). If a client lingers longer:
-- Give it the full grace window — HTTP clients are removed shortly after their session stream closes, not instantly.
-- For Claude Desktop, make sure the app fully quit (not just the window closed) so the `mcp-remote` bridge process actually exits.
-- The list reflects connections to the **running container**; restarting the container (`docker compose restart`) clears it entirely.
+### Connected-client list seems out of date
+The **Connected client** panel reflects recent MCP activity, refreshed by every request a client makes (tool calls, pings, the open session stream). A client stays listed while it's connected or being used, and ages off about a minute after it stops communicating.
+- **A client you just closed still shows:** give it up to ~45 seconds — HTTP clients age out after a short grace window, not instantly. For Claude Desktop, make sure the app fully quit (not just the window closed) so the `mcp-remote` bridge process actually exits.
+- **A connected client isn't listed:** it appears as soon as it sends anything (it registers on connect and on each tool call). If it's missing, it likely hasn't talked to the server recently — run any tool and it'll reappear.
+- The list reflects connections to the **running container**; restarting it (`docker compose restart`) clears the list entirely.
 
 ---
 
 ## Architecture
 
 ```
-src/
-├── auth/           Token manager with caching + refresh
-├── adobe/          AJO API client (axios + retry)
-├── mcp/            MCP server, tool routing, STDIO/HTTP transports
-├── tools/          Tool handlers — templates.ts + fragments.ts
-├── ui/             Landing page HTML
-├── validation/     Zod schemas for all inputs
-├── telemetry/      Winston logging + Prometheus metrics
-└── server/         Express app + main entry point
+.
+├── src/
+│   ├── server/
+│   │   ├── index.ts            Entry point — starts STDIO + HTTP transports, graceful shutdown
+│   │   └── app.ts              Express app — landing page, /api/* config endpoints, /mcp endpoint
+│   ├── mcp/
+│   │   ├── server.ts           MCP server factory, tool routing, STDIO/HTTP transport setup
+│   │   ├── connected-clients.ts  Tracks which MCP clients are connected (for the landing page)
+│   │   └── sdk-types.d.ts      Local type declarations for the MCP SDK
+│   ├── tools/
+│   │   ├── templates.ts        Content template tool definitions + handlers
+│   │   └── fragments.ts        Content fragment tool definitions + handlers
+│   ├── adobe/
+│   │   └── client.ts           AJO Content API client (axios + retry, injects auth headers)
+│   ├── auth/
+│   │   └── token-manager.ts    Adobe IMS token acquisition with caching + refresh
+│   ├── validation/
+│   │   └── schemas.ts          Zod schemas for the credentials file and tool inputs
+│   ├── telemetry/
+│   │   └── index.ts            Winston logging + Prometheus metrics registry
+│   └── ui/
+│       └── landing.ts          Single-page setup UI (HTML/CSS/JS), served at /
+├── Dockerfile                  Multi-stage build (npm ci → tsc → slim runtime image)
+├── docker-compose.yml          Builds the image and runs the container
+├── package.json                Dependencies and scripts
+├── tsconfig.json               TypeScript compiler configuration
+└── sample_ajo_api_environment_vars.json   Blank credentials template
 ```
+
+The server boots both transports in `src/server/index.ts`: an **STDIO** transport and an **HTTP streaming** transport (Express, port 3000) that also serves the landing page. Credentials submitted via the UI are validated (`validation/`), used to obtain an IMS token (`auth/`), and applied to the API client (`adobe/`); MCP tool calls are routed through `mcp/server.ts` to the handlers in `tools/`.
 
 ---
 

@@ -190,7 +190,7 @@ export async function handleGetContentFragment(args: unknown) {
 
 export const updateContentFragmentDefinition = {
   name: 'update_content_fragment',
-  description: `Replace a content fragment entirely (PUT). Requires the current etag from get_content_fragment.
+  description: `Replace a content fragment entirely (PUT). Use this when changing fragment content, type, or channels. To rename or move a fragment without touching its content, patch_content_fragment is lighter-weight.
 
 Workflow:
 1. Call get_content_fragment to get current data + etag
@@ -245,7 +245,9 @@ export async function handleUpdateContentFragment(args: unknown) {
 
 export const patchContentFragmentDefinition = {
   name: 'patch_content_fragment',
-  description: `Partially update a content fragment using JSON Patch (RFC 6902). Supported paths: /name, /description, /parentFolderId.
+  description: `Rename or redescribe a content fragment — use this when changing only metadata (name, description, or parent folder), NOT content. For content, type, or channel changes, use update_content_fragment instead.
+
+Only these paths are supported: /name, /description, /parentFolderId.
 
 Example usage:
 {

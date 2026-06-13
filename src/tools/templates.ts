@@ -182,7 +182,7 @@ export async function handleGetContentTemplate(args: unknown) {
 
 export const updateContentTemplateDefinition = {
   name: 'update_content_template',
-  description: `Replace a content template entirely (PUT). Requires fetching the template first to get the etag.
+  description: `Replace a content template entirely (PUT). Use this when changing template content, type, or channels. To rename or move a template without touching its content, patch_content_template is lighter-weight.
 
 Workflow:
 1. Call get_content_template to get current data + etag
@@ -237,7 +237,9 @@ export async function handleUpdateContentTemplate(args: unknown) {
 
 export const patchContentTemplateDefinition = {
   name: 'patch_content_template',
-  description: `Partially update a content template using JSON Patch (RFC 6902). Only /name, /description, /parentFolderId are supported paths.
+  description: `Rename or redescribe a content template — use this when changing only metadata (name, description, or parent folder), NOT content. For content, type, or channel changes, use update_content_template instead.
+
+Only these paths are supported: /name, /description, /parentFolderId.
 
 Example usage:
 {

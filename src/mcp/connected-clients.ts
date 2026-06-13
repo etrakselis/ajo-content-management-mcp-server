@@ -25,9 +25,10 @@ interface Entry extends ConnectedClient {
   openStreams: number;
 }
 
-// Grace period after the last SSE stream closes before an HTTP client drops off
-// the list. Absorbs brief stream reconnects without lingering after disconnect.
-const HTTP_GRACE_MS = 10_000;
+// Grace period after an HTTP client's last activity (request or open SSE stream)
+// before it drops off the list. Long enough to ride out idle gaps between tool
+// calls / pings, short enough to clear within ~a minute of the client exiting.
+const HTTP_GRACE_MS = 45_000;
 
 // mcp-remote probes the transport with this synthetic identity before
 // forwarding the real client — ignore it so only the actual client shows.
@@ -52,8 +53,9 @@ function touch(name: string, version: string | undefined, transport: TransportKi
   return e;
 }
 
-export function recordClient(name: string, version: string | undefined, transport: TransportKind): void {
-  touch(name, version, transport);
+/** Record/refresh a client. Returns false if the name is filtered (e.g. the mcp-remote probe). */
+export function recordClient(name: string, version: string | undefined, transport: TransportKind): boolean {
+  return touch(name, version, transport) !== null;
 }
 
 /** An SSE stream opened for this client (HTTP transport). */
