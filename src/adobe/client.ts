@@ -8,6 +8,8 @@ export interface AdobeClientConfig {
   sandboxName: string;
   imsOrg: string;
   apiKey: string;
+  orgName?: string;   // user-supplied display name, e.g. "Adobe"
+  tenantId?: string;  // auto-detected AEP namespace, e.g. "etrakselis"
   baseUrl?: string;
 }
 
@@ -79,6 +81,18 @@ export function configureAdobeClient(config: AdobeClientConfig): void {
 
 export function isClientConfigured(): boolean {
   return clientConfig !== null && httpClient !== null;
+}
+
+export function getConfiguredSandboxName(): string | null {
+  return clientConfig?.sandboxName ?? null;
+}
+
+export function getConfiguredOrgName(): string | null {
+  return clientConfig?.orgName ?? null;
+}
+
+export function getConfiguredTenantId(): string | null {
+  return clientConfig?.tenantId ?? null;
 }
 
 export function resetAdobeClient(): void {

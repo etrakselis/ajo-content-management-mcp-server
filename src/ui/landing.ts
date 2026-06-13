@@ -330,6 +330,11 @@ export const landingPageHtml = `<!DOCTYPE html>
     <div class="card">
       <h2>Select sandbox</h2>
       <p>Enter the Adobe Experience Platform sandbox name to target. All API calls will be scoped to this sandbox.</p>
+      <div class="field-group" style="margin-bottom:16px">
+        <label for="orgInput">Organization name <span style="font-weight:400;color:var(--adobe-mid)">(optional)</span></label>
+        <input type="text" id="orgInput" placeholder="e.g. Adobe, Acme Corp" autocomplete="off" />
+        <span class="hint">Your company or AJO customer name. Shown to the LLM to identify the tenant.</span>
+      </div>
       <div class="field-group">
         <label for="sandboxInput">Sandbox name</label>
         <input type="text" id="sandboxInput" placeholder="e.g. prod or cjm-team" autocomplete="off" />
@@ -505,9 +510,11 @@ docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
       errorEl.classList.remove('show');
 
       const sandbox = document.getElementById('sandboxInput').value.trim();
+      const org = document.getElementById('orgInput').value.trim();
 
       const steps = [
         'Validating credentials…',
+        'Detecting tenant…',
         'Validating sandbox…'
       ];
       let stepIndex = 0;
@@ -521,7 +528,7 @@ docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
         const res = await fetch('/api/configure', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credentials, sandboxName: sandbox })
+          body: JSON.stringify({ credentials, sandboxName: sandbox, orgName: org || undefined })
         });
         clearInterval(stepTimer);
         const data = await res.json();
@@ -533,7 +540,9 @@ docker exec -i ajo-content-mcp node dist/server/index.js --stdio\`
           return;
         }
 
-        document.getElementById('statusBadge').textContent = sandbox + ' · Active';
+        const nsLabel = data.tenantNamespace ? data.tenantNamespace + ' · ' : '';
+        const orgLabel = org ? org + ' · ' : '';
+        document.getElementById('statusBadge').textContent = orgLabel + nsLabel + sandbox + ' · Active';
         document.getElementById('httpEndpoint').textContent = serverUrl + '/mcp';
         document.getElementById('statusPanel').classList.add('show');
         document.getElementById('codeContent').textContent = configs['claude-code']();

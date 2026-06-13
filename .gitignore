@@ -5,3 +5,4 @@ coverage/
 .env*
 environment-variables.json
 *.log
+retrieve-tenant-namespace.md

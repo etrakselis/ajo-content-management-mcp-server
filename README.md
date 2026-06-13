@@ -1,6 +1,6 @@
 # AJO Content MCP Server
 
-A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Journey Optimizer Content Management APIs to LLM-powered clients. AI agents can create, retrieve, update, delete, and publish content templates and fragments directly through natural language.
+A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Journey Optimizer Content Management APIs to LLM-powered clients. AI agents can create, retrieve, update, delete,   content templates and create, retrieve, update, delete and publish content fragments directly through natural language.
 
 ---
 

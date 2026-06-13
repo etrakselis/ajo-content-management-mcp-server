@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { tokenManager, AdobeCredentials } from '../auth/token-manager.js';
 import axios from 'axios';
 import { configureAdobeClient, resetAdobeClient, listTemplates } from '../adobe/client.js';
+
 import { CredentialsFileSchema } from '../validation/schemas.js';
 import { createMcpServer, createHttpTransport } from '../mcp/server.js';
 import { logger, metricsRegistry } from '../telemetry/index.js';
@@ -85,7 +86,7 @@ export function createExpressApp(): express.Application {
   // ─── Configuration API ────────────────────────────────────────────────────
 
   app.post('/api/configure', authLimiter, async (req: Request, res: Response) => {
-    const { credentials, sandboxName } = req.body;
+    const { credentials, sandboxName, orgName } = req.body;
 
     if (!credentials || !sandboxName) {
       return res.status(400).json({
@@ -136,20 +137,15 @@ export function createExpressApp(): express.Application {
       });
     }
 
-    // Apply configuration so we can run live validation calls
+    // Apply credentials so the token manager can acquire an IMS token
     tokenManager.setCredentials(creds as AdobeCredentials);
-    configureAdobeClient({
-      sandboxName,
-      imsOrg: creds.IMS_ORG!,
-      apiKey: creds.API_KEY!
-    });
 
     // ── Step 1: validate credentials by acquiring an IMS token ────────────────
+    let accessToken: string;
     try {
-      await tokenManager.getToken();
+      accessToken = await tokenManager.getToken();
     } catch (err) {
       tokenManager.reset();
-      resetAdobeClient();
       const detail = err instanceof Error ? err.message : String(err);
       logger.warn('Credential validation failed during configure', { error: detail });
       return res.status(401).json({
@@ -158,7 +154,81 @@ export function createExpressApp(): express.Application {
       });
     }
 
-    // ── Step 2: validate sandbox by making a lightweight read call ────────────
+    // ── Step 2: auto-detect tenant namespace via Schema Registry (non-fatal) ──
+    const schemaRegistryHeaders = {
+      'Authorization': `Bearer ${accessToken}`,
+      'x-api-key': creds.API_KEY!,
+      'x-gw-ims-org-id': creds.IMS_ORG!,
+      'x-sandbox-name': sandboxName,
+      'Accept': 'application/json'
+    };
+
+    let detectedTenantId: string | undefined;
+
+    // Primary: /stats endpoint (requires Schema Registry permission)
+    try {
+      const statsResp = await axios.get(
+        'https://platform.adobe.io/data/foundation/schemaregistry/stats',
+        { headers: schemaRegistryHeaders, timeout: 8000 }
+      );
+      if (statsResp.data?.tenantId) {
+        detectedTenantId = String(statsResp.data.tenantId);
+        logger.info('Auto-detected tenant namespace via /stats', { tenantId: detectedTenantId });
+      }
+    } catch (statsErr) {
+      const statsStatus = axios.isAxiosError(statsErr) ? statsErr.response?.status : null;
+      const statsBody = axios.isAxiosError(statsErr) ? statsErr.response?.data : null;
+      logger.warn('Schema Registry /stats failed', { status: statsStatus, body: statsBody });
+
+      // Fallback: parse tenant from first custom schema's $id or meta:altId
+      try {
+        const schemasResp = await axios.get(
+          'https://platform.adobe.io/data/foundation/schemaregistry/tenant/schemas',
+          {
+            headers: { ...schemaRegistryHeaders, 'Accept': 'application/vnd.adobe.xed-id+json' },
+            params: { limit: 1 },
+            timeout: 8000
+          }
+        );
+        const results = schemasResp.data?.results ?? schemasResp.data;
+        const first = Array.isArray(results) ? results[0] : null;
+        if (first) {
+          // meta:altId: "_acme.schemas.xxx" → "acme"
+          const altId: string = first['meta:altId'] ?? '';
+          const altMatch = altId.match(/^_([^.]+)\./);
+          if (altMatch) {
+            detectedTenantId = altMatch[1];
+          } else {
+            // $id: "https://ns.adobe.com/acme/schemas/xxx" → "acme"
+            const id: string = first['$id'] ?? '';
+            const idMatch = id.match(/ns\.adobe\.com\/([^/]+)\/schemas\//);
+            if (idMatch) detectedTenantId = idMatch[1];
+          }
+          if (detectedTenantId) {
+            logger.info('Auto-detected tenant namespace via /tenant/schemas', { tenantId: detectedTenantId });
+          } else {
+            logger.warn('Schema Registry /tenant/schemas returned data but could not extract tenantId', { first });
+          }
+        } else {
+          logger.warn('Schema Registry /tenant/schemas returned no schemas', { data: schemasResp.data });
+        }
+      } catch (fallbackErr) {
+        const fallbackStatus = axios.isAxiosError(fallbackErr) ? fallbackErr.response?.status : null;
+        const fallbackBody = axios.isAxiosError(fallbackErr) ? fallbackErr.response?.data : null;
+        logger.warn('Schema Registry /tenant/schemas also failed', { status: fallbackStatus, body: fallbackBody });
+      }
+    }
+
+    // Configure client with all info (including auto-detected tenant ID)
+    configureAdobeClient({
+      sandboxName,
+      imsOrg: creds.IMS_ORG!,
+      apiKey: creds.API_KEY!,
+      orgName: typeof orgName === 'string' && orgName.trim() ? orgName.trim() : undefined,
+      tenantId: detectedTenantId
+    });
+
+    // ── Step 3: validate sandbox via lightweight read call ────────────────────
     try {
       await listTemplates({ limit: 1 });
     } catch (err) {
@@ -194,6 +264,7 @@ export function createExpressApp(): express.Application {
     logger.info('Server configured and validated', {
       sandboxName,
       imsOrg: creds.IMS_ORG,
+      tenantId: detectedTenantId,
       hasClientSecret: !!(creds.CLIENT_SECRET && creds.CLIENT_SECRET !== 'placeholder123')
     });
 
@@ -201,6 +272,8 @@ export function createExpressApp(): express.Application {
       success: true,
       message: 'MCP server configured',
       sandboxName,
+      tenantId: detectedTenantId,
+      tenantNamespace: detectedTenantId ? `_${detectedTenantId}` : undefined,
       mcpEndpoint: '/mcp'
     });
   });

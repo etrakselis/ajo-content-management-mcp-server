@@ -8,7 +8,7 @@ import {
   ReadResourceRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
 import { tokenManager } from '../auth/token-manager.js';
-import { isClientConfigured } from '../adobe/client.js';
+import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId } from '../adobe/client.js';
 import { logger } from '../telemetry/index.js';
 
 // Template tools
@@ -71,6 +71,28 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
 };
 
 export function createMcpServer(): Server {
+  const sandbox = getConfiguredSandboxName();
+  const orgName = getConfiguredOrgName();
+  const tenantId = getConfiguredTenantId();
+  const tenantNamespace = tenantId ? `_${tenantId}` : null;
+
+  let tenantDesc: string | null = null;
+  if (sandbox) {
+    const parts: string[] = [];
+    if (orgName) parts.push(`org "${orgName}"`);
+    if (tenantNamespace) parts.push(`tenant namespace "${tenantNamespace}"`);
+    parts.push(`sandbox "${sandbox}"`);
+    tenantDesc = parts.join(', ');
+  }
+
+  const instructions = tenantDesc
+    ? `You are connected to Adobe Journey Optimizer for ${tenantDesc}. ` +
+      `Always display the tenant namespace and sandbox name when discussing content operations. ` +
+      `Before creating, updating, or deleting any content, confirm with the user that ` +
+      `sandbox "${sandbox}"${tenantNamespace ? ` (tenant: ${tenantNamespace})` : ''} is the intended target.`
+    : `You are connected to an AJO Content MCP server. ` +
+      `No sandbox has been configured yet — ask the user to open http://localhost:3000 and complete setup before making any content changes.`;
+
   const server = new Server(
     {
       name: 'ajo-content-mcp',
@@ -80,7 +102,8 @@ export function createMcpServer(): Server {
       capabilities: {
         tools: {},
         resources: {}
-      }
+      },
+      instructions
     }
   );
 
@@ -115,10 +138,18 @@ export function createMcpServer(): Server {
 
     try {
       const result = await handler(args);
+      const activeSandbox = getConfiguredSandboxName();
+      const activeOrg = getConfiguredOrgName();
+      const activeTenantId = getConfiguredTenantId();
+      const parts: string[] = [];
+      if (activeOrg) parts.push(`org: ${activeOrg}`);
+      if (activeTenantId) parts.push(`tenant: _${activeTenantId}`);
+      if (activeSandbox) parts.push(`sandbox: ${activeSandbox}`);
+      const prefix = parts.length > 0 ? `[${parts.join(' | ')}]\n` : '';
       return {
         content: [{
           type: 'text',
-          text: JSON.stringify(result, null, 2)
+          text: prefix + JSON.stringify(result, null, 2)
         }]
       };
     } catch (err) {
