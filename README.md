@@ -403,7 +403,17 @@ Protocol: Streamable HTTP (MCP 2024-11-05)
 
 ## Available Tools — Detailed
 
-### `create_content_template`
+All 16 tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)).
+
+### Content templates
+
+#### `list_content_templates` *(read)*
+```json
+{ "limit": 20, "orderBy": "-modifiedAt", "property": ["channels==email", "name~^Welcome"] }
+```
+All fields optional. Pass `_page.next` from the response as `start` to fetch the next page.
+
+#### `create_content_template` *(write)*
 ```json
 {
   "name": "Welcome Email",
@@ -414,14 +424,16 @@ Protocol: Streamable HTTP (MCP 2024-11-05)
   }
 }
 ```
+`templateType`: `html` | `html_primary_page` | `html_sub_page` | `content`. `channels`: exactly one of `email`, `push`, `inapp`, `sms`, `code`, `directMail`, `landingpage`, `shared`.
 
-### `get_content_template`
+#### `get_content_template` *(read)*
 ```json
 { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 ```
+Returns the template and its etag (needed for updates/patches).
 
-### `update_content_template`
-Always fetch first to get the etag:
+#### `update_content_template` *(write)*
+Full replacement (PUT). Always fetch first to get the etag:
 ```json
 {
   "templateId": "b6d70a45-...",
@@ -433,7 +445,8 @@ Always fetch first to get the etag:
 }
 ```
 
-### `patch_content_template`
+#### `patch_content_template` *(write)*
+Metadata-only changes via JSON Patch (`/name`, `/description`, `/parentFolderId`). For content/type/channel changes use `update_content_template`.
 ```json
 {
   "templateId": "b6d70a45-...",
@@ -444,13 +457,84 @@ Always fetch first to get the etag:
 }
 ```
 
-### `publish_content_fragment`
+#### `delete_content_template` *(write)*
+```json
+{ "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
+```
+Permanent deletion.
+
+### Content fragments
+
+#### `list_content_fragments` *(read)*
+```json
+{ "limit": 20, "orderBy": "-modifiedAt", "property": ["status==PUBLISHED"] }
+```
+All fields optional. Paginate with `start` = `_page.next`.
+
+#### `create_content_fragment` *(write)*
+```json
+{
+  "name": "Global Footer",
+  "type": "html",
+  "channels": ["email"],
+  "fragment": { "content": "<footer>© 2026 Acme Corp</footer>" }
+}
+```
+For an expression fragment: `"type": "expression"`, `"channels": ["shared"]`, `"fragment": { "expression": "Hello {{profile.person.firstName}}" }`.
+
+#### `get_content_fragment` *(read)*
+```json
+{ "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
+```
+Returns the fragment and its etag.
+
+#### `update_content_fragment` *(write)*
+Full replacement (PUT). Fetch first for the etag:
+```json
+{
+  "fragmentId": "b6d70a45-...",
+  "etag": "\"v3\"",
+  "name": "Global Footer",
+  "type": "html",
+  "channels": ["email"],
+  "fragment": { "content": "<footer>Updated footer</footer>" }
+}
+```
+
+#### `patch_content_fragment` *(write)*
+Metadata-only changes via JSON Patch (`/name`, `/description`, `/parentFolderId`). For content changes use `update_content_fragment`.
+```json
+{
+  "fragmentId": "b6d70a45-...",
+  "etag": "\"v3\"",
+  "patches": [
+    { "op": "replace", "path": "/name", "value": "New Name" }
+  ]
+}
+```
+
+#### `publish_content_fragment` *(write)*
 ```json
 { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 ```
 Publication is async. Poll `get_fragment_publication_status` until `status === "complete"`.
 
-### `archive_content_fragment`
+#### `publish_fragment` *(write)*
+Alias of `publish_content_fragment` — identical arguments and behavior.
+
+#### `get_live_fragment` *(read)*
+```json
+{ "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
+```
+Returns the content from the fragment's last successful publication — what campaigns and journeys actually serve right now.
+
+#### `get_fragment_publication_status` *(read)*
+```json
+{ "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
+```
+Reports the status of the most recent publication request (poll until `status === "complete"`).
+
+#### `archive_content_fragment` *(write)*
 ```json
 { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 ```
