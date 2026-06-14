@@ -575,7 +575,7 @@ The **Connected client** panel reflects recent MCP activity, refreshed by every 
 ├── docker-compose.yml          Builds the image and runs the container
 ├── package.json                Dependencies and scripts
 ├── tsconfig.json               TypeScript compiler configuration
-└── sample_ajo_api_environment_vars.json   Blank credentials template
+
 ```
 
 The server boots both transports in `src/server/index.ts`: an **STDIO** transport and an **HTTP streaming** transport (Express, port 3000) that also serves the landing page. Credentials submitted via the UI are validated (`validation/`), used to obtain an IMS token (`auth/`), and applied to the API client (`adobe/`); MCP tool calls are routed through `mcp/server.ts` to the handlers in `tools/`.
