@@ -8,8 +8,9 @@ import axios from 'axios';
 import { configureAdobeClient, resetAdobeClient, listTemplates } from '../adobe/client.js';
 
 import { CredentialsFileSchema } from '../validation/schemas.js';
-import { createMcpServer, createHttpTransport } from '../mcp/server.js';
-import { getConnectedClients, recordClient, openStream, closeStream } from '../mcp/connected-clients.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createMcpServer } from '../mcp/server.js';
+import { getConnectedClients, addSession, touchSession, openSessionStream, closeSessionStream, removeSession } from '../mcp/connected-clients.js';
 import { logger, metricsRegistry } from '../telemetry/index.js';
 import { landingPageHtml } from '../ui/landing.js';
 
@@ -160,6 +161,24 @@ async function detectTenantNamespace(
   return detectedTenantId;
 }
 
+/**
+ * If `body` is an MCP `initialize` request, returns the client's name/version
+ * (either may be undefined); otherwise returns null. Handles batched bodies.
+ */
+function getInitClientInfo(body: unknown): { name?: string; version?: string } | null {
+  const msgs = Array.isArray(body) ? body : [body];
+  for (const m of msgs) {
+    if (m && typeof m === 'object' && (m as { method?: string }).method === 'initialize') {
+      const ci = (m as { params?: { clientInfo?: { name?: string; version?: string } } }).params?.clientInfo;
+      return {
+        name: ci?.name ? String(ci.name) : undefined,
+        version: ci?.version ? String(ci.version) : undefined
+      };
+    }
+  }
+  return null;
+}
+
 export function createExpressApp(): express.Application {
   const app = express();
 
@@ -172,7 +191,8 @@ export function createExpressApp(): express.Application {
   app.use(cors({
     origin: process.env.CORS_ORIGIN || ['http://localhost:3000', 'http://localhost:*'],
     methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id'],
+    exposedHeaders: ['Mcp-Session-Id']
   }));
 
   app.use(express.json({ limit: '2mb' }));
@@ -379,57 +399,69 @@ export function createExpressApp(): express.Application {
     max: 500
   });
 
-  // Most-recent HTTP client from an `initialize` POST. Used to attribute the
-  // subsequent standalone GET SSE stream (which carries no clientInfo) to a
-  // client so its open/close lifecycle drives the connected-clients display.
-  let lastHttpInit: { name: string; version?: string } | null = null;
+  // Active Streamable HTTP sessions (stateful), keyed by MCP session ID. Each
+  // client holds one session for its lifetime, so every request — including
+  // tool calls that carry no clientInfo — is attributable to the right client.
+  const httpSessions = new Map<string, StreamableHTTPServerTransport>();
 
   app.all('/mcp', mcpLimiter, async (req: Request, res: Response) => {
     try {
-      // In stateless mode each request gets its own server instance, so the
-      // `initialized` notification lands on a different instance than the one
-      // that processed `initialize` — server.oninitialized can't see clientInfo.
-      // Capture it directly from the initialize request body instead.
-      const msgs = Array.isArray(req.body) ? req.body : [req.body];
-      for (const m of msgs) {
-        if (m && typeof m === 'object' && m.method === 'initialize') {
-          const ci = m.params?.clientInfo;
-          if (ci?.name) {
-            const name = String(ci.name);
-            const version = ci.version ? String(ci.version) : undefined;
-            // recordClient returns false for filtered names (e.g. mcp-remote's
-            // probe) — only adopt it as the current client if it stuck.
-            if (recordClient(name, version, 'http')) {
-              lastHttpInit = { name, version };
-            }
-          }
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+      // Existing session → mark activity and route to its transport.
+      if (sessionId && httpSessions.has(sessionId)) {
+        const transport = httpSessions.get(sessionId)!;
+        touchSession(sessionId);
+        if (req.method === 'GET') {
+          // The standalone SSE stream stays open for the session; track it so an
+          // idle-but-connected client keeps showing, and refresh when it closes.
+          openSessionStream(sessionId);
+          res.on('close', () => closeSessionStream(sessionId));
         }
+        await transport.handleRequest(req, res, req.body);
+        return;
       }
 
-      // Any request (tool call, ping, notification, SSE stream) is activity for
-      // the current client. clientInfo only rides on `initialize`, so without
-      // this a connected client would silently age off the list between
-      // handshakes even while actively running tools.
-      if (lastHttpInit) {
-        recordClient(lastHttpInit.name, lastHttpInit.version, 'http');
+      // A new session must begin with an `initialize` request.
+      const initInfo = getInitClientInfo(req.body);
+      if (!sessionId && initInfo) {
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => uuidv4(),
+          onsessioninitialized: (sid: string) => {
+            httpSessions.set(sid, transport);
+            if (initInfo.name) addSession(sid, initInfo.name, initInfo.version);
+            logger.info('MCP session initialized', { sessionId: sid, client: initInfo.name, transport: 'http' });
+          }
+        });
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid) {
+            httpSessions.delete(sid);
+            removeSession(sid);
+            logger.info('MCP session closed', { sessionId: sid, transport: 'http' });
+          }
+        };
+        const mcpServer = createMcpServer('http');
+        await mcpServer.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+        return;
       }
 
-      // The standalone GET SSE stream is held open for the life of the session.
-      // Track it as a live connection so the client shows even while idle, and
-      // refresh on close so it ages out only after it truly disconnects.
-      if (req.method === 'GET' && lastHttpInit) {
-        const { name, version } = lastHttpInit;
-        openStream(name, version);
-        res.on('close', () => closeStream(name));
+      // A session ID was provided but we don't know it (e.g. server restarted, or
+      // the session expired) → 404 tells the client to reinitialize.
+      if (sessionId) {
+        res.status(404).json({
+          jsonrpc: '2.0', id: null,
+          error: { code: -32001, message: 'Session not found — reinitialize.' }
+        });
+        return;
       }
 
-      // Stateless mode: each request gets its own server + transport instance.
-      // The SDK does not allow one server connected to multiple transports, and
-      // Claude Code uses stateless HTTP (no session handshake), so we match that.
-      const mcpServer = createMcpServer('http');
-      const transport = createHttpTransport();
-      await mcpServer.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      // No session ID and not an initialize request.
+      res.status(400).json({
+        jsonrpc: '2.0', id: null,
+        error: { code: -32000, message: 'Bad Request: send an initialize request to start a session.' }
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error('MCP transport error', { error: msg });

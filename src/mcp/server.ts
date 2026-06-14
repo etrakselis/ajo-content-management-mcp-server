@@ -1,6 +1,5 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -112,14 +111,18 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   );
 
   // Capture the connecting client's identity from the initialize handshake so
-  // the landing page can show which client this server is serving.
-  server.oninitialized = () => {
-    const info = server.getClientVersion();
-    if (info?.name) {
-      recordClient(info.name, info.version, transport);
-      logger.info('MCP client connected', { client: info.name, version: info.version, transport });
-    }
-  };
+  // the landing page can show which client this server is serving. HTTP clients
+  // are tracked per-session in app.ts (the stateful /mcp handler); here we only
+  // handle STDIO, where one persistent server maps 1:1 to one client.
+  if (transport === 'stdio') {
+    server.oninitialized = () => {
+      const info = server.getClientVersion();
+      if (info?.name) {
+        recordClient(info.name, info.version);
+        logger.info('MCP client connected', { client: info.name, version: info.version, transport });
+      }
+    };
+  }
 
   // ─── Tool Discovery ────────────────────────────────────────────────────────
 
@@ -254,7 +257,7 @@ export async function startStdioServer(): Promise<void> {
   transport.onclose = () => {
     // A stdio server is 1:1 with a client; drop it from the connected list on close
     const info = server.getClientVersion();
-    if (info?.name) removeClient(info.name, 'stdio');
+    if (info?.name) removeClient(info.name);
     logger.info('STDIO transport closed (no client connected or client disconnected)');
   };
 
@@ -262,10 +265,5 @@ export async function startStdioServer(): Promise<void> {
   logger.info('MCP STDIO transport active');
 }
 
-// ─── HTTP Transport ───────────────────────────────────────────────────────────
-
-export function createHttpTransport() {
-  return new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined, // stateless — no session tracking, compatible with Claude Code
-  });
-}
+// The HTTP (Streamable) transport is created per-session in the /mcp handler
+// (src/server/app.ts), which owns the stateful session lifecycle.

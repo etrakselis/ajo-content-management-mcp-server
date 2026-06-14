@@ -406,7 +406,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       </div>
       <div class="divider"></div>
       <div class="connect-section">
-        <h3>Connected client</h3>
+        <h3>Most recently connected client(s)</h3>
         <div class="clients-list" id="clientsList">
           <div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>
         </div>

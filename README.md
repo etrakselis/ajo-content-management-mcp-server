@@ -539,9 +539,9 @@ To confirm this server did the work, use authoritative signals instead:
 If a client also has **cloud Adobe/AJO connectors** enabled (e.g. via its connectors UI), their tools overlap in purpose with this server's and the model may conflate them. Disable the ones you aren't using so `et-ajo-content-mgmt` is unambiguous.
 
 ### Connected-client list seems out of date
-The **Connected client** panel reflects recent MCP activity, refreshed by every request a client makes (tool calls, pings, the open session stream). A client stays listed while it's connected or being used, and ages off about a minute after it stops communicating.
-- **A client you just closed still shows:** give it up to ~45 seconds — HTTP clients age out after a short grace window, not instantly. For Claude Desktop, make sure the app fully quit (not just the window closed) so the `mcp-remote` bridge process actually exits.
-- **A connected client isn't listed:** it appears as soon as it sends anything (it registers on connect and on each tool call). If it's missing, it likely hasn't talked to the server recently — run any tool and it'll reappear.
+Each client gets its own MCP **session**, and the **Connected client** panel tracks those sessions — so the list stays correct even with several clients connected at once (e.g. Claude Code and Claude Desktop). Activity on one client's session never refreshes another's.
+- **A client you just closed still shows:** when a client disconnects cleanly its session ends and it's removed promptly. If it lingers, give it up to ~10 seconds (the safety-net window for an unclean exit). For Claude Desktop, make sure the app fully quit (not just the window closed) so the `mcp-remote` bridge process actually exits.
+- **A connected client isn't listed:** it appears as soon as it sends anything, and every tool call keeps it listed. If it's missing, run any tool and it'll reappear.
 - The list reflects connections to the **running container**; restarting it (`docker compose restart`) clears the list entirely.
 
 ---
@@ -578,7 +578,7 @@ The **Connected client** panel reflects recent MCP activity, refreshed by every 
 
 ```
 
-The server boots both transports in `src/server/index.ts`: an **STDIO** transport and an **HTTP streaming** transport (Express, port 3000) that also serves the landing page. Credentials submitted via the UI are validated (`validation/`), used to obtain an IMS token (`auth/`), and applied to the API client (`adobe/`); MCP tool calls are routed through `mcp/server.ts` to the handlers in `tools/`.
+The server boots both transports in `src/server/index.ts`: an **STDIO** transport and an **HTTP streaming** transport (Express, port 3000) that also serves the landing page. The HTTP transport is **stateful** — each client is assigned an MCP session ID at `initialize` and includes it on every subsequent request. This lets the server attribute all activity (including tool calls, which carry no client identity) to the right client, so the **Connected client** panel stays accurate even when several clients are connected at once (`mcp/connected-clients.ts` keys HTTP clients by session ID). Credentials submitted via the UI are validated (`validation/`), used to obtain an IMS token (`auth/`), and applied to the API client (`adobe/`); MCP tool calls are routed through `mcp/server.ts` to the handlers in `tools/`.
 
 ---
 
