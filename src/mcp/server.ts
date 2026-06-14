@@ -36,6 +36,16 @@ import {
   archiveContentFragmentDefinition, handleArchiveContentFragment
 } from '../tools/fragments.js';
 
+// Schema Registry (XDM) tools — read-only; for discovering real personalization attribute paths
+import {
+  listXdmSchemasDefinition, handleListXdmSchemas,
+  getXdmSchemaDefinition, handleGetXdmSchema,
+  listXdmFieldGroupsDefinition, handleListXdmFieldGroups,
+  getXdmFieldGroupDefinition, handleGetXdmFieldGroup,
+  listXdmUnionSchemasDefinition, handleListXdmUnionSchemas,
+  getXdmUnionSchemaDefinition, handleGetXdmUnionSchema
+} from '../tools/schema-registry.js';
+
 const ALL_TOOLS = [
   listContentTemplatesDefinition,
   createContentTemplateDefinition,
@@ -52,7 +62,14 @@ const ALL_TOOLS = [
   publishFragmentDefinition,
   getLiveFragmentDefinition,
   getFragmentPublicationStatusDefinition,
-  archiveContentFragmentDefinition
+  archiveContentFragmentDefinition,
+  // Schema Registry (XDM) — read-only
+  listXdmSchemasDefinition,
+  getXdmSchemaDefinition,
+  listXdmFieldGroupsDefinition,
+  getXdmFieldGroupDefinition,
+  listXdmUnionSchemasDefinition,
+  getXdmUnionSchemaDefinition
 ];
 
 // Tools that modify content. When the server is in read-only mode these are
@@ -87,7 +104,14 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   publish_fragment: handlePublishContentFragment,
   get_live_fragment: handleGetLiveFragment,
   get_fragment_publication_status: handleGetFragmentPublicationStatus,
-  archive_content_fragment: handleArchiveContentFragment
+  archive_content_fragment: handleArchiveContentFragment,
+  // Schema Registry (XDM) — read-only
+  list_xdm_schemas: handleListXdmSchemas,
+  get_xdm_schema: handleGetXdmSchema,
+  list_xdm_field_groups: handleListXdmFieldGroups,
+  get_xdm_field_group: handleGetXdmFieldGroup,
+  list_xdm_union_schemas: handleListXdmUnionSchemas,
+  get_xdm_union_schema: handleGetXdmUnionSchema
 };
 
 export function createMcpServer(transport: TransportKind = 'http'): Server {
@@ -117,6 +141,12 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     `asks for; if a write is rejected with READ_ONLY_MODE, tell the user they can enable write access ` +
     `at http://localhost:3000 and then retry — do not abandon the request.`;
 
+  const personalizationNote = ` When inserting personalization fields into a template or fragment, do NOT assume ` +
+    `default XDM paths like {{profile.person.firstName}}. Most customers define custom field groups under their ` +
+    `tenant namespace, so first look up the real attribute paths with the XDM schema tools ` +
+    `(list_xdm_field_groups / get_xdm_field_group, or get_xdm_union_schema for the full merged Profile view), ` +
+    `then build personalization expressions from the actual attribute locations you find.`;
+
   const instructions = (tenantDesc
     ? `You are connected to Adobe Journey Optimizer for ${tenantDesc}. ` +
       `Always display the tenant namespace and sandbox name when discussing content operations. ` +
@@ -124,7 +154,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       `sandbox "${sandbox}"${tenantNamespace ? ` (tenant: ${tenantNamespace})` : ''} is the intended target.`
     : `You are connected to an AJO Content MCP server. ` +
       `No sandbox has been configured yet — ask the user to open http://localhost:3000 and complete setup before making any content changes.`)
-    + writeNote + dynamicNote;
+    + writeNote + dynamicNote + personalizationNote;
 
   const server = new Server(
     {

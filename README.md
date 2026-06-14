@@ -25,7 +25,9 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 
 ## Overview
 
-This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 15 tools covering the full template and fragment lifecycle, handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 22 tools covering the full template and fragment lifecycle plus read-only Experience Platform Schema Registry (XDM) lookups, handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+
+The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{profile.person.firstName}}`.
 
 ---
 
@@ -54,6 +56,17 @@ This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journ
 | `get_live_fragment` | Get content from last successful publication |
 | `get_fragment_publication_status` | Poll publication progress |
 | `archive_content_fragment` | Archive a fragment (fragments cannot be deleted via the API) |
+
+### Schema Registry (XDM) — read-only
+For discovering real personalization attribute paths. Requires the AEP Schema Registry API on the credential's Developer Console project.
+| Tool | Description |
+|------|-------------|
+| `list_xdm_schemas` | List XDM schemas (tenant or global container) |
+| `get_xdm_schema` | Retrieve a schema, fully resolved by default (all field groups inlined) |
+| `list_xdm_field_groups` | List field groups — where custom attributes are defined |
+| `get_xdm_field_group` | Retrieve a field group, fully resolved by default |
+| `list_xdm_union_schemas` | List union schemas (merged per-class view, e.g. the full Profile) |
+| `get_xdm_union_schema` | Retrieve a union schema — the complete attribute set for personalization |
 
 ---
 
@@ -112,6 +125,22 @@ Before doing any real work, confirm *what* you're connected to and *what you can
 > "Show me the HTML content inside the 'Welcome Email' template."
 
 > "Fetch fragment b6d70a45-a149-453b-85ba-809a5d40066d and tell me what channel it targets and what its current status is."
+
+---
+
+### 🧬 Personalization — use real attribute paths
+
+These use the Schema Registry (XDM) tools to find the attributes that actually exist in your sandbox, so content references real paths instead of generic guesses. (Requires the AEP Schema Registry API on your Developer Console project.)
+
+> "What custom field groups are defined in this sandbox? List them."
+
+> "Show me the full Profile union schema and list the personalization attributes available, with their paths."
+
+> "Find the loyalty-related attributes in our XDM schemas and tell me the exact paths I'd use for personalization."
+
+> "Create a welcome email fragment, but first look up our actual profile attributes and use the real first-name and loyalty-tier paths instead of the default XDM ones."
+
+> "Before personalizing this template, check our tenant field groups and map each placeholder I want (first name, city, points balance) to its real attribute path."
 
 ---
 
@@ -426,7 +455,7 @@ Protocol: Streamable HTTP (MCP 2024-11-05)
 
 ## Available Tools — Detailed
 
-All 16 tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)).
+All 22 tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)).
 
 ### Content templates
 
@@ -568,6 +597,47 @@ journeys.
 > **Note:** This tool calls an internal AJO GraphQL API (`exc-unifiedcontent.experience.adobe.net`)
 > that is not part of the public Content REST API. Adobe may change this endpoint without notice.
 
+### Schema Registry / XDM
+
+All read-only. These query the AEP Schema Registry to discover the **actual** personalization attribute paths in the sandbox. Use them before inserting personalization fields so content references attributes that really exist. **Requires the AEP Schema Registry API enabled on the credential's Developer Console project** (otherwise they return `FORBIDDEN` / 403).
+
+> Typical flow: `list_xdm_field_groups` (find the customer's custom groups) → `get_xdm_field_group` (read its attribute paths), or `get_xdm_union_schema` for the complete merged Profile view. Custom attributes are nested under the tenant namespace key (e.g. `_yourtenant`) in the schema's `properties` — that nesting is the personalization path.
+
+#### `list_xdm_schemas` *(read)*
+```json
+{ "container": "tenant", "property": "title~Profile" }
+```
+`container` defaults to `tenant` (customer-defined); use `global` for standard XDM. Returns concise summaries (title, `$id`, `meta:altId`, version).
+
+#### `get_xdm_schema` *(read)*
+```json
+{ "schemaId": "https://ns.adobe.com/_yourtenant/schemas/abc123", "full": true }
+```
+`full` defaults to `true` (fully resolved — all field groups inlined, complete property tree). Pass the `$id` or `meta:altId` from `list_xdm_schemas`.
+
+#### `list_xdm_field_groups` *(read)*
+```json
+{ "container": "tenant" }
+```
+Lists field groups; custom ones (tenant container) are where non-default personalization attributes live.
+
+#### `get_xdm_field_group` *(read)*
+```json
+{ "fieldGroupId": "https://ns.adobe.com/_yourtenant/mixins/abc123", "full": true }
+```
+
+#### `list_xdm_union_schemas` *(read)*
+```json
+{}
+```
+Lists union schemas (tenant). A union merges all field groups of a class into one schema — e.g. the full Profile.
+
+#### `get_xdm_union_schema` *(read)*
+```json
+{ "unionId": "https://ns.adobe.com/xdm/context/profile__union", "full": true }
+```
+The resolved Profile union is the complete attribute set available for personalization.
+
 ---
 
 ## Observability
@@ -678,9 +748,11 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   └── sdk-types.d.ts      Local type declarations for the MCP SDK
 │   ├── tools/
 │   │   ├── templates.ts        Content template tool definitions + handlers
-│   │   └── fragments.ts        Content fragment tool definitions + handlers
+│   │   ├── fragments.ts        Content fragment tool definitions + handlers
+│   │   └── schema-registry.ts  XDM schema / field group / union lookup tools (read-only)
 │   ├── adobe/
-│   │   └── client.ts           AJO Content API client (axios + retry, injects auth headers)
+│   │   ├── client.ts           AJO Content API client (axios + retry, injects auth headers)
+│   │   └── schema-registry-client.ts  AEP Schema Registry (XDM) read client
 │   ├── auth/
 │   │   └── token-manager.ts    Adobe IMS token acquisition with caching + refresh
 │   ├── validation/

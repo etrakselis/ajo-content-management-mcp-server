@@ -95,6 +95,14 @@ export function getConfiguredTenantId(): string | null {
   return clientConfig?.tenantId ?? null;
 }
 
+export function getConfiguredApiKey(): string | null {
+  return clientConfig?.apiKey ?? null;
+}
+
+export function getConfiguredImsOrg(): string | null {
+  return clientConfig?.imsOrg ?? null;
+}
+
 export function resetAdobeClient(): void {
   clientConfig = null;
   httpClient = null;

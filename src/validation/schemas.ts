@@ -146,3 +146,31 @@ export const CredentialsFileSchema = z.object({
   values: z.array(CredentialValueSchema),
   name: z.string().optional()
 });
+
+// ─── Schema Registry (XDM) ──────────────────────────────────────────────────
+
+const SrContainerSchema = z.enum(['tenant', 'global']).optional().default('tenant');
+const SrListBase = {
+  limit: z.number().int().min(1).max(1000).optional(),
+  property: z.string().optional(),
+  orderby: z.string().optional()
+};
+
+export const ListXdmSchemasSchema = z.object({ container: SrContainerSchema, ...SrListBase });
+export const ListXdmFieldGroupsSchema = z.object({ container: SrContainerSchema, ...SrListBase });
+export const ListXdmUnionSchemasSchema = z.object({ ...SrListBase }); // unions are tenant-only
+
+export const GetXdmSchemaSchema = z.object({
+  container: SrContainerSchema,
+  schemaId: z.string().min(1, 'schemaId is required'),
+  full: z.boolean().optional().default(true)
+});
+export const GetXdmFieldGroupSchema = z.object({
+  container: SrContainerSchema,
+  fieldGroupId: z.string().min(1, 'fieldGroupId is required'),
+  full: z.boolean().optional().default(true)
+});
+export const GetXdmUnionSchemaSchema = z.object({
+  unionId: z.string().min(1, 'unionId is required'),
+  full: z.boolean().optional().default(true)
+});
