@@ -7,16 +7,13 @@ import {
   ReadResourceRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
-  SetLevelRequestSchema
+  CompleteRequestSchema,
+  McpError,
+  ErrorCode
 } from '@modelcontextprotocol/sdk/types.js';
-
-type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical' | 'alert' | 'emergency';
-const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
-  debug: 0, info: 1, notice: 2, warning: 3, error: 4, critical: 5, alert: 6, emergency: 7
-};
-let currentLogLevel: LogLevel = 'info';
+import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js';
 import { tokenManager } from '../auth/token-manager.js';
-import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId } from '../adobe/client.js';
+import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, listFragments } from '../adobe/client.js';
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
@@ -137,14 +134,11 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   }
 
   // All tools are always advertised; write access is gated at execution time.
-  // Describe the current state AND the dynamic recovery path so the LLM attempts
-  // writes when asked and handles a READ_ONLY_MODE rejection gracefully (rather
-  // than refusing up front, which would go stale the moment the toggle flips).
-  const writeNote = getWritesAllowed()
-    ? ` Write access is currently ENABLED, so create/update/delete/publish/archive tools will run.`
-    : ` Write access is currently DISABLED (read-only). All tools are still listed, but create/update/` +
-      `delete/publish/archive calls will be rejected with a READ_ONLY_MODE error.`;
-  const dynamicNote = ` Write access can be toggled at runtime, so always attempt the operation the user ` +
+  // Instructions intentionally omit the current write-access state because that
+  // value is captured once at session-init and goes stale when the toggle flips.
+  // The per-call WRITE_TOOL_NOTE in ListTools and the dynamic enforcement in
+  // CallTool are the authoritative signals — instructions only carry the pattern.
+  const dynamicNote = ` Write access is toggled at runtime; always attempt the operation the user ` +
     `asks for; if a write is rejected with READ_ONLY_MODE, tell the user they can enable write access ` +
     `at http://localhost:3000 and then retry — do not abandon the request.`;
 
@@ -170,7 +164,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       `sandbox "${sandbox}"${tenantNamespace ? ` (tenant: ${tenantNamespace})` : ''} is the intended target.`
     : `You are connected to an AJO Content MCP server. ` +
       `No sandbox has been configured yet — ask the user to open http://localhost:3000 and complete setup before making any content changes.`)
-    + writeNote + dynamicNote + personalizationNote + resourceNote + promptNote;
+    + dynamicNote + personalizationNote + resourceNote + promptNote;
 
   const server = new Server(
     {
@@ -182,7 +176,8 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
         tools: {},
         resources: {},
         prompts: {},
-        logging: {}
+        logging: {},
+        completions: {}
       },
       instructions
     }
@@ -203,17 +198,12 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   }
 
   // ─── Logging ──────────────────────────────────────────────────────────────
+  // sendLoggingMessage handles per-session level filtering (via the SDK's
+  // built-in SetLevelRequestSchema handler registered when logging: {} is declared).
 
-  const emitLog = (level: LogLevel, data: string) => {
-    if (LOG_LEVEL_ORDER[level] >= LOG_LEVEL_ORDER[currentLogLevel]) {
-      server.notification({ method: 'notifications/message', params: { level, data } }).catch(() => {});
-    }
+  const emitLog = (level: LoggingLevel, data: string, sessionId?: string) => {
+    server.sendLoggingMessage({ level, data }, sessionId).catch(() => {});
   };
-
-  server.setRequestHandler(SetLevelRequestSchema, async (request) => {
-    currentLogLevel = request.params.level as LogLevel;
-    return {};
-  });
 
   // ─── Tool Discovery ────────────────────────────────────────────────────────
 
@@ -232,16 +222,17 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
 
   // ─── Tool Execution ────────────────────────────────────────────────────────
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
     const handler = TOOL_HANDLERS[name];
+    const sessionId = extra.sessionId;
 
-    emitLog('debug', `→ ${name}`);
+    emitLog('debug', `→ ${name}`, sessionId);
 
     // Enforce read-only mode at execution time (defense in depth — independent of
     // whether the tool was advertised). Read live so it applies to existing sessions.
     if (!getWritesAllowed() && isWriteTool(name)) {
-      emitLog('warning', `✗ ${name}: READ_ONLY_MODE`);
+      emitLog('warning', `✗ ${name}: READ_ONLY_MODE`, sessionId);
       return {
         content: [{
           type: 'text',
@@ -259,7 +250,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     }
 
     if (!handler) {
-      emitLog('warning', `✗ ${name}: TOOL_NOT_FOUND`);
+      emitLog('warning', `✗ ${name}: TOOL_NOT_FOUND`, sessionId);
       return {
         content: [{
           type: 'text',
@@ -288,9 +279,9 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       const prefix = parts.length > 0 ? `[${parts.join(' | ')}]\n` : '';
       const resultObj = result as { success?: boolean; error?: { code?: string } };
       if (resultObj?.success === false) {
-        emitLog('warning', `✗ ${name}: ${resultObj.error?.code ?? 'error'}`);
+        emitLog('warning', `✗ ${name}: ${resultObj.error?.code ?? 'error'}`, sessionId);
       } else {
-        emitLog('info', `✓ ${name}`);
+        emitLog('info', `✓ ${name}`, sessionId);
       }
       return {
         content: [{
@@ -301,7 +292,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error('Unhandled tool error', { tool: name, error: msg });
-      emitLog('error', `✗ ${name}: ${msg}`);
+      emitLog('error', `✗ ${name}: ${msg}`, sessionId);
       return {
         content: [{
           type: 'text',
@@ -512,6 +503,42 @@ TOOL_NOT_FOUND
     throw new Error(`Unknown resource: ${uri}`);
   });
 
+  // ─── Completions ──────────────────────────────────────────────────────────
+  // Provides argument completions for prompt arguments so clients (e.g. Claude
+  // Desktop) can surface dropdowns or autocomplete as the user types.
+
+  server.setRequestHandler(CompleteRequestSchema, async (request) => {
+    const { ref, argument } = request.params;
+
+    if (ref.type !== 'ref/prompt') {
+      return { completion: { values: [] } };
+    }
+
+    // audit-content-library → content_type: static enum
+    if (ref.name === 'audit-content-library' && argument.name === 'content_type') {
+      const options = ['both', 'templates', 'fragments'];
+      const values = options.filter(o => o.startsWith(argument.value));
+      return { completion: { values, hasMore: false } };
+    }
+
+    // publish-fragment → fragment_id: live lookup from the sandbox
+    if (ref.name === 'publish-fragment' && argument.name === 'fragment_id') {
+      if (!isClientConfigured()) return { completion: { values: [] } };
+      try {
+        const data = await listFragments({ limit: 50 }) as { items?: Array<{ id: string; name: string }> };
+        const items = data.items ?? [];
+        const values = items
+          .map(f => f.id)
+          .filter(id => id.startsWith(argument.value));
+        return { completion: { values, hasMore: false } };
+      } catch {
+        return { completion: { values: [] } };
+      }
+    }
+
+    return { completion: { values: [] } };
+  });
+
   // ─── Prompts ──────────────────────────────────────────────────────────────
 
   server.setRequestHandler(ListPromptsRequestSchema, async () => {
@@ -524,7 +551,16 @@ TOOL_NOT_FOUND
     if (!prompt) {
       throw new Error(`Unknown prompt: ${name}. Available: ${ALL_PROMPTS.map(p => p.name).join(', ')}`);
     }
-    const messages = getPromptMessages(name, args as Record<string, string> | undefined, tenantNamespace);
+    // Read live — tenant may have been configured after this session initialized.
+    const liveTenantId = getConfiguredTenantId();
+    const liveTenantNamespace = liveTenantId ? `_${liveTenantId}` : null;
+    let messages;
+    try {
+      messages = getPromptMessages(name, args as Record<string, string> | undefined, liveTenantNamespace);
+    } catch (err) {
+      if (err instanceof McpError) throw err;
+      throw new McpError(ErrorCode.InternalError, err instanceof Error ? err.message : String(err));
+    }
     return { description: prompt.description, messages };
   });
 
@@ -539,6 +575,7 @@ export async function startStdioServer(): Promise<void> {
 
   const unsubWriteAccess = onWriteAccessChanged(() => {
     server.notification({ method: 'notifications/tools/list_changed' }).catch(() => {});
+    server.notification({ method: 'notifications/resources/list_changed' }).catch(() => {});
   });
 
   transport.onclose = () => {

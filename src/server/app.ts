@@ -11,7 +11,7 @@ import { CredentialsFileSchema } from '../validation/schemas.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpServer } from '../mcp/server.js';
 import { getConnectedClients, addSession, touchSession, openSessionStream, closeSessionStream, removeSession } from '../mcp/connected-clients.js';
-import { getWritesAllowed, setWritesAllowed } from '../mcp/access-policy.js';
+import { getWritesAllowed, setWritesAllowed, onWriteAccessChanged } from '../mcp/access-policy.js';
 import { logger, metricsRegistry } from '../telemetry/index.js';
 import { landingPageHtml } from '../ui/landing.js';
 
@@ -452,7 +452,12 @@ export function createExpressApp(): express.Application {
           }
         });
         const mcpServer = createMcpServer('http');
+        const unsubWriteAccess = onWriteAccessChanged(() => {
+          mcpServer.notification({ method: 'notifications/tools/list_changed' }).catch(() => {});
+          mcpServer.notification({ method: 'notifications/resources/list_changed' }).catch(() => {});
+        });
         transport.onclose = () => {
+          unsubWriteAccess();
           const sid = transport.sessionId;
           if (sid) {
             httpSessions.delete(sid);

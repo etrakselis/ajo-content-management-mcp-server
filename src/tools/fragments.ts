@@ -32,7 +32,7 @@ Returns: { _page: { count, next }, items: [{ id, name, type, status, channels, .
       limit: { type: 'number', description: 'Max items to return (1-1000, default 20)' },
       start: { type: 'string', description: 'Pagination cursor from previous _page.next' },
       orderBy: { type: 'string', description: 'Sort field with +/- prefix. E.g. "-modifiedAt"' },
-      property: { type: 'array', items: { type: 'string' }, description: 'Filter expressions, e.g. ["status==PUBLISHED"]' }
+      property: { type: 'array', items: { type: 'string' }, description: 'FIQL filter expressions. Operators: == (equals), != (not equals), ~^ (starts with), ~ (contains). E.g. ["status==PUBLISHED", "type==html"]' }
     }
   }
 };
@@ -78,7 +78,7 @@ Example usage (Expression fragment):
   },
   "subType": "TEXT"
 }
-Note: _yourtenant is a placeholder — call list_xdm_field_groups to discover the real attribute paths for this sandbox before inserting any personalization.
+Note: _yourtenant is a placeholder — use the 'discover-personalization-paths' prompt for a guided lookup, or call list_xdm_field_groups directly, to find the real attribute paths before inserting any personalization.
 
 Returns: { success: true, id: "<uuid>", location: "/fragments/<uuid>" }`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -377,8 +377,12 @@ export async function handleGetFragmentPublicationStatus(args: unknown) {
 export const archiveContentFragmentDefinition = {
   name: 'archive_content_fragment',
   description: `Archive a content fragment in Adobe Journey Optimizer.
-Fragments cannot be deleted via the API — archiving is the equivalent. An archived fragment
+Fragments cannot be deleted via the API — archiving is the permanent equivalent. An archived fragment
 is removed from the active library and can no longer be used in new campaigns or journeys.
+
+No etag is required. This operation bypasses optimistic locking (the internal GraphQL mutation
+accepts an empty etag), so no concurrent-modification check is performed. Confirm the fragment ID
+is correct before proceeding — there is no undo.
 
 Note: this operation calls an internal AJO GraphQL API (not the public REST API).
 

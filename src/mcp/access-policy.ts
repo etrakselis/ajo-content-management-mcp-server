@@ -26,5 +26,8 @@ export function setWritesAllowed(value: boolean): void {
 
 export function onWriteAccessChanged(fn: () => void): () => void {
   listeners.push(fn);
-  return () => { listeners.splice(listeners.indexOf(fn), 1); };
+  return () => {
+    const idx = listeners.indexOf(fn);
+    if (idx !== -1) listeners.splice(idx, 1);
+  };
 }

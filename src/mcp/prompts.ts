@@ -1,3 +1,5 @@
+import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+
 export interface PromptDefinition {
   name: string;
   description: string;
@@ -58,11 +60,12 @@ export function getPromptMessages(
   switch (name) {
     case 'discover-personalization-paths': {
       const useCase = args?.use_case ?? 'general personalization';
-      return [{
-        role: 'user',
-        content: {
-          type: 'text',
-          text: `Discover the real XDM personalization attribute paths available in this sandbox for: "${useCase}"
+      return [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `Discover the real XDM personalization attribute paths available in this sandbox for: "${useCase}"
 
 Do NOT assume or invent attribute paths like {{profile.person.firstName}}. Every customer configures custom field groups under their own tenant namespace, so the actual paths must be looked up. Here is the correct lookup sequence:
 
@@ -77,17 +80,22 @@ Step 3 (optional shortcut) — Get the complete Profile union:
 
 Step 4 — Report findings:
   List the attribute paths you found with their correct personalization expression format, e.g. {{${tenantExample}.person.firstName}}. Explain what each attribute represents. If no relevant attributes were found, say so clearly so the user knows to check their schema configuration.`
+          }
         }
-      }];
+      ];
     }
 
     case 'publish-fragment': {
-      const fragmentId = args?.fragment_id ?? '<fragment_id>';
-      return [{
-        role: 'user',
-        content: {
-          type: 'text',
-          text: `Publish content fragment ${fragmentId} and verify the publication completes successfully.
+      const fragmentId = args?.fragment_id;
+      if (!fragmentId) {
+        throw new McpError(ErrorCode.InvalidParams, 'Missing required argument: fragment_id (UUID of the fragment to publish)');
+      }
+      return [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `Publish content fragment ${fragmentId} and verify the publication completes successfully.
 
 Publication in AJO is asynchronous — the API accepts the request immediately but the actual publication runs in the background. You must poll to confirm it succeeded.
 
@@ -105,12 +113,16 @@ Step 3 — Poll for completion:
 
 Step 4 — Report outcome:
   Tell the user whether publication succeeded or failed, and what the fragment's new status is.`
+          }
         }
-      }];
+      ];
     }
 
     case 'audit-content-library': {
-      const contentType = args?.content_type ?? 'both';
+      const rawContentType = args?.content_type ?? 'both';
+      const contentType = (['templates', 'fragments', 'both'] as const).includes(rawContentType as 'templates' | 'fragments' | 'both')
+        ? rawContentType as 'templates' | 'fragments' | 'both'
+        : 'both';
       const doTemplates = contentType === 'templates' || contentType === 'both';
       const doFragments = contentType === 'fragments' || contentType === 'both';
 
@@ -118,16 +130,20 @@ Step 4 — Report outcome:
 
       if (doTemplates) {
         sections.push(`Templates audit:
-  a. Call list_content_templates with limit 100 to retrieve all templates.
-  b. Group the results by templateType (html, content, etc.) and by channel (email, push, sms, etc.).
+  a. Call list_content_templates with limit 100 to retrieve the first page of templates.
+     If the response contains a _page.next cursor, call list_content_templates again with
+     start: <_page.next value> and merge the results. Repeat until _page.next is absent.
+  b. Group the accumulated results by templateType (html, content, etc.) and by channel (email, push, sms, etc.).
   c. Note the modifiedAt timestamp for each — flag any templates not modified in over 90 days as potentially stale.
   d. Report total count, breakdown by type/channel, and any stale items.`);
       }
 
       if (doFragments) {
         sections.push(`Fragments audit:
-  a. Call list_content_fragments with limit 100 to retrieve all fragments.
-  b. Group by status: PUBLISHED, DRAFT, ARCHIVED.
+  a. Call list_content_fragments with limit 100 to retrieve the first page of fragments.
+     If the response contains a _page.next cursor, call list_content_fragments again with
+     start: <_page.next value> and merge the results. Repeat until _page.next is absent.
+  b. Group the accumulated results by status: PUBLISHED, DRAFT, ARCHIVED.
   c. For each DRAFT fragment, call get_fragment_publication_status to check whether a publication has ever been attempted and whether any previous attempt errored.
   d. Flag the following as action items:
      - DRAFT fragments with no publication history → cannot be used in campaigns; must be published first.
@@ -135,18 +151,20 @@ Step 4 — Report outcome:
      - DRAFT fragments with publication status "inProgress" → a publication is already running.`);
       }
 
-      return [{
-        role: 'user',
-        content: {
-          type: 'text',
-          text: `Audit the AJO content library in this sandbox and produce a structured status report.
+      return [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `Audit the AJO content library in this sandbox and produce a structured status report.
 
 ${sections.join('\n\n')}
 
 Output format:
-  Produce a concise summary with counts and a clearly labelled action-items section. If any list returns a _page.next cursor (meaning there are more than 100 items), note that the audit is incomplete and pagination was not fully explored.`
+  Produce a concise summary with counts and a clearly labelled action-items section.`
+          }
         }
-      }];
+      ];
     }
 
     default:

@@ -31,7 +31,7 @@ Returns: { _page: { count, next }, items: [{ id, name, templateType, channels, .
       limit: { type: 'number', description: 'Max items to return (1-1000, default 20)' },
       start: { type: 'string', description: 'Pagination cursor from previous response _page.next' },
       orderBy: { type: 'string', description: 'Sort field. Prefix with + (asc) or - (desc). E.g. "-modifiedAt"' },
-      property: { type: 'array', items: { type: 'string' }, description: 'Filter expressions, e.g. ["name~^Test", "channels==email"]' }
+      property: { type: 'array', items: { type: 'string' }, description: 'FIQL filter expressions. Operators: == (equals), != (not equals), ~^ (starts with), ~ (contains). E.g. ["name~^Test", "channels==email", "templateType==html"]' }
     }
   }
 };
@@ -73,7 +73,7 @@ Example usage (HTML email template):
   "channels": ["email"],
   "template": { "html": "<html>Hello {{_yourtenant.person.firstName}}</html>" }
 }
-Note: _yourtenant is a placeholder — call list_xdm_field_groups to discover the real attribute paths for this sandbox before inserting any personalization.
+Note: _yourtenant is a placeholder — use the 'discover-personalization-paths' prompt for a guided lookup, or call list_xdm_field_groups directly, to find the real attribute paths before inserting any personalization.
 
 Example usage (push notification template):
 {
