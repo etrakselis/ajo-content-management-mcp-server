@@ -277,6 +277,19 @@ export const landingPageHtml = `<!DOCTYPE html>
     .conn-val.warn { color: var(--adobe-warn); font-family: var(--font-display); font-weight: 500; }
     .org-fallback { display: none; flex-direction: column; gap: 6px; margin-top: 16px; }
     .org-fallback.show { display: flex; }
+    .reset-notice {
+      display: none;
+      margin-bottom: 24px;
+      padding: 14px 16px;
+      background: rgba(230,134,25,0.08);
+      border: 1px solid rgba(230,134,25,0.35);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--adobe-warn);
+      line-height: 1.55;
+    }
+    .reset-notice.show { display: block; }
+    .reset-notice strong { font-weight: 700; }
     .org-fallback-note {
       font-size: 12px;
       color: var(--adobe-warn);
@@ -318,6 +331,10 @@ export const landingPageHtml = `<!DOCTYPE html>
     <div class="hero">
       <h1>Connect to Adobe Journey Optimizer</h1>
       <p>Upload your credentials file and define the sandbox to activate the MCP server. LLM clients can then manage content templates and fragments via standardized tools.</p>
+    </div>
+
+    <div class="reset-notice" id="resetNotice">
+      <strong>The MCP server was restarted</strong> and is no longer configured (this happens when the container is rebuilt or restarted). Any connected clients were disconnected. Re-upload your credentials and start the server again to reconnect. Don't forget to restart the desktop client(s) too, since they'll lose connection to the MCP server when it restarts.
     </div>
 
     <!-- Step 1: Credentials -->
@@ -406,7 +423,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       </div>
       <div class="divider"></div>
       <div class="connect-section">
-        <h3>Most recently connected client(s)</h3>
+        <h3>Recently connected client(s) (idle clients get removed after 10 seconds)</h3>
         <div class="clients-list" id="clientsList">
           <div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>
         </div>
@@ -461,8 +478,12 @@ export const landingPageHtml = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/connected-clients');
         const data = await res.json();
+        // If the server reports it's no longer configured while this page still
+        // shows "active", the container was restarted/rebuilt and lost its state.
+        // Reset the page so the UI matches reality.
+        if (data.configured === false) { handleServerReset(); return; }
         renderClients(data.clients);
-      } catch { /* transient — keep last render */ }
+      } catch { /* transient (e.g. mid-restart) — keep last render until next poll */ }
     }
 
     function startClientPolling() {
@@ -497,6 +518,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       reader.onload = (e) => {
         try {
           credentials = JSON.parse(e.target.result);
+          document.getElementById('resetNotice').classList.remove('show');
           document.getElementById('fileAccepted').classList.add('show');
           // Prefer the credential set's own name (top-level "name" in the export); fall back to the filename
           const credName = (typeof credentials.name === 'string' && credentials.name.trim()) ? credentials.name.trim() : file.name;
@@ -535,6 +557,19 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('orgInput').value = '';
       document.getElementById('statusBadge').textContent = 'Not configured';
       document.getElementById('errorMsg').classList.remove('show');
+    }
+
+    // The server lost its configuration (container restarted/rebuilt). Return the
+    // page to the initial upload state and explain why, since the credentials and
+    // sandbox the server held are gone and must be provided again.
+    function handleServerReset() {
+      resetActivationUI();
+      credentials = null;
+      fileInput.value = '';
+      document.getElementById('fileAccepted').classList.remove('show');
+      dropzone.style.display = '';
+      document.getElementById('resetNotice').classList.add('show');
+      checkReady();
     }
 
     let needsOrg = false;

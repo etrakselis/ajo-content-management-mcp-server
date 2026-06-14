@@ -387,9 +387,10 @@ export function createExpressApp(): express.Application {
   });
 
   // Which MCP clients are currently connected (captured from the initialize
-  // handshake). Polled by the landing page after activation.
+  // handshake). Polled by the landing page after activation. `configured` lets
+  // the page detect a container restart (server state lost) and reset itself.
   app.get('/api/connected-clients', (_req, res) => {
-    res.json({ clients: getConnectedClients() });
+    res.json({ configured: tokenManager.isConfigured(), clients: getConnectedClients() });
   });
 
   // ─── MCP HTTP Endpoint ────────────────────────────────────────────────────
