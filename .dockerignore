@@ -8,3 +8,7 @@ environment-variables.json
 *.log
 .git/
 README.md
+retrieve-tenant-namespace.md
+sample_ajo_api_environment_vars.json
+openapi:3.0.0
+archive_content_fragment.har
