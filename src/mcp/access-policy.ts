@@ -11,11 +11,20 @@
 // tools — see the CallTool handler in server.ts.
 
 let writesAllowed = false;
+const listeners: Array<() => void> = [];
 
 export function getWritesAllowed(): boolean {
   return writesAllowed;
 }
 
 export function setWritesAllowed(value: boolean): void {
-  writesAllowed = value;
+  if (writesAllowed !== value) {
+    writesAllowed = value;
+    listeners.forEach(fn => fn());
+  }
+}
+
+export function onWriteAccessChanged(fn: () => void): () => void {
+  listeners.push(fn);
+  return () => { listeners.splice(listeners.indexOf(fn), 1); };
 }

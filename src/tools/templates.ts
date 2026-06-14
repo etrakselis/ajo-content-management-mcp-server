@@ -1,5 +1,3 @@
-import { z } from 'zod';
-import { v4 as uuidv4 } from 'uuid';
 import {
   listTemplates, createTemplate, getTemplate,
   updateTemplate, patchTemplate, deleteTemplate,
@@ -9,49 +7,7 @@ import {
   ListTemplatesSchema, CreateTemplateSchema, GetTemplateSchema,
   UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema
 } from '../validation/schemas.js';
-import { toolCallCounter, toolCallDuration, createRequestLogger } from '../telemetry/index.js';
-
-function notConfiguredError() {
-  const port = process.env.PORT || '3000';
-  return {
-    success: false,
-    error: {
-      code: 'NOT_CONFIGURED',
-      message: `MCP server is not configured. Open http://localhost:${port} in your browser, upload your credentials JSON file, and enter your sandbox name to get started.`,
-      details: {}
-    }
-  };
-}
-
-function validationError(err: z.ZodError) {
-  return {
-    success: false,
-    error: {
-      code: 'VALIDATION_ERROR',
-      message: 'Invalid input parameters',
-      details: err.errors.map(e => ({ path: e.path.join('.'), message: e.message }))
-    }
-  };
-}
-
-async function withTelemetry<T>(toolName: string, fn: () => Promise<T>) {
-  const requestId = uuidv4();
-  const log = createRequestLogger(requestId, toolName);
-  const end = toolCallDuration.startTimer({ tool: toolName });
-  log.info(`Tool called: ${toolName}`);
-  try {
-    const result = await fn();
-    toolCallCounter.inc({ tool: toolName, status: 'success' });
-    log.info(`Tool succeeded: ${toolName}`);
-    return result;
-  } catch (err) {
-    toolCallCounter.inc({ tool: toolName, status: 'error' });
-    log.error(`Tool failed: ${toolName}`, { error: err instanceof Error ? err.message : String(err) });
-    throw err;
-  } finally {
-    end();
-  }
-}
+import { notConfiguredError, validationError, withTelemetry } from './utils.js';
 
 // ─── list_content_templates ───────────────────────────────────────────────────
 
@@ -67,8 +23,10 @@ Example usage:
 - Sort ascending: { orderBy: "+modifiedAt" }
 
 Returns: { _page: { count, next }, items: [{ id, name, templateType, channels, ... }] }`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     properties: {
       limit: { type: 'number', description: 'Max items to return (1-1000, default 20)' },
       start: { type: 'string', description: 'Pagination cursor from previous response _page.next' },
@@ -98,13 +56,24 @@ export const createContentTemplateDefinition = {
   name: 'create_content_template',
   description: `Create a new content template in Adobe Journey Optimizer.
 
+Channel → templateType → template shape (channels must have exactly 1 value):
+  "email"       → "html"               → { "html": "<html>..." }
+  "push"        → "content"            → { "title": "...", "message": "...", "deeplink": "..." }
+  "sms"         → "content"            → { "body": "..." }
+  "inapp"       → "content"            → { "header": "...", "body": "...", "buttonText": "...", "buttonLink": "..." }
+  "code"        → "content" + subType  → { ... }  subType: "HTML" or "JSON"
+  "directMail"  → "content"            → { ... }  (shape is provider-defined)
+  "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page" for confirmation pages)
+  "shared"      → "content"            → { ... }
+
 Example usage (HTML email template):
 {
   "name": "Welcome Email",
   "templateType": "html",
   "channels": ["email"],
-  "template": { "html": "<html>Hello {{profile.person.name}}</html>" }
+  "template": { "html": "<html>Hello {{_yourtenant.person.firstName}}</html>" }
 }
+Note: _yourtenant is a placeholder — call list_xdm_field_groups to discover the real attribute paths for this sandbox before inserting any personalization.
 
 Example usage (push notification template):
 {
@@ -115,17 +84,19 @@ Example usage (push notification template):
 }
 
 Returns: { success: true, id: "<uuid>", location: "/templates/<uuid>" }`,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['name', 'templateType', 'channels'],
     properties: {
       name: { type: 'string', description: 'Template name (required)' },
       description: { type: 'string', description: 'Optional description' },
       templateType: { type: 'string', enum: ['html', 'html_primary_page', 'html_sub_page', 'content'], description: 'Template type' },
-      channels: { type: 'array', items: { type: 'string', enum: ['email', 'push', 'inapp', 'sms', 'code', 'directMail', 'landingpage', 'shared'] }, description: 'Target channels (exactly 1)' },
+      channels: { type: 'array', items: { type: 'string', enum: ['email', 'push', 'inapp', 'sms', 'code', 'directMail', 'landingpage', 'shared'] }, minItems: 1, maxItems: 1, description: 'Target channel (exactly 1 value required)' },
       template: { type: 'object', description: 'Template content object. Shape depends on templateType/channel.' },
       subType: { type: 'string', enum: ['HTML', 'JSON'], description: 'Sub-type for code channel templates' },
-      parentFolderId: { type: 'string', description: 'UUID of parent folder (optional)' },
+      parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder (optional)' },
       source: { type: 'object', description: 'Source/origin metadata { origin: "ajo"|"aem"|"external" }' }
     }
   }
@@ -155,11 +126,13 @@ Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { id, name, templateType, channels, template, createdAt, modifiedAt, ... }, etag: "..." }
 The etag is required for update (PUT/PATCH) operations.`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['templateId'],
     properties: {
-      templateId: { type: 'string', description: 'UUID of the template to fetch' }
+      templateId: { type: 'string', format: 'uuid', description: 'UUID of the template to fetch' }
     }
   }
 };
@@ -184,6 +157,16 @@ export const updateContentTemplateDefinition = {
   name: 'update_content_template',
   description: `Replace a content template entirely (PUT). Use this when changing template content, type, or channels. To rename or move a template without touching its content, patch_content_template is lighter-weight.
 
+Channel → templateType → template shape (channels must have exactly 1 value):
+  "email"       → "html"               → { "html": "<html>..." }
+  "push"        → "content"            → { "title": "...", "message": "...", "deeplink": "..." }
+  "sms"         → "content"            → { "body": "..." }
+  "inapp"       → "content"            → { "header": "...", "body": "...", "buttonText": "...", "buttonLink": "..." }
+  "code"        → "content" + subType  → { ... }  subType: "HTML" or "JSON"
+  "directMail"  → "content"            → { ... }
+  "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page")
+  "shared"      → "content"            → { ... }
+
 Workflow:
 1. Call get_content_template to get current data + etag
 2. Modify the data
@@ -200,20 +183,22 @@ Example usage:
 }
 
 Returns: { success: true }`,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['templateId', 'etag', 'name', 'templateType', 'channels'],
     properties: {
-      templateId: { type: 'string', description: 'UUID of the template to update' },
+      templateId: { type: 'string', format: 'uuid', description: 'UUID of the template to update' },
       etag: { type: 'string', description: 'ETag from get_content_template (required for optimistic locking)' },
       name: { type: 'string', description: 'Template name' },
-      description: { type: 'string' },
-      templateType: { type: 'string', enum: ['html', 'html_primary_page', 'html_sub_page', 'content'] },
-      channels: { type: 'array', items: { type: 'string' } },
-      template: { type: 'object', description: 'Full template content' },
-      subType: { type: 'string', enum: ['HTML', 'JSON'] },
-      parentFolderId: { type: 'string' },
-      source: { type: 'object' }
+      description: { type: 'string', description: 'Optional description' },
+      templateType: { type: 'string', enum: ['html', 'html_primary_page', 'html_sub_page', 'content'], description: 'Template type — must match the channel (email→html, push/sms/inapp/code→content, landingpage→html_primary_page or html_sub_page)' },
+      channels: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 1, description: 'Target channel (exactly 1 value required)' },
+      template: { type: 'object', description: 'Full replacement template content. Shape depends on channel: email→{html}, push→{title,message}, sms→{body}, inapp→{header,body}, code→{}+subType' },
+      subType: { type: 'string', enum: ['HTML', 'JSON'], description: 'Sub-type for code channel templates' },
+      parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder' },
+      source: { type: 'object', description: 'Source/origin metadata { origin: "ajo"|"aem"|"external" }' }
     }
   }
 };
@@ -252,11 +237,13 @@ Example usage:
 }
 
 Returns: { success: true, data: { updated template }, etag: "new-etag" }`,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['templateId', 'etag', 'patches'],
     properties: {
-      templateId: { type: 'string', description: 'UUID of the template to patch' },
+      templateId: { type: 'string', format: 'uuid', description: 'UUID of the template to patch' },
       etag: { type: 'string', description: 'ETag from get_content_template' },
       patches: {
         type: 'array',
@@ -301,11 +288,13 @@ export const deleteContentTemplateDefinition = {
 Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true }`,
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['templateId'],
     properties: {
-      templateId: { type: 'string', description: 'UUID of the template to delete' }
+      templateId: { type: 'string', format: 'uuid', description: 'UUID of the template to delete' }
     }
   }
 };

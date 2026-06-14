@@ -25,9 +25,9 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 
 ## Overview
 
-This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 22 tools covering the full template and fragment lifecycle plus read-only Experience Platform Schema Registry (XDM) lookups, handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 21 tools covering the full template and fragment lifecycle plus read-only Experience Platform Schema Registry (XDM) lookups, handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
 
-The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{profile.person.firstName}}`.
+The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{_yourtenant.profile.person.firstName}}`.
 
 ---
 
@@ -52,7 +52,6 @@ The Schema Registry tools let the LLM discover the **real personalization attrib
 | `update_content_fragment` | Full replacement (PUT) |
 | `patch_content_fragment` | Partial update via JSON Patch |
 | `publish_content_fragment` | Publish/freeze fragment (async) |
-| `publish_fragment` | Alias for publish_content_fragment |
 | `get_live_fragment` | Get content from last successful publication |
 | `get_fragment_publication_status` | Poll publication progress |
 | `archive_content_fragment` | Archive a fragment (fragments cannot be deleted via the API) |
@@ -455,7 +454,7 @@ Protocol: Streamable HTTP (MCP 2024-11-05)
 
 ## Available Tools — Detailed
 
-All 22 tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)).
+All 21 tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)).
 
 ### Content templates
 
@@ -570,9 +569,6 @@ Metadata-only changes via JSON Patch (`/name`, `/description`, `/parentFolderId`
 { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 ```
 Publication is async. Poll `get_fragment_publication_status` until `status === "complete"`.
-
-#### `publish_fragment` *(write)*
-Alias of `publish_content_fragment` — identical arguments and behavior.
 
 #### `get_live_fragment` *(read)*
 ```json

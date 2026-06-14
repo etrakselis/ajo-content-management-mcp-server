@@ -1,5 +1,3 @@
-import { z } from 'zod';
-import { v4 as uuidv4 } from 'uuid';
 import {
   listFragments, createFragment, getFragment,
   updateFragment, patchFragment, publishFragment,
@@ -11,49 +9,7 @@ import {
   UpdateFragmentSchema, PatchFragmentSchema, PublishFragmentSchema,
   GetLiveFragmentSchema, GetPublicationStatusSchema, ArchiveFragmentSchema
 } from '../validation/schemas.js';
-import { toolCallCounter, toolCallDuration, createRequestLogger } from '../telemetry/index.js';
-
-function notConfiguredError() {
-  const port = process.env.PORT || '3000';
-  return {
-    success: false,
-    error: {
-      code: 'NOT_CONFIGURED',
-      message: `MCP server is not configured. Open http://localhost:${port} in your browser, upload your credentials JSON file, and enter your sandbox name to get started.`,
-      details: {}
-    }
-  };
-}
-
-function validationError(err: z.ZodError) {
-  return {
-    success: false,
-    error: {
-      code: 'VALIDATION_ERROR',
-      message: 'Invalid input parameters',
-      details: err.errors.map(e => ({ path: e.path.join('.'), message: e.message }))
-    }
-  };
-}
-
-async function withTelemetry<T>(toolName: string, fn: () => Promise<T>) {
-  const requestId = uuidv4();
-  const log = createRequestLogger(requestId, toolName);
-  const end = toolCallDuration.startTimer({ tool: toolName });
-  log.info(`Tool called: ${toolName}`);
-  try {
-    const result = await fn();
-    toolCallCounter.inc({ tool: toolName, status: 'success' });
-    log.info(`Tool succeeded: ${toolName}`);
-    return result;
-  } catch (err) {
-    toolCallCounter.inc({ tool: toolName, status: 'error' });
-    log.error(`Tool failed: ${toolName}`, { error: err instanceof Error ? err.message : String(err) });
-    throw err;
-  } finally {
-    end();
-  }
-}
+import { notConfiguredError, validationError, withTelemetry } from './utils.js';
 
 // ─── list_content_fragments ───────────────────────────────────────────────────
 
@@ -68,8 +24,10 @@ Example usage:
 - Filter by type: { property: ["type==html"] }
 
 Returns: { _page: { count, next }, items: [{ id, name, type, status, channels, ... }] }`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     properties: {
       limit: { type: 'number', description: 'Max items to return (1-1000, default 20)' },
       start: { type: 'string', description: 'Pagination cursor from previous _page.next' },
@@ -106,7 +64,7 @@ Example usage (HTML fragment):
   "type": "html",
   "channels": ["email"],
   "fragment": {
-    "content": "<div>Hi {{profile.person.name}}, great deals await!</div>"
+    "content": "<div>Hi {{_yourtenant.person.firstName}}, great deals await!</div>"
   }
 }
 
@@ -116,23 +74,26 @@ Example usage (Expression fragment):
   "type": "expression",
   "channels": ["shared"],
   "fragment": {
-    "expression": "Hi {{profile.person.name}}!"
+    "expression": "Hi {{_yourtenant.person.firstName}}!"
   },
   "subType": "TEXT"
 }
+Note: _yourtenant is a placeholder — call list_xdm_field_groups to discover the real attribute paths for this sandbox before inserting any personalization.
 
 Returns: { success: true, id: "<uuid>", location: "/fragments/<uuid>" }`,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['name', 'type', 'channels', 'fragment'],
     properties: {
       name: { type: 'string', description: 'Fragment name (required)' },
       description: { type: 'string', description: 'Optional description' },
       type: { type: 'string', enum: ['html', 'expression'], description: 'Fragment type' },
-      channels: { type: 'array', items: { type: 'string', enum: ['email', 'shared'] }, description: 'Target channel (exactly 1). html→email, expression→shared' },
+      channels: { type: 'array', items: { type: 'string', enum: ['email', 'shared'] }, minItems: 1, maxItems: 1, description: 'Target channel (exactly 1). html→email, expression→shared' },
       fragment: { type: 'object', description: 'Fragment content. For html: { content: "<html>..." }. For expression: { expression: "..." }' },
       subType: { type: 'string', enum: ['TEXT', 'HTML', 'JSON'], description: 'Sub-type for expression fragments' },
-      parentFolderId: { type: 'string', description: 'UUID of parent folder' },
+      parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder' },
       source: { type: 'object', description: 'Source metadata { origin: "ajo"|"external" }' }
     }
   }
@@ -163,11 +124,13 @@ Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { id, name, type, status, channels, fragment, createdAt, ... }, etag: "..." }
 The etag is required for update/patch operations.`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['fragmentId'],
     properties: {
-      fragmentId: { type: 'string', description: 'UUID of the fragment to fetch' }
+      fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to fetch' }
     }
   }
 };
@@ -208,19 +171,21 @@ Example usage:
 }
 
 Returns: { success: true }`,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['fragmentId', 'etag', 'name', 'type', 'channels', 'fragment'],
     properties: {
-      fragmentId: { type: 'string', description: 'UUID of the fragment to update' },
+      fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to update' },
       etag: { type: 'string', description: 'ETag from get_content_fragment' },
-      name: { type: 'string' },
-      description: { type: 'string' },
-      type: { type: 'string', enum: ['html', 'expression'] },
-      channels: { type: 'array', items: { type: 'string' } },
-      fragment: { type: 'object' },
-      parentFolderId: { type: 'string' },
-      source: { type: 'object' }
+      name: { type: 'string', description: 'Fragment name' },
+      description: { type: 'string', description: 'Optional description' },
+      type: { type: 'string', enum: ['html', 'expression'], description: 'Fragment type: html → email channel; expression → shared channel' },
+      channels: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 1, description: 'Target channel (exactly 1). html fragments use ["email"]; expression fragments use ["shared"]' },
+      fragment: { type: 'object', description: 'Full replacement content. For html: { content: "<html>..." }. For expression: { expression: "..." }' },
+      parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder' },
+      source: { type: 'object', description: 'Source metadata { origin: "ajo"|"external" }' }
     }
   }
 };
@@ -257,11 +222,13 @@ Example usage:
 }
 
 Returns: { success: true }`,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['fragmentId', 'etag', 'patches'],
     properties: {
-      fragmentId: { type: 'string', description: 'UUID of the fragment to patch' },
+      fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to patch' },
       etag: { type: 'string', description: 'ETag from get_content_fragment' },
       patches: {
         type: 'array',
@@ -294,30 +261,26 @@ export async function handlePatchContentFragment(args: unknown) {
   });
 }
 
-// ─── publish_content_fragment / publish_fragment (alias) ─────────────────────
+// ─── publish_content_fragment ────────────────────────────────────────────────
 
 export const publishContentFragmentDefinition = {
   name: 'publish_content_fragment',
   description: `Publish a content fragment to make it available for use in campaigns and journeys.
 Publishing freezes the fragment content. Required before activating a campaign/journey that uses this fragment.
-Publication is asynchronous — use get_fragment_publication_status to check progress.
+Publication is asynchronous — after calling this tool, poll get_fragment_publication_status every 5 seconds until status is "complete" or "error". Publication typically finishes within 30 seconds; if still "inProgress" after 6 polls (~30 s), stop and tell the user it is taking longer than expected.
 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, accepted: true, location: "...", retryAfter: 5 }`,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['fragmentId'],
     properties: {
-      fragmentId: { type: 'string', description: 'UUID of the fragment to publish' }
+      fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to publish' }
     }
   }
-};
-
-// Alias
-export const publishFragmentDefinition = {
-  ...publishContentFragmentDefinition,
-  name: 'publish_fragment'
 };
 
 export async function handlePublishContentFragment(args: unknown) {
@@ -344,11 +307,13 @@ Use this to retrieve the frozen/published version of a fragment that is live in 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { type: "html", fragment: { content: "<div>...</div>" } } }`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['fragmentId'],
     properties: {
-      fragmentId: { type: 'string', description: 'UUID of the fragment' }
+      fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment' }
     }
   }
 };
@@ -382,11 +347,13 @@ Status values:
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { status: "complete"|"inProgress"|"error", errors: [] } }`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['fragmentId'],
     properties: {
-      fragmentId: { type: 'string', description: 'UUID of the fragment to check publication status for' }
+      fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to check publication status for' }
     }
   }
 };
@@ -418,11 +385,13 @@ Note: this operation calls an internal AJO GraphQL API (not the public REST API)
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, id: "<uuid>", etag: "<new-etag>" }`,
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['fragmentId'],
     properties: {
-      fragmentId: { type: 'string', description: 'UUID of the fragment to archive' }
+      fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to archive' }
     }
   }
 };

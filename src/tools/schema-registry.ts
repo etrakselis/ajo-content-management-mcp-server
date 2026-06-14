@@ -1,5 +1,3 @@
-import { z } from 'zod';
-import { v4 as uuidv4 } from 'uuid';
 import { buildError, isClientConfigured } from '../adobe/client.js';
 import {
   listSchemas, getSchema,
@@ -12,49 +10,7 @@ import {
   ListXdmFieldGroupsSchema, GetXdmFieldGroupSchema,
   ListXdmUnionSchemasSchema, GetXdmUnionSchemaSchema
 } from '../validation/schemas.js';
-import { toolCallCounter, toolCallDuration, createRequestLogger } from '../telemetry/index.js';
-
-function notConfiguredError() {
-  const port = process.env.PORT || '3000';
-  return {
-    success: false,
-    error: {
-      code: 'NOT_CONFIGURED',
-      message: `MCP server is not configured. Open http://localhost:${port} in your browser, upload your credentials JSON file, and enter your sandbox name to get started.`,
-      details: {}
-    }
-  };
-}
-
-function validationError(err: z.ZodError) {
-  return {
-    success: false,
-    error: {
-      code: 'VALIDATION_ERROR',
-      message: 'Invalid input parameters',
-      details: err.errors.map(e => ({ path: e.path.join('.'), message: e.message }))
-    }
-  };
-}
-
-async function withTelemetry<T>(toolName: string, fn: () => Promise<T>) {
-  const requestId = uuidv4();
-  const log = createRequestLogger(requestId, toolName);
-  const end = toolCallDuration.startTimer({ tool: toolName });
-  log.info(`Tool called: ${toolName}`);
-  try {
-    const result = await fn();
-    toolCallCounter.inc({ tool: toolName, status: 'success' });
-    log.info(`Tool succeeded: ${toolName}`);
-    return result;
-  } catch (err) {
-    toolCallCounter.inc({ tool: toolName, status: 'error' });
-    log.error(`Tool failed: ${toolName}`, { error: err instanceof Error ? err.message : String(err) });
-    throw err;
-  } finally {
-    end();
-  }
-}
+import { notConfiguredError, validationError, withTelemetry } from './utils.js';
 
 const PERSONALIZATION_HINT =
   `Use these to find the REAL personalization attribute paths configured in this sandbox instead of ` +
@@ -73,8 +29,10 @@ Example usage:
 - Tenant (custom) schemas: {} or { "container": "tenant" }
 - Standard schemas: { "container": "global" }
 - Filter by title: { "property": "title~Profile" }`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     properties: {
       container: { type: 'string', enum: ['tenant', 'global'], description: 'tenant = customer-defined (default); global = standard XDM' },
       limit: { type: 'number', description: 'Max items to return (1-1000)' },
@@ -105,8 +63,10 @@ export const getXdmSchemaDefinition = {
   description: `Retrieve a single XDM schema by ID. By default returns the fully-resolved schema (full=true) with every referenced field group inlined, so you can see the complete property tree and the exact attribute paths to use for personalization. ${PERSONALIZATION_HINT}
 
 Pass the schema's $id or meta:altId (from list_xdm_schemas) as schemaId.`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['schemaId'],
     properties: {
       schemaId: { type: 'string', description: 'The $id or meta:altId of the schema' },
@@ -139,8 +99,10 @@ export const listXdmFieldGroupsDefinition = {
 Example usage:
 - Custom field groups: {} or { "container": "tenant" }
 - Standard field groups: { "container": "global" }`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     properties: {
       container: { type: 'string', enum: ['tenant', 'global'], description: 'tenant = customer-defined (default); global = standard XDM' },
       limit: { type: 'number', description: 'Max items to return (1-1000)' },
@@ -171,8 +133,10 @@ export const getXdmFieldGroupDefinition = {
   description: `Retrieve a single XDM field group by ID, fully resolved by default (full=true) so you can see every attribute it defines and the exact paths. ${PERSONALIZATION_HINT}
 
 Pass the field group's $id or meta:altId (from list_xdm_field_groups) as fieldGroupId.`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['fieldGroupId'],
     properties: {
       fieldGroupId: { type: 'string', description: 'The $id or meta:altId of the field group' },
@@ -201,8 +165,10 @@ export async function handleGetXdmFieldGroup(args: unknown) {
 export const listXdmUnionSchemasDefinition = {
   name: 'list_xdm_union_schemas',
   description: `List XDM union schemas (tenant container). A union is the merged view of every schema that shares a class — e.g. the full Profile union combines all enabled Profile field groups into one schema. This is the single best source of the complete set of attributes available for personalization. ${PERSONALIZATION_HINT}`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     properties: {
       limit: { type: 'number', description: 'Max items to return (1-1000)' },
       property: { type: 'string', description: 'Filter expression' },
@@ -231,8 +197,10 @@ export const getXdmUnionSchemaDefinition = {
   description: `Retrieve a single XDM union schema by ID, fully resolved by default (full=true). The resolved Profile union is the complete attribute set available for personalization in this sandbox — read its "properties" tree to find real attribute paths (custom ones nested under the tenant namespace key). ${PERSONALIZATION_HINT}
 
 Pass the union's $id or meta:altId (from list_xdm_union_schemas) as unionId.`,
+  annotations: { readOnlyHint: true },
   inputSchema: {
     type: 'object' as const,
+    additionalProperties: false,
     required: ['unionId'],
     properties: {
       unionId: { type: 'string', description: 'The $id or meta:altId of the union schema' },
