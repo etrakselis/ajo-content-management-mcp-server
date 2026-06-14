@@ -300,9 +300,20 @@ Drag and drop your credentials file. The expected format matches the Postman env
 
 You can find the sandbox name from the url of your AJO instance, look for the parameter called "sname:". Traditionally the sandboxes are named like "dev", "staging", "prod" but the exact name needs to be verified since they aren't enforced and can vary slightly between the orgs.
 
-### 4. Click "Start MCP Server"
+### 4. Set the access mode
 
-The server authenticates once, caches the token, and begins accepting MCP connections.
+Use the **Allow write operations** toggle to choose what connected LLM clients can do:
+
+- **Off — read-only (default).** Only *list* and *get* operations run. Write tools (create, update, delete, publish, archive) are rejected at execution with a `READ_ONLY_MODE` error.
+- **On — read & write.** Write tools execute normally.
+
+Read-only is the safe default — leave it off unless you explicitly want clients to modify content.
+
+The full tool set is **always advertised** to clients regardless of this setting, and enforcement happens when a tool is *called*. This is deliberate: many clients (e.g. Claude Desktop) cache the tool list when they connect and don't react to a mid-session tool-list change, so hiding write tools would strand them in read-only even after you turned writes on. Instead, the server tells the LLM that writes are runtime-gated, so it attempts the operation when asked and surfaces the `READ_ONLY_MODE` error if it's currently off. Because of this, flipping the toggle **takes effect immediately with no client restart** — once you switch to On, the next write attempt simply succeeds.
+
+### 5. Click "Start MCP Server"
+
+The server authenticates once, caches the token, and begins accepting MCP connections. The connection summary then shows the active **tenant namespace**, **sandbox**, and **access mode**.
 
 ---
 

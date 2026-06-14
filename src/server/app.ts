@@ -11,6 +11,7 @@ import { CredentialsFileSchema } from '../validation/schemas.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpServer } from '../mcp/server.js';
 import { getConnectedClients, addSession, touchSession, openSessionStream, closeSessionStream, removeSession } from '../mcp/connected-clients.js';
+import { getWritesAllowed, setWritesAllowed } from '../mcp/access-policy.js';
 import { logger, metricsRegistry } from '../telemetry/index.js';
 import { landingPageHtml } from '../ui/landing.js';
 
@@ -298,6 +299,9 @@ export function createExpressApp(): express.Application {
     }
     const { creds, sandboxName, orgName } = parsedReq;
 
+    // Access mode — read-only by default; writes only when explicitly enabled.
+    setWritesAllowed(req.body?.allowWrites === true);
+
     // Apply credentials so the token manager can acquire an IMS token
     tokenManager.setCredentials(creds);
 
@@ -375,8 +379,21 @@ export function createExpressApp(): express.Application {
       sandboxName,
       tenantId: detectedTenantId,
       tenantNamespace: detectedTenantId ? `_${detectedTenantId}` : undefined,
+      writesAllowed: getWritesAllowed(),
       mcpEndpoint: '/mcp'
     });
+  });
+
+  // Flip the read/write access mode live (after activation), without a full
+  // reconfigure. Enforcement (CallTool) is immediate; already-connected clients
+  // keep their previously-advertised tool list until they reconnect.
+  app.post('/api/access-mode', (req: Request, res: Response) => {
+    if (!tokenManager.isConfigured()) {
+      return res.status(409).json({ success: false, error: 'Server is not configured yet.' });
+    }
+    setWritesAllowed(req.body?.allowWrites === true);
+    logger.info('Access mode changed', { writesAllowed: getWritesAllowed() });
+    return res.json({ success: true, writesAllowed: getWritesAllowed() });
   });
 
   app.get('/api/status', (_req, res) => {
@@ -390,7 +407,7 @@ export function createExpressApp(): express.Application {
   // handshake). Polled by the landing page after activation. `configured` lets
   // the page detect a container restart (server state lost) and reset itself.
   app.get('/api/connected-clients', (_req, res) => {
-    res.json({ configured: tokenManager.isConfigured(), clients: getConnectedClients() });
+    res.json({ configured: tokenManager.isConfigured(), writesAllowed: getWritesAllowed(), clients: getConnectedClients() });
   });
 
   // ─── MCP HTTP Endpoint ────────────────────────────────────────────────────
@@ -434,6 +451,7 @@ export function createExpressApp(): express.Application {
             logger.info('MCP session initialized', { sessionId: sid, client: initInfo.name, transport: 'http' });
           }
         });
+        const mcpServer = createMcpServer('http');
         transport.onclose = () => {
           const sid = transport.sessionId;
           if (sid) {
@@ -442,7 +460,6 @@ export function createExpressApp(): express.Application {
             logger.info('MCP session closed', { sessionId: sid, transport: 'http' });
           }
         };
-        const mcpServer = createMcpServer('http');
         await mcpServer.connect(transport);
         await transport.handleRequest(req, res, req.body);
         return;

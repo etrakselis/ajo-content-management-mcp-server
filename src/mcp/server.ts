@@ -9,6 +9,7 @@ import {
 import { tokenManager } from '../auth/token-manager.js';
 import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId } from '../adobe/client.js';
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
+import { getWritesAllowed } from './access-policy.js';
 import { logger } from '../telemetry/index.js';
 
 // Template tools
@@ -54,6 +55,22 @@ const ALL_TOOLS = [
   archiveContentFragmentDefinition
 ];
 
+// Tools that modify content. When the server is in read-only mode these are
+// hidden from tool discovery and rejected if called anyway.
+const WRITE_TOOLS = new Set<string>([
+  'create_content_template', 'update_content_template', 'patch_content_template', 'delete_content_template',
+  'create_content_fragment', 'update_content_fragment', 'patch_content_fragment',
+  'publish_content_fragment', 'publish_fragment', 'archive_content_fragment'
+]);
+
+const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
+
+// Appended to write-tool descriptions so the client/LLM knows the call is gated by
+// the server's runtime write-access setting (rather than always available).
+const WRITE_TOOL_NOTE =
+  '\n\n[Write operation] Requires write access. If the server is in read-only mode this call is ' +
+  'rejected with a READ_ONLY_MODE error; the user can enable write access at http://localhost:3000.';
+
 const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   list_content_templates: handleListContentTemplates,
   create_content_template: handleCreateContentTemplate,
@@ -88,13 +105,26 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     tenantDesc = parts.join(', ');
   }
 
-  const instructions = tenantDesc
+  // All tools are always advertised; write access is gated at execution time.
+  // Describe the current state AND the dynamic recovery path so the LLM attempts
+  // writes when asked and handles a READ_ONLY_MODE rejection gracefully (rather
+  // than refusing up front, which would go stale the moment the toggle flips).
+  const writeNote = getWritesAllowed()
+    ? ` Write access is currently ENABLED, so create/update/delete/publish/archive tools will run.`
+    : ` Write access is currently DISABLED (read-only). All tools are still listed, but create/update/` +
+      `delete/publish/archive calls will be rejected with a READ_ONLY_MODE error.`;
+  const dynamicNote = ` Write access can be toggled at runtime, so always attempt the operation the user ` +
+    `asks for; if a write is rejected with READ_ONLY_MODE, tell the user they can enable write access ` +
+    `at http://localhost:3000 and then retry — do not abandon the request.`;
+
+  const instructions = (tenantDesc
     ? `You are connected to Adobe Journey Optimizer for ${tenantDesc}. ` +
       `Always display the tenant namespace and sandbox name when discussing content operations. ` +
       `Before creating, updating, or deleting any content, confirm with the user that ` +
       `sandbox "${sandbox}"${tenantNamespace ? ` (tenant: ${tenantNamespace})` : ''} is the intended target.`
     : `You are connected to an AJO Content MCP server. ` +
-      `No sandbox has been configured yet — ask the user to open http://localhost:3000 and complete setup before making any content changes.`;
+      `No sandbox has been configured yet — ask the user to open http://localhost:3000 and complete setup before making any content changes.`)
+    + writeNote + dynamicNote;
 
   const server = new Server(
     {
@@ -127,7 +157,16 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   // ─── Tool Discovery ────────────────────────────────────────────────────────
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: ALL_TOOLS };
+    // Always advertise the full tool set — many clients cache this list at connect
+    // and ignore tools/list_changed, so hiding write tools would strand them in
+    // read-only even after the toggle is flipped on. Write enforcement happens in
+    // CallTool instead. A note on each write tool flags the runtime gate.
+    const tools = ALL_TOOLS.map(t =>
+      isWriteTool(t.name)
+        ? { ...t, description: t.description + WRITE_TOOL_NOTE }
+        : t
+    );
+    return { tools };
   });
 
   // ─── Tool Execution ────────────────────────────────────────────────────────
@@ -135,6 +174,25 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const handler = TOOL_HANDLERS[name];
+
+    // Enforce read-only mode at execution time (defense in depth — independent of
+    // whether the tool was advertised). Read live so it applies to existing sessions.
+    if (!getWritesAllowed() && isWriteTool(name)) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: {
+              code: 'READ_ONLY_MODE',
+              message: `Write operations are disabled. The server is in read-only mode, so "${name}" is not permitted. Ask the user to enable write access on the setup page (http://localhost:3000) if this is intended.`,
+              details: {}
+            }
+          })
+        }],
+        isError: true
+      };
+    }
 
     if (!handler) {
       return {

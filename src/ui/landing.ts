@@ -168,6 +168,15 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     input[type="text"]:focus { border-color: var(--adobe-red); }
     .hint { font-size: 12px; color: var(--adobe-mid); }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; cursor: pointer; }
+    .toggle-text { display: flex; flex-direction: column; gap: 4px; }
+    .toggle-title { font-size: 14px; font-weight: 600; }
+    .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+    .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; background: var(--adobe-border); border-radius: 100px; transition: background 0.15s; }
+    .slider::before { content: ''; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px; background: white; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform 0.15s; }
+    .switch input:checked + .slider { background: var(--adobe-success); }
+    .switch input:checked + .slider::before { transform: translateX(20px); }
     .btn-primary {
       width: 100%;
       height: 44px;
@@ -373,8 +382,25 @@ export const landingPageHtml = `<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Step 3: Start -->
-    <div class="step-label">Step 3 — Launch</div>
+    <!-- Step 3: Access mode -->
+    <div class="step-label">Step 3 — Access mode</div>
+    <div class="card">
+      <h2>Write access</h2>
+      <p>Control what connected LLM clients are allowed to do. The server defaults to <strong>read-only</strong> — turn this on only if you want clients to create, update, delete, publish, or archive content.</p>
+      <label class="toggle-row" for="writeToggle">
+        <span class="toggle-text">
+          <span class="toggle-title">Allow write operations</span>
+          <span class="hint">On: write tools (create, update, delete, publish, archive) execute normally. Off: read-only — those tools are still visible to the client but are blocked at execution and return an error; only list/get actually run. You can flip this any time after launch and it takes effect immediately — no client restart needed.</span>
+        </span>
+        <span class="switch">
+          <input type="checkbox" id="writeToggle" />
+          <span class="slider"></span>
+        </span>
+      </label>
+    </div>
+
+    <!-- Step 4: Start -->
+    <div class="step-label">Step 4 — Launch</div>
     <div class="card">
       <div class="error-msg" id="errorMsg"></div>
       <button class="btn-primary" id="startBtn" disabled>
@@ -390,6 +416,10 @@ export const landingPageHtml = `<!DOCTYPE html>
         <div class="conn-row">
           <span class="conn-key">Sandbox</span>
           <span class="conn-val" id="connSandbox">—</span>
+        </div>
+        <div class="conn-row">
+          <span class="conn-key">Access mode</span>
+          <span class="conn-val" id="connAccess">—</span>
         </div>
       </div>
 
@@ -423,7 +453,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       </div>
       <div class="divider"></div>
       <div class="connect-section">
-        <h3>Recently connected client(s) (idle clients get removed after 10 seconds)</h3>
+        <h3>Recently connected client(s) (idle http clients get removed after 10 seconds, stdio clients are always shown unless the app is closed)</h3>
         <div class="clients-list" id="clientsList">
           <div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>
         </div>
@@ -568,6 +598,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       fileInput.value = '';
       document.getElementById('fileAccepted').classList.remove('show');
       dropzone.style.display = '';
+      document.getElementById('writeToggle').checked = false;
       document.getElementById('resetNotice').classList.add('show');
       checkReady();
     }
@@ -655,9 +686,10 @@ export const landingPageHtml = `<!DOCTYPE html>
         startBtn.innerHTML = spinner(steps[i]);
       }, 2000);
 
+      const allowWrites = document.getElementById('writeToggle').checked;
       let data;
       try {
-        data = await postJson('/api/configure', { credentials, sandboxName: sandbox, orgName: org || undefined });
+        data = await postJson('/api/configure', { credentials, sandboxName: sandbox, orgName: org || undefined, allowWrites });
       } catch (err) {
         clearInterval(stepTimer);
         return failStart('Network error: ' + err.message);
@@ -673,6 +705,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('httpEndpoint').textContent = serverUrl + '/mcp';
       document.getElementById('statusPanel').classList.add('show');
       document.getElementById('connSandbox').textContent = sandbox;
+      setAccessModeDisplay(data.writesAllowed);
       document.getElementById('connInfo').classList.add('show');
       startClientPolling();
 
@@ -693,6 +726,27 @@ export const landingPageHtml = `<!DOCTYPE html>
       startBtn.innerHTML = '✓ Server Active';
       startBtn.style.background = 'var(--adobe-success)';
     }
+
+    function setAccessModeDisplay(writesAllowed) {
+      const el = document.getElementById('connAccess');
+      if (writesAllowed === false) {
+        el.textContent = 'Read-only';
+        el.classList.add('warn');
+      } else {
+        el.textContent = 'Read & write';
+        el.classList.remove('warn');
+      }
+    }
+
+    // Flip the access mode live once the server is active; before launch the
+    // toggle's value is simply applied when Start is clicked.
+    document.getElementById('writeToggle').addEventListener('change', async (e) => {
+      if (!document.getElementById('statusPanel').classList.contains('show')) return;
+      try {
+        const data = await postJson('/api/access-mode', { allowWrites: e.target.checked });
+        if (data.success) setAccessModeDisplay(data.writesAllowed);
+      } catch { /* will apply on next activation */ }
+    });
   </script>
 </body>
 </html>`;
