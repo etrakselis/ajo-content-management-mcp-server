@@ -84,8 +84,6 @@ Before doing any real work, confirm *what* you're connected to and *what you can
 
 > "Summarize what each ajo-content tool does, so I know what I can ask for."
 
-> "Read the `ajo://tools/overview` resource and give me the list of available tools."
-
 ---
 
 ### 🔍 Browsing & Discovery
