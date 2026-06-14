@@ -72,7 +72,7 @@ Before doing any real work, confirm *what* you're connected to and *what you can
 
 > "Before we start, confirm the Adobe Journey Optimizer environment: tenant namespace and sandbox name."
 
-> "List one content template and tell me the org, tenant, and sandbox it came from." *(Every tool result is prefixed with `[org … | tenant … | sandbox …]`, so this is the most reliable way to see the exact target.)*
+> "List one content template and tell me the org, tenant, and sandbox it came from." *(Every tool result is prefixed with `[tenant: … | sandbox: …]` — and `org: …` if an org name was supplied during setup — so this is the most reliable way to see the exact target.)*
 
 **What can I do right now (read-only vs read-write)?**
 > "Are you currently allowed to create or modify content through the ajo-content server, or is it read-only?"

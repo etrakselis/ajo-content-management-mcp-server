@@ -279,6 +279,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
             version: '1.0.0',
             configured,
             authentication: authStatus,
+            writeAccess: getWritesAllowed(),
             availableTools: Object.keys(TOOL_HANDLERS).length
           }, null, 2)
         }]
