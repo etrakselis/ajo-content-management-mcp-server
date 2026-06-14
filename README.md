@@ -302,6 +302,8 @@ docker compose up -d       # start it again later (no rebuild needed)
 
 ## Configuration
 
+> The setup steps appear **one at a time** — only Step 1 is shown when the page loads, and each subsequent step is revealed automatically once you complete the one before it.
+
 ### 1. Open the UI
 
 Navigate to `http://localhost:3000` in your browser.
@@ -347,9 +349,15 @@ Drag and drop your credentials file. The expected format matches the Postman env
 
 > Credentials are stored in memory only. They are never written to disk, logged, or returned through tools.
 
-### 3. Enter sandbox name
+As soon as the file is loaded, the server validates the credentials, auto-detects your **tenant namespace** — displayed in a banner directly below this step so you can confirm the right tenant before continuing — and discovers the sandboxes the credentials can access, which populates the dropdown in the next step.
 
-You can find the sandbox name from the url of your AJO instance, look for the parameter called "sname:". Traditionally the sandboxes are named like "dev", "staging", "prod" but the exact name needs to be verified since they aren't enforced and can vary slightly between the orgs.
+### 3. Select sandbox
+
+The sandbox dropdown is **populated automatically** from the sandboxes your uploaded credentials can access, so in most cases you just pick the one you want from the menu — no typing required. A selection is always required and nothing is pre-selected, even when only one sandbox is available.
+
+If automatic discovery isn't possible — for example, the Sandbox Management API isn't enabled on your Developer Console project, or the credentials don't have permission to list sandboxes — the UI falls back to a **manual entry** field where you can type the sandbox name yourself. You can switch between the dropdown and manual entry at any time using the links beneath the field.
+
+You can find the sandbox name from the URL of your AJO instance — look for the parameter called `sname:`. Traditionally the sandboxes are named like `dev`, `staging`, or `prod`, but the exact name needs to be verified since they aren't enforced and can vary slightly between orgs.
 
 ### 4. Set the access mode
 
@@ -364,7 +372,7 @@ The full tool set is **always advertised** to clients regardless of this setting
 
 ### 5. Click "Start MCP Server"
 
-The server authenticates once, caches the token, and begins accepting MCP connections. The connection summary then shows the active **tenant namespace**, **sandbox**, and **access mode**.
+The server authenticates once, caches the token, and begins accepting MCP connections. The connection summary then shows the active **access mode** — your tenant namespace and selected sandbox are already shown above (in the tenant banner and Step 2), so they aren't repeated here.
 
 ---
 
@@ -692,8 +700,9 @@ npm run dev
 - Check `/ready` endpoint for auth status
 
 ### Sandbox issues
-- Sandbox name is case-sensitive
-- Find the exact name in Adobe Experience Platform → Sandbox switcher
+- Prefer selecting the sandbox from the auto-populated dropdown — it lists exactly the sandboxes your credentials can access
+- If the dropdown is empty or falls back to manual entry, the Sandbox Management API may not be enabled on your Developer Console project, or the credentials may lack permission to list sandboxes
+- Manually entered sandbox names are case-sensitive — find the exact name in Adobe Experience Platform → Sandbox switcher, or in your AJO URL under the `sname:` parameter
 
 ### Connectivity issues
 - Verify the container is running: `docker ps`
