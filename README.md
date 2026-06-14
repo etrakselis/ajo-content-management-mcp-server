@@ -63,6 +63,31 @@ Once your LLM client is connected to this MCP server, you can talk to it in plai
 
 ---
 
+### 🧭 Orientation — start here
+
+Before doing any real work, confirm *what* you're connected to and *what you can do*. These are the prompts to run first.
+
+**Which server / tenant / sandbox am I on?**
+> "Which MCP server are you using to manage AJO content, and what tenant namespace and sandbox is it connected to?"
+
+> "Before we start, confirm the Adobe Journey Optimizer environment: tenant namespace and sandbox name."
+
+> "List one content template and tell me the org, tenant, and sandbox it came from." *(Every tool result is prefixed with `[org … | tenant … | sandbox …]`, so this is the most reliable way to see the exact target.)*
+
+**What can I do right now (read-only vs read-write)?**
+> "Are you currently allowed to create or modify content through the ajo-content server, or is it read-only?"
+
+> "Try to tell me whether write access is enabled. If it isn't, what do I need to do to turn it on?" *(If writes are off, write attempts return a `READ_ONLY_MODE` error pointing you to `http://localhost:3000`.)*
+
+**What tools are available?**
+> "What AJO content tools do you have access to? Group them into read vs. write operations."
+
+> "Summarize what each ajo-content tool does, so I know what I can ask for."
+
+> "Read the `ajo://tools/overview` resource and give me the list of available tools."
+
+---
+
 ### 🔍 Browsing & Discovery
 
 **List everything**
