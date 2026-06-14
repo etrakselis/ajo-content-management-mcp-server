@@ -409,6 +409,83 @@ describe('Express App', () => {
     });
   });
 
+  describe('POST /api/list-sandboxes', () => {
+    const CREDS = {
+      credentials: {
+        values: [
+          { key: 'API_KEY', value: 'my-api-key', enabled: true },
+          { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+          { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+        ],
+        name: 'Test'
+      }
+    };
+
+    test('returns 400 when credentials are missing', async () => {
+      const res = await request(app).post('/api/list-sandboxes').send({});
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    test('returns the discovered sandboxes on success', async () => {
+      (axios.get as jest.Mock).mockResolvedValueOnce({
+        data: {
+          sandboxes: [
+            { name: 'prod', title: 'Production', type: 'production', isDefault: true },
+            { name: 'dev', title: 'Development', type: 'development' },
+            { name: 'no-name-object' }, // valid (string name)
+            { title: 'invalid — no name' } // dropped (no string name)
+          ]
+        }
+      });
+      const res = await request(app).post('/api/list-sandboxes').send(CREDS);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.sandboxes).toHaveLength(3);
+      expect(res.body.sandboxes[0]).toEqual({ name: 'prod', title: 'Production', type: 'production', isDefault: true });
+    });
+
+    test('includes the tenant namespace when detection succeeds', async () => {
+      (axios.get as jest.Mock)
+        .mockResolvedValueOnce({ data: { sandboxes: [{ name: 'prod', isDefault: true }] } }) // fetchSandboxes
+        .mockResolvedValueOnce({ data: { tenantId: 'acme' } }); // detectTenantNamespace /stats
+      const res = await request(app).post('/api/list-sandboxes').send(CREDS);
+      expect(res.status).toBe(200);
+      expect(res.body.tenantId).toBe('acme');
+      expect(res.body.tenantNamespace).toBe('_acme');
+    });
+
+    test('returns success with an empty list when no sandboxes are accessible', async () => {
+      (axios.get as jest.Mock).mockResolvedValueOnce({ data: { sandboxes: [] } });
+      const res = await request(app).post('/api/list-sandboxes').send(CREDS);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.sandboxes).toEqual([]);
+    });
+
+    test('returns 401 with AUTH_FAILED when token acquisition fails', async () => {
+      (tokenManager.getToken as jest.Mock).mockRejectedValueOnce(new Error('invalid_client'));
+      const res = await request(app).post('/api/list-sandboxes').send(CREDS);
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('AUTH_FAILED');
+    });
+
+    test('returns 403 with FORBIDDEN when the API rejects with 403', async () => {
+      const err403 = Object.assign(new Error('Forbidden'), { isAxiosError: true, response: { status: 403, data: {} } });
+      (axios.get as jest.Mock).mockRejectedValueOnce(err403);
+      const res = await request(app).post('/api/list-sandboxes').send(CREDS);
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('FORBIDDEN');
+    });
+
+    test('returns 502 with UPSTREAM_ERROR on other failures', async () => {
+      (axios.get as jest.Mock).mockRejectedValueOnce(new Error('network down'));
+      const res = await request(app).post('/api/list-sandboxes').send(CREDS);
+      expect(res.status).toBe(502);
+      expect(res.body.code).toBe('UPSTREAM_ERROR');
+    });
+  });
+
   describe('POST /mcp', () => {
     test('handles an initialize message and routes through transport', async () => {
       const res = await request(app).post('/mcp').send({

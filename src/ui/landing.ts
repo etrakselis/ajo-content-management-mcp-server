@@ -82,6 +82,38 @@ export const landingPageHtml = `<!DOCTYPE html>
       color: var(--adobe-mid);
       line-height: 1.6;
     }
+    .step { animation: stepReveal 0.35s ease both; }
+    .step.hidden { display: none; }
+    .tenant-banner {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+      border: 1px solid rgba(38,142,108,0.3);
+      background: rgba(38,142,108,0.05);
+      border-radius: 8px;
+      animation: stepReveal 0.35s ease both;
+    }
+    .tenant-banner.warn { border-color: rgba(230,134,25,0.35); background: rgba(230,134,25,0.08); }
+    .tenant-banner-icon {
+      width: 36px; height: 36px;
+      flex-shrink: 0;
+      border-radius: 8px;
+      background: rgba(38,142,108,0.12);
+      color: var(--adobe-success);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .tenant-banner.warn .tenant-banner-icon { background: rgba(230,134,25,0.12); color: var(--adobe-warn); }
+    .tenant-banner-icon svg { width: 18px; height: 18px; }
+    .tenant-banner-text { display: flex; flex-direction: column; gap: 2px; }
+    .tenant-banner-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--adobe-mid); }
+    .tenant-banner-value { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 15px; font-weight: 600; color: var(--adobe-dark); word-break: break-all; }
+    .tenant-banner.warn .tenant-banner-value { font-family: var(--font-display); color: var(--adobe-warn); }
+    @keyframes stepReveal {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
     .step-label {
       font-size: 11px;
       font-weight: 700;
@@ -167,7 +199,28 @@ export const landingPageHtml = `<!DOCTYPE html>
       width: 100%;
     }
     input[type="text"]:focus { border-color: var(--adobe-red); }
+    select {
+      height: 40px;
+      border: 1px solid var(--adobe-border);
+      border-radius: 6px;
+      padding: 0 12px;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+      width: 100%;
+      background: white;
+      cursor: pointer;
+    }
+    select:focus { border-color: var(--adobe-red); }
     .hint { font-size: 12px; color: var(--adobe-mid); }
+    .hint a, .sandbox-note a { color: var(--adobe-red); text-decoration: none; font-weight: 500; cursor: pointer; }
+    .hint a:hover, .sandbox-note a:hover { text-decoration: underline; }
+    .sandbox-msg { font-size: 13px; color: var(--adobe-mid); display: flex; align-items: center; gap: 8px; }
+    .sandbox-note { font-size: 12px; line-height: 1.5; padding: 10px 12px; border-radius: 6px; margin-top: 12px; }
+    .sandbox-note.info { color: var(--adobe-mid); background: var(--adobe-light); border: 1px solid var(--adobe-border); }
+    .sandbox-note.warn { color: var(--adobe-warn); background: rgba(230,134,25,0.08); border: 1px solid rgba(230,134,25,0.25); }
+    .spinner.dark { border: 2px solid rgba(0,0,0,0.12); border-top-color: var(--adobe-red); }
     .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; cursor: pointer; }
     .toggle-text { display: flex; flex-direction: column; gap: 4px; }
     .toggle-title { font-size: 14px; font-weight: 600; }
@@ -347,6 +400,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     </div>
 
     <!-- Step 1: Credentials -->
+    <section class="step" id="step1">
     <div class="step-label">Step 1 — Credentials</div>
     <div class="card">
       <h2>Upload environment file</h2>
@@ -370,19 +424,57 @@ export const landingPageHtml = `<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Step 2: Sandbox -->
-    <div class="step-label">Step 2 — Sandbox</div>
-    <div class="card">
-      <h2>Select sandbox</h2>
-      <p>Enter the Adobe Experience Platform sandbox name to target. All API calls will be scoped to this sandbox.</p>
-      <div class="field-group">
-        <label for="sandboxInput">Sandbox name</label>
-        <input type="text" id="sandboxInput" placeholder="e.g. prod or cjm-team" autocomplete="off" />
-        <span class="hint">Find this in the Adobe Experience Platform sandbox switcher.</span>
+    </section>
+
+    <!-- Tenant identity — revealed as soon as credentials are analyzed, so the
+         user can confirm the tenant before continuing. -->
+    <div class="tenant-banner" id="tenantBanner" style="display:none">
+      <div class="tenant-banner-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-3"/>
+        </svg>
+      </div>
+      <div class="tenant-banner-text">
+        <span class="tenant-banner-label">Tenant namespace</span>
+        <span class="tenant-banner-value" id="tenantValue">—</span>
       </div>
     </div>
 
+    <!-- Step 2: Sandbox -->
+    <section class="step hidden" id="step2">
+    <div class="step-label">Step 2 — Sandbox</div>
+    <div class="card">
+      <h2>Select sandbox</h2>
+      <p>Choose the Adobe Experience Platform sandbox to target. Sandboxes are discovered automatically from your uploaded credentials. All API calls will be scoped to the selected sandbox.</p>
+
+      <!-- Before any credentials are uploaded -->
+      <div class="sandbox-msg" id="sandboxPrompt">Upload your credentials file above to load the list of accessible sandboxes.</div>
+
+      <!-- While discovering -->
+      <div class="sandbox-msg" id="sandboxLoading" style="display:none"><span class="spinner dark"></span> Discovering sandboxes…</div>
+
+      <!-- Auto-discovery succeeded: pick from the dropdown -->
+      <div class="field-group" id="sandboxSelectGroup" style="display:none">
+        <label for="sandboxSelect">Sandbox name</label>
+        <select id="sandboxSelect"></select>
+        <span class="hint">Discovered from your API project credentials. <a id="manualEntryLink">Enter a name manually</a> instead.</span>
+      </div>
+
+      <!-- Manual entry fallback -->
+      <div class="field-group" id="sandboxManualGroup" style="display:none">
+        <label for="sandboxInput">Sandbox name</label>
+        <input type="text" id="sandboxInput" placeholder="e.g. prod or cjm-team" autocomplete="off" />
+        <span class="hint">Find this in the Adobe Experience Platform sandbox switcher. <a id="autoDiscoverLink">Discover sandboxes automatically</a>.</span>
+      </div>
+
+      <!-- Info / error banner for discovery -->
+      <div class="sandbox-note" id="sandboxNote" style="display:none"></div>
+    </div>
+
+    </section>
+
     <!-- Step 3: Access mode -->
+    <section class="step hidden" id="step3">
     <div class="step-label">Step 3 — Access mode</div>
     <div class="card">
       <h2>Write access</h2>
@@ -399,7 +491,10 @@ export const landingPageHtml = `<!DOCTYPE html>
       </label>
     </div>
 
+    </section>
+
     <!-- Step 4: Start -->
+    <section class="step hidden" id="step4">
     <div class="step-label">Step 4 — Launch</div>
     <div class="card">
       <div class="error-msg" id="errorMsg"></div>
@@ -407,16 +502,10 @@ export const landingPageHtml = `<!DOCTYPE html>
         Start MCP Server
       </button>
 
-      <!-- Connection summary — shown right below the button once the server is active -->
+      <!-- Connection summary — shown right below the button once the server is
+           active. Tenant namespace and sandbox are already shown above (banner +
+           Step 2), so only the access mode is surfaced here. -->
       <div class="conn-info" id="connInfo">
-        <div class="conn-row">
-          <span class="conn-key">Tenant namespace</span>
-          <span class="conn-val" id="connNamespace">—</span>
-        </div>
-        <div class="conn-row">
-          <span class="conn-key">Sandbox</span>
-          <span class="conn-val" id="connSandbox">—</span>
-        </div>
         <div class="conn-row">
           <span class="conn-key">Access mode</span>
           <span class="conn-val" id="connAccess">—</span>
@@ -433,6 +522,8 @@ export const landingPageHtml = `<!DOCTYPE html>
         <span class="hint">Your company or AJO customer name. Shown to the LLM to identify the tenant.</span>
       </div>
     </div>
+
+    </section>
 
     <!-- Status Panel (shown after start) -->
     <div class="status-panel" id="statusPanel">
@@ -554,7 +645,7 @@ export const landingPageHtml = `<!DOCTYPE html>
           const credName = (typeof credentials.name === 'string' && credentials.name.trim()) ? credentials.name.trim() : file.name;
           document.getElementById('fileName').textContent = credName + ' — ' + (credentials.values?.length || 0) + ' values';
           dropzone.style.display = 'none';
-          checkReady();
+          discoverSandboxes();
         } catch {
           showError('Invalid JSON file. Please check the file format.');
         }
@@ -569,6 +660,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('fileAccepted').classList.remove('show');
       dropzone.style.display = '';
       resetActivationUI();
+      resetSandboxUI();
       checkReady();
     });
 
@@ -594,6 +686,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     // sandbox the server held are gone and must be provided again.
     function handleServerReset() {
       resetActivationUI();
+      resetSandboxUI();
       credentials = null;
       fileInput.value = '';
       document.getElementById('fileAccepted').classList.remove('show');
@@ -606,6 +699,148 @@ export const landingPageHtml = `<!DOCTYPE html>
     let needsOrg = false;
     const startBtn = document.getElementById('startBtn');
 
+    // ─── Sandbox discovery ─────────────────────────────────────────────────────
+    // 'idle' (no creds yet) · 'loading' · 'list' (dropdown) · 'manual' (text input)
+    let sandboxMode = 'idle';
+
+    // The active sandbox value depends on which input is currently shown.
+    function getSandboxName() {
+      if (sandboxMode === 'list') {
+        return document.getElementById('sandboxSelect').value.trim();
+      }
+      return document.getElementById('sandboxInput').value.trim();
+    }
+
+    function setSandboxMode(mode) {
+      sandboxMode = mode;
+      document.getElementById('sandboxPrompt').style.display = mode === 'idle' ? '' : 'none';
+      document.getElementById('sandboxLoading').style.display = mode === 'loading' ? '' : 'none';
+      document.getElementById('sandboxSelectGroup').style.display = mode === 'list' ? '' : 'none';
+      document.getElementById('sandboxManualGroup').style.display = mode === 'manual' ? '' : 'none';
+    }
+
+    function showSandboxNote(html, kind) {
+      const el = document.getElementById('sandboxNote');
+      if (!html) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      el.className = 'sandbox-note ' + (kind || 'info');
+      el.innerHTML = html;
+      el.style.display = '';
+    }
+
+    // Tenant identity banner shown between Step 1 and Step 2.
+    function showTenantBanner(text, isWarn) {
+      document.getElementById('tenantValue').textContent = text;
+      document.getElementById('tenantBanner').classList.toggle('warn', !!isWarn);
+      document.getElementById('tenantBanner').style.display = '';
+    }
+    function hideTenantBanner() {
+      document.getElementById('tenantBanner').style.display = 'none';
+    }
+
+    // Return Step 2 to its initial state (used when credentials are removed/lost).
+    function resetSandboxUI() {
+      setSandboxMode('idle');
+      showSandboxNote('');
+      hideTenantBanner();
+      document.getElementById('sandboxSelect').innerHTML = '';
+      document.getElementById('sandboxInput').value = '';
+    }
+
+    // Switch to manual entry and explain why auto-discovery didn't populate the list.
+    function fallbackToManual(noteHtml, kind) {
+      setSandboxMode('manual');
+      showSandboxNote(noteHtml, kind);
+      const retry = document.getElementById('retryDiscoverLink');
+      if (retry) retry.addEventListener('click', (e) => { e.preventDefault(); discoverSandboxes(); });
+      checkReady();
+    }
+
+    function populateSandboxDropdown(sandboxes) {
+      // Place a "prod" sandbox first (if present), then sort the rest by label.
+      const sorted = sandboxes.slice().sort((a, b) => {
+        const ap = a.name === 'prod' ? 0 : 1, bp = b.name === 'prod' ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        return (a.title || a.name).localeCompare(b.title || b.name);
+      });
+      // Always lead with a placeholder so the user must actively pick a sandbox,
+      // even when only one is available — never auto-select.
+      let html = '<option value="" disabled selected>Select a sandbox…</option>';
+      html += sorted.map(s => {
+        const base = (s.title && s.title !== s.name) ? s.title + ' (' + s.name + ')' : s.name;
+        const text = s.type ? base + ' — ' + s.type : base;
+        return '<option value="' + escapeHtml(s.name) + '">' + escapeHtml(text) + '</option>';
+      }).join('');
+      const sel = document.getElementById('sandboxSelect');
+      sel.innerHTML = html;
+      setSandboxMode('list');
+      showSandboxNote('');
+      checkReady();
+    }
+
+    async function discoverSandboxes() {
+      if (!credentials) { resetSandboxUI(); checkReady(); return; }
+      // A fresh credential set invalidates any prior detection / activation.
+      if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) {
+        resetActivationUI();
+      }
+      setSandboxMode('loading');
+      showSandboxNote('');
+      hideTenantBanner();
+      checkReady();
+
+      let data;
+      try {
+        data = await postJson('/api/list-sandboxes', { credentials });
+      } catch (err) {
+        fallbackToManual('Unable to retrieve the sandbox list (network error). Enter the sandbox name manually, or <a id="retryDiscoverLink">try again</a>.', 'warn');
+        return;
+      }
+
+      // Surface the tenant identity as soon as it's known (detected server-side
+      // from a discovered sandbox; org-wide so it applies to any selection).
+      if (data.tenantNamespace) showTenantBanner(data.tenantNamespace, false);
+
+      if (!data.success) {
+        let msg;
+        if (data.code === 'AUTH_FAILED') {
+          msg = 'Could not authenticate with Adobe to load sandboxes. You can still enter the sandbox name manually — your credentials are fully validated when you start the server.';
+        } else if (data.code === 'FORBIDDEN') {
+          msg = 'These credentials do not have permission to list sandboxes (the Sandbox Management API may not be added to your Adobe Developer Console project). Enter the sandbox name manually instead.';
+        } else {
+          msg = (data.error || 'Could not load sandboxes.') + ' Enter the sandbox name manually, or <a id="retryDiscoverLink">try again</a>.';
+        }
+        fallbackToManual(msg, 'warn');
+        return;
+      }
+
+      const sandboxes = Array.isArray(data.sandboxes) ? data.sandboxes : [];
+      if (!sandboxes.length) {
+        fallbackToManual('No accessible sandboxes were found for this API project. Enter a sandbox name manually if you know it.', 'info');
+        return;
+      }
+      populateSandboxDropdown(sandboxes);
+    }
+
+    // Toggle between the dropdown and manual entry.
+    document.getElementById('manualEntryLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      setSandboxMode('manual');
+      showSandboxNote('');
+      checkReady();
+    });
+    document.getElementById('autoDiscoverLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      discoverSandboxes();
+    });
+
+    // Selecting a different sandbox from the dropdown invalidates prior activation.
+    document.getElementById('sandboxSelect').addEventListener('change', () => {
+      if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) {
+        resetActivationUI();
+      }
+      checkReady();
+    });
+
     document.getElementById('sandboxInput').addEventListener('input', () => {
       // Changing the sandbox invalidates any prior detection / activation
       if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) {
@@ -614,9 +849,20 @@ export const landingPageHtml = `<!DOCTYPE html>
       checkReady();
     });
 
+    // Reveal steps one at a time: Step 1 is always shown; Step 2 appears once
+    // credentials are loaded; Steps 3 & 4 appear once a sandbox is chosen.
+    // Removing/replacing credentials (or a server reset) collapses back.
+    function syncSteps() {
+      const hasCreds = !!credentials;
+      const hasSandbox = !!getSandboxName();
+      document.getElementById('step2').classList.toggle('hidden', !hasCreds);
+      document.getElementById('step3').classList.toggle('hidden', !(hasCreds && hasSandbox));
+      document.getElementById('step4').classList.toggle('hidden', !(hasCreds && hasSandbox));
+    }
+
     function checkReady() {
-      const sandbox = document.getElementById('sandboxInput').value.trim();
-      startBtn.disabled = !credentials || !sandbox;
+      startBtn.disabled = !credentials || !getSandboxName();
+      syncSteps();
     }
 
     function showError(msg) {
@@ -643,7 +889,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
 
     startBtn.addEventListener('click', async () => {
-      const sandbox = document.getElementById('sandboxInput').value.trim();
+      const sandbox = getSandboxName();
       const org = document.getElementById('orgInput').value.trim();
       document.getElementById('errorMsg').classList.remove('show');
 
@@ -704,22 +950,19 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('statusBadge').textContent = 'Active';
       document.getElementById('httpEndpoint').textContent = serverUrl + '/mcp';
       document.getElementById('statusPanel').classList.add('show');
-      document.getElementById('connSandbox').textContent = sandbox;
       setAccessModeDisplay(data.writesAllowed);
       document.getElementById('connInfo').classList.add('show');
       startClientPolling();
 
-      const connNs = document.getElementById('connNamespace');
+      // Finalize the tenant identity in the banner above (it may have been
+      // unknown until the user supplied an org name for the fallback).
       if (data.tenantNamespace) {
-        connNs.textContent = data.tenantNamespace;
-        connNs.classList.remove('warn');
+        showTenantBanner(data.tenantNamespace, false);
         document.getElementById('orgFallback').classList.remove('show');
       } else if (org) {
-        connNs.textContent = org + ' (manual)';
-        connNs.classList.remove('warn');
+        showTenantBanner(org + ' (manual)', false);
       } else {
-        connNs.textContent = 'Not auto-detected';
-        connNs.classList.add('warn');
+        showTenantBanner('Not auto-detected', true);
       }
 
       startBtn.disabled = true;

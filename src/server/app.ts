@@ -17,32 +17,22 @@ import { landingPageHtml } from '../ui/landing.js';
 
 // ─── Shared configuration helpers ──────────────────────────────────────────
 
+type ExtractedCredentials =
+  | { ok: true; creds: AdobeCredentials }
+  | { ok: false; status: number; error: string };
+
 type ParsedConfigRequest =
   | { ok: true; creds: AdobeCredentials; sandboxName: string; orgName?: string }
   | { ok: false; status: number; error: string };
 
 /**
- * Validate an /api/configure or /api/detect-tenant request body and extract a
- * normalized set of Adobe credentials. Shared so both endpoints apply identical
- * validation rules.
+ * Validate an uploaded credentials file and map its `values` array into a
+ * normalized AdobeCredentials object. Shared by every endpoint that needs to
+ * act on uploaded credentials so they all apply identical validation rules.
  */
-function parseConfigRequest(body: Record<string, unknown>): ParsedConfigRequest {
-  const { credentials, sandboxName, orgName } = body as {
-    credentials?: unknown;
-    sandboxName?: string;
-    orgName?: unknown;
-  };
-
-  if (!credentials || !sandboxName) {
-    return { ok: false, status: 400, error: 'credentials and sandboxName are required' };
-  }
-
-  if (!sandboxName.match(/^[a-zA-Z0-9_-]{1,50}$/)) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'Invalid sandbox name. Use alphanumeric characters, hyphens, and underscores only.'
-    };
+function extractCredentials(credentials: unknown): ExtractedCredentials {
+  if (!credentials) {
+    return { ok: false, status: 400, error: 'credentials are required' };
   }
 
   const parsed = CredentialsFileSchema.safeParse(credentials);
@@ -75,12 +65,85 @@ function parseConfigRequest(body: Record<string, unknown>): ParsedConfigRequest 
     return { ok: false, status: 400, error: `Missing required credential fields: ${missing.join(', ')}` };
   }
 
+  return { ok: true, creds: creds as AdobeCredentials };
+}
+
+/**
+ * Validate an /api/configure or /api/detect-tenant request body and extract a
+ * normalized set of Adobe credentials plus the target sandbox. Shared so both
+ * endpoints apply identical validation rules.
+ */
+function parseConfigRequest(body: Record<string, unknown>): ParsedConfigRequest {
+  const { credentials, sandboxName, orgName } = body as {
+    credentials?: unknown;
+    sandboxName?: string;
+    orgName?: unknown;
+  };
+
+  if (!sandboxName) {
+    return { ok: false, status: 400, error: 'credentials and sandboxName are required' };
+  }
+
+  if (!sandboxName.match(/^[a-zA-Z0-9_-]{1,50}$/)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'Invalid sandbox name. Use alphanumeric characters, hyphens, and underscores only.'
+    };
+  }
+
+  const extracted = extractCredentials(credentials);
+  if (!extracted.ok) return extracted;
+
   return {
     ok: true,
-    creds: creds as AdobeCredentials,
+    creds: extracted.creds,
     sandboxName,
     orgName: typeof orgName === 'string' && orgName.trim() ? orgName.trim() : undefined
   };
+}
+
+interface SandboxSummary {
+  name: string;
+  title?: string;
+  type?: string;
+  isDefault?: boolean;
+}
+
+/**
+ * List the AEP sandboxes the authenticated credentials can access via the
+ * Sandbox Management API. The returned list reflects the effective permissions
+ * of the service account at runtime — it is the authoritative source of
+ * accessible sandboxes, never inferred from the IMS org or API key alone.
+ */
+async function fetchSandboxes(
+  accessToken: string,
+  apiKey: string,
+  imsOrg: string
+): Promise<SandboxSummary[]> {
+  const resp = await axios.get(
+    'https://platform.adobe.io/data/foundation/sandbox-management/',
+    {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'x-api-key': apiKey,
+        'x-gw-ims-org-id': imsOrg,
+        'Accept': 'application/json'
+      },
+      timeout: 8000
+    }
+  );
+
+  const list = resp.data?.sandboxes;
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((sb): sb is Record<string, unknown> => !!sb && typeof sb === 'object' && typeof sb.name === 'string')
+    .map(sb => ({
+      name: String(sb.name),
+      title: typeof sb.title === 'string' && sb.title.trim() ? sb.title : undefined,
+      type: typeof sb.type === 'string' ? sb.type : undefined,
+      isDefault: sb.isDefault === true
+    }));
 }
 
 /**
@@ -253,6 +316,94 @@ export function createExpressApp(): express.Application {
   });
 
   // ─── Configuration API ────────────────────────────────────────────────────
+
+  // Discovery is triggered automatically when the user uploads credentials and
+  // can be retried, so it needs more headroom than the strict auth limiter.
+  const discoverLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Too many sandbox discovery attempts. Please wait a moment and retry.' }
+  });
+
+  // Discover which AEP sandboxes the uploaded credentials can access, so the
+  // landing page can populate the sandbox dropdown instead of asking the user to
+  // type a name. Validation/activation still happen at /api/configure; this is a
+  // best-effort convenience probe and never mutates server state.
+  app.post('/api/list-sandboxes', discoverLimiter, async (req: Request, res: Response) => {
+    const extracted = extractCredentials((req.body as { credentials?: unknown })?.credentials);
+    if (!extracted.ok) {
+      return res.status(extracted.status).json({ success: false, error: extracted.error });
+    }
+    const { creds } = extracted;
+
+    // Acquire an IMS token to call the Sandbox Management API. We reset the token
+    // manager afterwards so this probe doesn't leave the server looking
+    // "configured" before the user has picked a sandbox and clicked Start.
+    tokenManager.setCredentials(creds);
+
+    let accessToken: string;
+    try {
+      accessToken = await tokenManager.getToken();
+    } catch (err) {
+      tokenManager.reset();
+      const detail = err instanceof Error ? err.message : String(err);
+      logger.warn('Credential validation failed during list-sandboxes', { error: detail });
+      return res.status(401).json({
+        success: false,
+        code: 'AUTH_FAILED',
+        error: `Unable to authenticate with Adobe Experience Platform: ${detail}`
+      });
+    }
+
+    try {
+      const sandboxes = await fetchSandboxes(accessToken, creds.API_KEY!, creds.IMS_ORG!);
+
+      // The tenant namespace is org-wide (identical across sandboxes) but the
+      // Schema Registry must be queried within a sandbox context, so probe the
+      // default (or first) discovered sandbox. Non-fatal — surfaced purely so the
+      // landing page can show the tenant identity as soon as credentials load.
+      let tenantId: string | undefined;
+      if (sandboxes.length > 0) {
+        const probeSandbox = sandboxes.find(s => s.isDefault)?.name ?? sandboxes[0].name;
+        tenantId = await detectTenantNamespace(accessToken, creds.API_KEY!, creds.IMS_ORG!, probeSandbox);
+      }
+
+      tokenManager.reset();
+      logger.info('Listed accessible sandboxes', { count: sandboxes.length, tenantId });
+      return res.json({
+        success: true,
+        sandboxes,
+        tenantId,
+        tenantNamespace: tenantId ? `_${tenantId}` : undefined
+      });
+    } catch (err) {
+      tokenManager.reset();
+      const status = axios.isAxiosError(err) ? err.response?.status : null;
+      const body = axios.isAxiosError(err) ? err.response?.data : null;
+      logger.warn('Sandbox Management API call failed', { status, body });
+      if (status === 401) {
+        return res.status(401).json({
+          success: false,
+          code: 'AUTH_FAILED',
+          error: 'Unable to authenticate with Adobe Experience Platform. Please verify the access token and API credentials.'
+        });
+      }
+      if (status === 403) {
+        return res.status(403).json({
+          success: false,
+          code: 'FORBIDDEN',
+          error: 'The supplied credentials do not have permission to list Adobe Experience Platform sandboxes.'
+        });
+      }
+      return res.status(502).json({
+        success: false,
+        code: 'UPSTREAM_ERROR',
+        error: 'Unable to retrieve sandbox information. Please try again later.'
+      });
+    }
+  });
 
   // Lightweight probe: validate credentials and attempt tenant-namespace
   // detection WITHOUT activating the server. The landing page calls this before
