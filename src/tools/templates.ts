@@ -13,6 +13,7 @@ import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, 
 
 export const listContentTemplatesDefinition = {
   name: 'list_content_templates',
+  title: 'List Content Templates',
   outputSchema: buildOutputSchema({ data: LIST_DATA }),
   description: `List content templates from Adobe Journey Optimizer.
 Returns a paginated list of all content templates in the configured sandbox.
@@ -24,7 +25,7 @@ Example usage:
 - Sort ascending: { orderBy: "+modifiedAt" }
 
 Returns: { _page: { count, next }, items: [{ id, name, templateType, channels, ... }] }`,
-  annotations: { readOnlyHint: true },
+  annotations: { title: 'List Content Templates', readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -55,6 +56,7 @@ export async function handleListContentTemplates(args: unknown) {
 
 export const createContentTemplateDefinition = {
   name: 'create_content_template',
+  title: 'Create Content Template',
   outputSchema: buildOutputSchema({
     id: { type: 'string', description: 'UUID of the newly created template.' },
     location: { type: 'string', description: 'Relative path of the new template, e.g. /templates/<uuid>.' }
@@ -89,7 +91,7 @@ Example usage (push notification template):
 }
 
 Returns: { success: true, id: "<uuid>", location: "/templates/<uuid>" }`,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  annotations: { title: 'Create Content Template', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -125,6 +127,7 @@ export async function handleCreateContentTemplate(args: unknown) {
 
 export const getContentTemplateDefinition = {
   name: 'get_content_template',
+  title: 'Get Content Template',
   outputSchema: buildOutputSchema({ data: DATA_OBJECT, etag: ETAG_FIELD }),
   description: `Fetch a single content template by ID from Adobe Journey Optimizer.
 
@@ -132,7 +135,7 @@ Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { id, name, templateType, channels, template, createdAt, modifiedAt, ... }, etag: "..." }
 The etag is required for update (PUT/PATCH) operations.`,
-  annotations: { readOnlyHint: true },
+  annotations: { title: 'Get Content Template', readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -161,6 +164,7 @@ export async function handleGetContentTemplate(args: unknown) {
 
 export const updateContentTemplateDefinition = {
   name: 'update_content_template',
+  title: 'Update Content Template (Replace)',
   outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
   description: `Replace a content template entirely (PUT). Use this when changing template content, type, or channels. To rename or move a template without touching its content, patch_content_template is lighter-weight.
 
@@ -190,7 +194,7 @@ Example usage:
 }
 
 Returns: { success: true }`,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  annotations: { title: 'Update Content Template (Replace)', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -229,6 +233,7 @@ export async function handleUpdateContentTemplate(args: unknown) {
 
 export const patchContentTemplateDefinition = {
   name: 'patch_content_template',
+  title: 'Rename or Move Content Template',
   outputSchema: buildOutputSchema({ data: DATA_OBJECT, etag: ETAG_FIELD }),
   description: `Rename or redescribe a content template — use this when changing only metadata (name, description, or parent folder), NOT content. For content, type, or channel changes, use update_content_template instead.
 
@@ -245,7 +250,7 @@ Example usage:
 }
 
 Returns: { success: true, data: { updated template }, etag: "new-etag" }`,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  annotations: { title: 'Rename or Move Content Template', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -289,6 +294,7 @@ export async function handlePatchContentTemplate(args: unknown) {
 
 export const deleteContentTemplateDefinition = {
   name: 'delete_content_template',
+  title: 'Delete Content Template',
   outputSchema: buildOutputSchema(),
   description: `Delete a content template permanently by ID.
 
@@ -297,7 +303,7 @@ export const deleteContentTemplateDefinition = {
 Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true }`,
-  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+  annotations: { title: 'Delete Content Template', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,

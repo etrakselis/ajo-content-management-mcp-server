@@ -13,6 +13,7 @@ import { notConfiguredError, withTelemetry, buildOutputSchema } from './utils.js
 
 export const getServerContextDefinition = {
   name: 'get_server_context',
+  title: 'Get Server Context (Identity & Config)',
   outputSchema: buildOutputSchema({
     data: {
       type: 'object',
@@ -33,7 +34,7 @@ Use this to answer questions like "who is this server running on behalf of?", "w
 Example usage: {}
 
 Returns: { success: true, data: { authorEmail, sandbox, tenantNamespace, orgName, writeAccess, configured } }`,
-  annotations: { readOnlyHint: true },
+  annotations: { title: 'Get Server Context (Identity & Config)', readOnlyHint: true, openWorldHint: false },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,

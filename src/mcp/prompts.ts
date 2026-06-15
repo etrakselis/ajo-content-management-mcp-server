@@ -1,14 +1,36 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import {
+  RESOURCE_URIS,
+  CHANNEL_REFERENCE_TEXT,
+  ERROR_CODES_TEXT
+} from './resources.js';
 
 export interface PromptDefinition {
   name: string;
+  title?: string;
   description: string;
   arguments: Array<{ name: string; description: string; required: boolean }>;
+}
+
+// A prompt message carries either plain text or an embedded resource. Embedding
+// the canonical reference resources (channel shapes, error codes) directly in
+// the prompt means the model has them inline while executing the workflow,
+// instead of having to decide to fetch them — one fewer failure point.
+type PromptContent =
+  | { type: 'text'; text: string }
+  | { type: 'resource'; resource: { uri: string; mimeType: string; text: string } };
+
+type PromptMessage = { role: 'user' | 'assistant'; content: PromptContent };
+
+// Build an embedded-resource message block from a static resource's canonical text.
+function embeddedResource(uri: string, text: string, mimeType = 'text/plain'): PromptMessage {
+  return { role: 'user', content: { type: 'resource', resource: { uri, mimeType, text } } };
 }
 
 export const ALL_PROMPTS: PromptDefinition[] = [
   {
     name: 'discover-personalization-paths',
+    title: 'Discover Personalization Paths',
     description:
       'Look up the real XDM attribute paths available for personalization in this sandbox ' +
       'before inserting {{...}} expressions into templates or fragments. ' +
@@ -23,6 +45,7 @@ export const ALL_PROMPTS: PromptDefinition[] = [
   },
   {
     name: 'publish-fragment',
+    title: 'Publish Fragment (Async Workflow)',
     description:
       'Walk through the complete async publish-and-verify workflow for a content fragment: ' +
       'check current state, trigger publication, then poll until it completes or fails. ' +
@@ -37,6 +60,7 @@ export const ALL_PROMPTS: PromptDefinition[] = [
   },
   {
     name: 'audit-content-library',
+    title: 'Audit Content Library',
     description:
       'Survey all content templates and fragments in the sandbox, report counts by status, ' +
       'and surface any drafts that have never been published or fragments blocked from use in campaigns.',
@@ -54,7 +78,7 @@ export function getPromptMessages(
   name: string,
   args: Record<string, string> | undefined,
   tenantNamespace: string | null
-): Array<{ role: 'user' | 'assistant'; content: { type: 'text'; text: string } }> {
+): PromptMessage[] {
   const tenantExample = tenantNamespace ?? '_yourtenant';
 
   switch (name) {
@@ -79,9 +103,12 @@ Step 3 (optional shortcut) — Get the complete Profile union:
   If you need the full merged view of every attribute available for Profile personalization, call list_xdm_union_schemas, identify the Profile union, then call get_xdm_union_schema with full=true. This gives the complete attribute set in one response.
 
 Step 4 — Report findings:
-  List the attribute paths you found with their correct personalization expression format, e.g. {{${tenantExample}.person.firstName}}. Explain what each attribute represents. If no relevant attributes were found, say so clearly so the user knows to check their schema configuration.`
+  List the attribute paths you found with their correct personalization expression format, e.g. {{${tenantExample}.person.firstName}}. Explain what each attribute represents. If no relevant attributes were found, say so clearly so the user knows to check their schema configuration.
+
+The attached channel & content-type reference shows where these personalization expressions belong inside each template/fragment content shape.`
           }
-        }
+        },
+        embeddedResource(RESOURCE_URIS.channelReference, CHANNEL_REFERENCE_TEXT)
       ];
     }
 
@@ -112,9 +139,12 @@ Step 3 — Poll for completion:
   - If status is "error": report the full errors array to the user. Do not retry automatically — let the user decide how to resolve the error.
 
 Step 4 — Report outcome:
-  Tell the user whether publication succeeded or failed, and what the fragment's new status is.`
+  Tell the user whether publication succeeded or failed, and what the fragment's new status is.
+
+If any tool call returns an error, consult the attached error-code reference for its cause and the correct recovery action before deciding what to do next.`
           }
-        }
+        },
+        embeddedResource(RESOURCE_URIS.errorCodes, ERROR_CODES_TEXT)
       ];
     }
 
@@ -161,9 +191,12 @@ Step 4 — Report outcome:
 ${sections.join('\n\n')}
 
 Output format:
-  Produce a concise summary with counts and a clearly labelled action-items section.`
+  Produce a concise summary with counts and a clearly labelled action-items section.
+
+Use the attached channel & content-type reference as the canonical list of valid templateType and channel values when grouping results.`
           }
-        }
+        },
+        embeddedResource(RESOURCE_URIS.channelReference, CHANNEL_REFERENCE_TEXT)
       ];
     }
 

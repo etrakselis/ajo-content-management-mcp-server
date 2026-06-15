@@ -15,6 +15,7 @@ import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, 
 
 export const listContentFragmentsDefinition = {
   name: 'list_content_fragments',
+  title: 'List Content Fragments',
   outputSchema: buildOutputSchema({ data: LIST_DATA }),
   description: `List content fragments from Adobe Journey Optimizer.
 Returns a paginated list of all content fragments in the configured sandbox.
@@ -25,7 +26,7 @@ Example usage:
 - Filter by type: { property: ["type==html"] }
 
 Returns: { _page: { count, next }, items: [{ id, name, type, status, channels, ... }] }`,
-  annotations: { readOnlyHint: true },
+  annotations: { title: 'List Content Fragments', readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -56,6 +57,7 @@ export async function handleListContentFragments(args: unknown) {
 
 export const createContentFragmentDefinition = {
   name: 'create_content_fragment',
+  title: 'Create Content Fragment',
   outputSchema: buildOutputSchema({
     id: { type: 'string', description: 'UUID of the newly created fragment.' },
     location: { type: 'string', description: 'Relative path of the new fragment, e.g. /fragments/<uuid>.' }
@@ -86,7 +88,7 @@ Example usage (Expression fragment):
 Note: _yourtenant is a placeholder — use the 'discover-personalization-paths' prompt for a guided lookup, or call list_xdm_field_groups directly, to find the real attribute paths before inserting any personalization.
 
 Returns: { success: true, id: "<uuid>", location: "/fragments/<uuid>" }`,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  annotations: { title: 'Create Content Fragment', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -123,6 +125,7 @@ export async function handleCreateContentFragment(args: unknown) {
 
 export const getContentFragmentDefinition = {
   name: 'get_content_fragment',
+  title: 'Get Content Fragment',
   outputSchema: buildOutputSchema({ data: DATA_OBJECT, etag: ETAG_FIELD }),
   description: `Fetch a single content fragment by ID from Adobe Journey Optimizer.
 
@@ -130,7 +133,7 @@ Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { id, name, type, status, channels, fragment, createdAt, ... }, etag: "..." }
 The etag is required for update/patch operations.`,
-  annotations: { readOnlyHint: true },
+  annotations: { title: 'Get Content Fragment', readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -159,6 +162,7 @@ export async function handleGetContentFragment(args: unknown) {
 
 export const updateContentFragmentDefinition = {
   name: 'update_content_fragment',
+  title: 'Update Content Fragment (Replace)',
   outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
   description: `Replace a content fragment entirely (PUT). Use this when changing fragment content, type, or channels. To rename or move a fragment without touching its content, patch_content_fragment is lighter-weight.
 
@@ -178,7 +182,7 @@ Example usage:
 }
 
 Returns: { success: true }`,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  annotations: { title: 'Update Content Fragment (Replace)', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -217,6 +221,7 @@ export async function handleUpdateContentFragment(args: unknown) {
 
 export const patchContentFragmentDefinition = {
   name: 'patch_content_fragment',
+  title: 'Rename or Move Content Fragment',
   outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
   description: `Rename or redescribe a content fragment — use this when changing only metadata (name, description, or parent folder), NOT content. For content, type, or channel changes, use update_content_fragment instead.
 
@@ -230,7 +235,7 @@ Example usage:
 }
 
 Returns: { success: true }`,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  annotations: { title: 'Rename or Move Content Fragment', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -273,6 +278,7 @@ export async function handlePatchContentFragment(args: unknown) {
 
 export const publishContentFragmentDefinition = {
   name: 'publish_content_fragment',
+  title: 'Publish Content Fragment',
   outputSchema: buildOutputSchema({
     accepted: { type: 'boolean', description: 'true if the async publication request was accepted.' },
     location: { type: 'string', description: 'Status resource path for the publication request.' },
@@ -285,7 +291,7 @@ Publication is asynchronous — after calling this tool, poll get_fragment_publi
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, accepted: true, location: "...", retryAfter: 5 }`,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  annotations: { title: 'Publish Content Fragment', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -314,6 +320,7 @@ export async function handlePublishContentFragment(args: unknown) {
 
 export const getLiveFragmentDefinition = {
   name: 'get_live_fragment',
+  title: 'Get Live (Published) Fragment',
   outputSchema: buildOutputSchema({ data: DATA_OBJECT }),
   description: `Fetch the content of a fragment's last successful publication.
 Use this to retrieve the frozen/published version of a fragment that is live in campaigns.
@@ -321,7 +328,7 @@ Use this to retrieve the frozen/published version of a fragment that is live in 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { type: "html", fragment: { content: "<div>...</div>" } } }`,
-  annotations: { readOnlyHint: true },
+  annotations: { title: 'Get Live (Published) Fragment', readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -350,6 +357,7 @@ export async function handleGetLiveFragment(args: unknown) {
 
 export const getFragmentPublicationStatusDefinition = {
   name: 'get_fragment_publication_status',
+  title: 'Get Fragment Publication Status',
   outputSchema: buildOutputSchema({
     data: {
       type: 'object',
@@ -370,7 +378,7 @@ Status values:
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { status: "complete"|"inProgress"|"error", errors: [] } }`,
-  annotations: { readOnlyHint: true },
+  annotations: { title: 'Get Fragment Publication Status', readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -399,6 +407,7 @@ export async function handleGetFragmentPublicationStatus(args: unknown) {
 
 export const archiveContentFragmentDefinition = {
   name: 'archive_content_fragment',
+  title: 'Archive Content Fragment',
   outputSchema: buildOutputSchema({
     id: { type: 'string', description: 'UUID of the archived fragment.' },
     etag: { type: 'string', description: 'New ETag after archival.' }
@@ -416,7 +425,7 @@ Note: this operation calls an internal AJO GraphQL API (not the public REST API)
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, id: "<uuid>", etag: "<new-etag>" }`,
-  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+  annotations: { title: 'Archive Content Fragment', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
