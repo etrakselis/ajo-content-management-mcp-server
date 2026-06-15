@@ -71,6 +71,37 @@ export const ALL_PROMPTS: PromptDefinition[] = [
         required: false
       }
     ]
+  },
+  {
+    name: 'create-content',
+    title: 'Create Template or Fragment',
+    description:
+      'Walk through the full creation workflow for a content template or fragment: confirm the ' +
+      'correct templateType and content shape for the target channel, look up real XDM personalization ' +
+      'paths if the content addresses the recipient by name or references their data, confirm the ' +
+      'complete payload with the user, then create the content.',
+    arguments: [
+      {
+        name: 'channel',
+        description: 'Target channel: email, push, sms, inapp, code, directMail, landingpage, or shared',
+        required: true
+      },
+      {
+        name: 'content_kind',
+        description: '"template" (default) or "fragment". Fragments are only valid for email (html type) and shared (expression type) channels.',
+        required: false
+      },
+      {
+        name: 'name',
+        description: 'Intended name for the new content item (will also be confirmed with the user during the workflow)',
+        required: false
+      },
+      {
+        name: 'use_case',
+        description: 'What this content is for, e.g. "welcome email", "cart-abandon push notification", "loyalty tier greeting". Used to guide personalization lookup.',
+        required: false
+      }
+    ]
   }
 ];
 
@@ -194,6 +225,77 @@ Output format:
   Produce a concise summary with counts and a clearly labelled action-items section.
 
 Use the attached channel & content-type reference as the canonical list of valid templateType and channel values when grouping results.`
+          }
+        },
+        embeddedResource(RESOURCE_URIS.channelReference, CHANNEL_REFERENCE_TEXT)
+      ];
+    }
+
+    case 'create-content': {
+      const channel = args?.channel;
+      if (!channel) {
+        throw new McpError(ErrorCode.InvalidParams, 'Missing required argument: channel');
+      }
+      const contentKind = args?.content_kind ?? 'template';
+      const isFragment = contentKind === 'fragment';
+      const name = args?.name;
+      const useCase = args?.use_case ?? 'general purpose';
+
+      if (isFragment && channel !== 'email' && channel !== 'shared') {
+        throw new McpError(ErrorCode.InvalidParams,
+          `Fragments are only supported for "email" (html) and "shared" (expression) channels. ` +
+          `Channel "${channel}" only supports templates. Set content_kind to "template" or change the channel.`
+        );
+      }
+
+      const channelToTemplateType: Record<string, string> = {
+        email: 'html',
+        push: 'content',
+        sms: 'content',
+        inapp: 'content',
+        code: 'content',
+        directMail: 'content',
+        landingpage: 'html_primary_page',
+        shared: 'content'
+      };
+      const templateType = channelToTemplateType[channel] ?? 'content';
+      const fragmentType = channel === 'shared' ? 'expression' : 'html';
+      const fragmentChannels = channel === 'shared' ? ['shared'] : ['email'];
+
+      const createTool = isFragment ? 'create_content_fragment' : 'create_content_template';
+      const nameHint = name ? `"${name}"` : '<name confirmed with user>';
+
+      const typeAndShapeHint = isFragment
+        ? `type "${fragmentType}", channels: ${JSON.stringify(fragmentChannels)}, fragment: { ... }`
+        : `templateType "${templateType}", channels: ["${channel}"]${channel === 'code' ? ', subType: "HTML" | "JSON"' : ''}, template: { ... }`;
+
+      return [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `Create a new ${isFragment ? 'content fragment' : 'content template'} for the ${channel} channel${name ? ` named "${name}"` : ''} (use case: ${useCase}).
+
+Use the attached channel & content-type reference to confirm the correct shape before constructing any payload.
+
+Step 1 — Confirm the content shape:
+  Look up "${channel}" in the reference. The correct shape is:
+    ${typeAndShapeHint}
+  Confirm with the user what the actual body content should be.
+${channel === 'landingpage' ? '  Note: use "html_primary_page" for the main page and "html_sub_page" for confirmation/thank-you pages.\n' : ''}
+Step 2 — Look up personalization paths (skip if the content has no personalization):
+  If the content will address the recipient by name or reference their data, call list_xdm_field_groups with container "tenant" to list all customer-defined field groups. For any group whose title is relevant to "${useCase}", call get_xdm_field_group with full=true. Custom attributes are nested under the tenant namespace key (e.g. "${tenantExample}") in the "properties" tree. Do NOT guess paths like {{profile.person.firstName}} — use only what you find.
+
+Step 3 — Confirm the complete payload with the user:
+  Before creating anything, show the user the full JSON payload you plan to send and ask them to confirm or adjust it. Include the name, type/channel, and all content fields.
+
+Step 4 — Create the content:
+  Once the user confirms, call ${createTool} with:
+    { "name": ${nameHint}, ${typeAndShapeHint} }
+  Write access must be enabled. If you receive READ_ONLY_MODE, tell the user to enable write access at http://localhost:3000, then retry.
+
+Step 5 — Report outcome:
+  On success, tell the user the new ${isFragment ? 'fragment' : 'template'} ID and confirm it was created.${isFragment ? '\n  Remind the user that a fragment must be published before it can be used in campaigns — use the "publish-fragment" prompt for the full async publication workflow.' : ''}`
           }
         },
         embeddedResource(RESOURCE_URIS.channelReference, CHANNEL_REFERENCE_TEXT)

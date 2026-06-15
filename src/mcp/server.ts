@@ -4,6 +4,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
@@ -13,11 +14,11 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js';
 import { tokenManager } from '../auth/token-manager.js';
-import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, getConfiguredAuthorEmail, listFragments } from '../adobe/client.js';
+import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, getConfiguredAuthorEmail, listFragments, listTemplates, getFragment, getTemplate, buildError } from '../adobe/client.js';
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
-import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT } from './resources.js';
+import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_TEMPLATE_DESCRIPTORS, parseFragmentUri, parseTemplateUri, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT } from './resources.js';
 import { logger } from '../telemetry/index.js';
 import { recordAudit } from '../telemetry/audit.js';
 
@@ -55,7 +56,8 @@ import {
 } from '../tools/schema-registry.js';
 
 // Server context — read-only; reports who/what this server is operating as
-import { getServerContextDefinition, handleGetServerContext } from '../tools/context.js';
+import { getServerContextDefinition, handleGetServerContext, setToolCatalog } from '../tools/context.js';
+import { buildToolCatalog, formatToolCatalog } from './tool-catalog.js';
 
 const ALL_TOOLS = [
   listContentTemplatesDefinition,
@@ -84,6 +86,14 @@ const ALL_TOOLS = [
   getServerContextDefinition
 ];
 
+// Catalog derived from the live tool list (so it never drifts). Registered into
+// the get_server_context handler and also rendered into the server instructions —
+// two independent discovery channels so the model can find every tool by exact
+// name even when the client defers tools and a fuzzy search misses one.
+const TOOL_CATALOG = buildToolCatalog(ALL_TOOLS);
+const TOOL_CATALOG_TEXT = formatToolCatalog(TOOL_CATALOG);
+setToolCatalog(TOOL_CATALOG);
+
 // Tools that modify content. When the server is in read-only mode these are
 // hidden from tool discovery and rejected if called anyway.
 const WRITE_TOOLS = new Set<string>([
@@ -93,6 +103,12 @@ const WRITE_TOOLS = new Set<string>([
 ]);
 
 const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
+
+// Page cap for the ajo://fragments / ajo://templates directory reads. At 100
+// items/page this bounds a directory read to 5,000 objects so a very large
+// sandbox can't make a single resource read unbounded; beyond it the result is
+// flagged truncated with a resume cursor.
+const MAX_DIRECTORY_PAGES = 50;
 
 // Writes with no undo. These are always re-confirmed with the user (never cached)
 // when the client supports elicitation. The AJO API has no delete for fragments,
@@ -223,11 +239,21 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   const resourceNote = ` Before constructing any create or update payload, read the ` +
     `ajo://sandbox/channel-reference resource to confirm the correct templateType, channel, and content shape ` +
     `for the target channel. If you encounter an error, read ajo://error-codes for the cause and recovery action. ` +
-    `Read ajo://server/status to diagnose NOT_CONFIGURED or UNAUTHORIZED errors.`;
+    `Read ajo://server/status to diagnose NOT_CONFIGURED or UNAUTHORIZED errors. ` +
+    `To find an object by name, read the ajo://fragments or ajo://templates directory; each entry includes a ` +
+    `resource link (ajo://fragment/{id} or ajo://template/{id}) you can then read for the full object plus its ` +
+    `current etag.`;
 
   const promptNote = ` Use the 'discover-personalization-paths' prompt before inserting personalization ` +
     `expressions into any template or fragment. Use the 'publish-fragment' prompt for the full async publication ` +
     `workflow. Use 'audit-content-library' to survey all content in the sandbox.`;
+
+  // Inline tool index so the model can select any tool by exact name even when
+  // the client defers tools and a fuzzy search ranks one below the cutoff. The
+  // get_server_context tool returns the same catalog as a high-salience fallback
+  // for clients that don't surface these instructions.
+  const toolIndexNote = ` This server exposes the following tools — call any by its exact name ` +
+    `(or call get_server_context for the same catalog as structured data): ${TOOL_CATALOG_TEXT}.`;
 
   // Surface the self-declared author identity to the LLM. Captured at setup like
   // the tenant/sandbox above, so it shares their lifecycle (present once the user
@@ -244,7 +270,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       `sandbox "${sandbox}"${tenantNamespace ? ` (tenant: ${tenantNamespace})` : ''} is the intended target.`
     : `You are connected to an AJO Content MCP server. ` +
       `No sandbox has been configured yet — ask the user to open http://localhost:3000 and complete setup before making any content changes.`)
-    + authorNote + dynamicNote + personalizationNote + resourceNote + promptNote;
+    + authorNote + dynamicNote + personalizationNote + resourceNote + promptNote + toolIndexNote;
 
   const server = new Server(
     {
@@ -515,8 +541,38 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     return { resources: RESOURCE_DESCRIPTORS.map(r => ({ ...r })) };
   });
 
+  // Templated resources: individual fragments/templates addressable by UUID
+  // (ajo://fragment/{id}, ajo://template/{id}). Resolved in ReadResource below.
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+    return { resourceTemplates: RESOURCE_TEMPLATE_DESCRIPTORS.map(r => ({ ...r })) };
+  });
+
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
+
+    // ── Templated content resources ──
+    // ajo://fragment/{id} and ajo://template/{id} resolve to the live object.
+    // Errors are surfaced as McpError (NOT_CONFIGURED / NOT_FOUND / etc.) so the
+    // client sees the same failure codes the get_* tools return.
+    const fragmentId = parseFragmentUri(uri);
+    const templateId = parseTemplateUri(uri);
+    if (fragmentId !== null || templateId !== null) {
+      if (!isClientConfigured()) {
+        throw new McpError(ErrorCode.InvalidRequest,
+          'NOT_CONFIGURED: the server has no sandbox configured yet. Ask the user to complete setup at http://localhost:3000.');
+      }
+      try {
+        const result = fragmentId !== null
+          ? await getFragment(fragmentId)
+          : await getTemplate(templateId as string);
+        return {
+          contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(result, null, 2) }]
+        };
+      } catch (err) {
+        const e = buildError(err);
+        throw new McpError(ErrorCode.InvalidParams, `${e.code}: ${e.message}`);
+      }
+    }
 
     if (uri === RESOURCE_URIS.serverStatus) {
       const authStatus = tokenManager.getStatus();
@@ -549,6 +605,65 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       };
     }
 
+    // ── Browsable collections ──
+    // ajo://fragments and ajo://templates return a compact name→id directory plus
+    // a per-item resource link, so a human/client can locate an object by name and
+    // then read ajo://fragment/{id} or ajo://template/{id}. The directory follows
+    // the _page.next cursor to accumulate every object across pages, bounded by a
+    // safety cap so a huge sandbox can't make the read unbounded; if the cap is hit
+    // the result is flagged truncated with the cursor to resume from.
+    if (uri === RESOURCE_URIS.fragments || uri === RESOURCE_URIS.templates) {
+      if (!isClientConfigured()) {
+        throw new McpError(ErrorCode.InvalidRequest,
+          'NOT_CONFIGURED: the server has no sandbox configured yet. Ask the user to complete setup at http://localhost:3000.');
+      }
+      const isFragments = uri === RESOURCE_URIS.fragments;
+      const lister = isFragments ? listFragments : listTemplates;
+      try {
+        const raw: Array<Record<string, unknown>> = [];
+        let cursor: string | undefined;
+        let truncated = false;
+        // Bound the sweep: at 100/page this is up to 5,000 objects.
+        for (let page = 0; page < MAX_DIRECTORY_PAGES; page++) {
+          const data = await lister({ limit: 100, start: cursor }) as {
+            _page?: { next?: string | null };
+            items?: Array<Record<string, unknown>>;
+          };
+          raw.push(...(data.items ?? []));
+          const next = data._page?.next;
+          if (!next) { cursor = undefined; break; }
+          cursor = next;
+          if (page === MAX_DIRECTORY_PAGES - 1) truncated = true;
+        }
+        const items = raw.map(item => ({
+          id: item.id,
+          name: item.name,
+          ...(isFragments
+            ? { type: item.type, status: item.status }
+            : { templateType: item.templateType }),
+          channels: item.channels,
+          modifiedAt: item.modifiedAt,
+          resource: `ajo://${isFragments ? 'fragment' : 'template'}/${item.id}`
+        }));
+        return {
+          contents: [{
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify({
+              count: items.length,
+              truncated,
+              // Present only when truncated: resume cursor for the audit prompt / get_* tools.
+              ...(truncated ? { next: cursor ?? null } : {}),
+              items
+            }, null, 2)
+          }]
+        };
+      } catch (err) {
+        const e = buildError(err);
+        throw new McpError(ErrorCode.InvalidParams, `${e.code}: ${e.message}`);
+      }
+    }
+
     throw new Error(`Unknown resource: ${uri}`);
   });
 
@@ -558,6 +673,60 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
 
   server.setRequestHandler(CompleteRequestSchema, async (request) => {
     const { ref, argument } = request.params;
+
+    // Resource-template arg completion: suggest live fragment/template IDs for the
+    // {id} variable of ajo://fragment/{id} and ajo://template/{id}.
+    if (ref.type === 'ref/resource') {
+      if (argument.name !== 'id' || !isClientConfigured()) {
+        return { completion: { values: [] } };
+      }
+      const lister = ref.uri === RESOURCE_TEMPLATE_URIS.fragment
+        ? listFragments
+        : ref.uri === RESOURCE_TEMPLATE_URIS.template
+          ? listTemplates
+          : null;
+      if (!lister) return { completion: { values: [] } };
+      try {
+        const data = await lister({ limit: 50 }) as { items?: Array<{ id: string }> };
+        const values = (data.items ?? [])
+          .map(item => item.id)
+          .filter(id => id.startsWith(argument.value));
+        return { completion: { values, hasMore: false } };
+      } catch {
+        return { completion: { values: [] } };
+      }
+    }
+
+    // Tool argument completion: suggest live IDs for fragmentId / templateId parameters
+    // across all tools that accept them (get, update, patch, delete, publish, archive).
+    // Cast to string because the SDK type union only includes ref/resource and ref/prompt;
+    // ref/tool is in the spec but not yet in the SDK's TypeScript definitions.
+    if ((ref as { type: string }).type === 'ref/tool') {
+      if (!isClientConfigured()) return { completion: { values: [] } };
+      if (argument.name === 'fragmentId') {
+        try {
+          const data = await listFragments({ limit: 50 }) as { items?: Array<{ id: string }> };
+          const values = (data.items ?? [])
+            .map(f => f.id)
+            .filter(id => id.startsWith(argument.value));
+          return { completion: { values, hasMore: false } };
+        } catch {
+          return { completion: { values: [] } };
+        }
+      }
+      if (argument.name === 'templateId') {
+        try {
+          const data = await listTemplates({ limit: 50 }) as { items?: Array<{ id: string }> };
+          const values = (data.items ?? [])
+            .map(t => t.id)
+            .filter(id => id.startsWith(argument.value));
+          return { completion: { values, hasMore: false } };
+        } catch {
+          return { completion: { values: [] } };
+        }
+      }
+      return { completion: { values: [] } };
+    }
 
     if (ref.type !== 'ref/prompt') {
       return { completion: { values: [] } };
@@ -583,6 +752,18 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       } catch {
         return { completion: { values: [] } };
       }
+    }
+
+    // create-content → channel: static enum
+    if (ref.name === 'create-content' && argument.name === 'channel') {
+      const channels = ['email', 'push', 'sms', 'inapp', 'code', 'directMail', 'landingpage', 'shared'];
+      return { completion: { values: channels.filter(c => c.startsWith(argument.value)), hasMore: false } };
+    }
+
+    // create-content → content_kind: static enum
+    if (ref.name === 'create-content' && argument.name === 'content_kind') {
+      const kinds = ['template', 'fragment'];
+      return { completion: { values: kinds.filter(k => k.startsWith(argument.value)), hasMore: false } };
     }
 
     return { completion: { values: [] } };

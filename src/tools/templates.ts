@@ -15,8 +15,8 @@ export const listContentTemplatesDefinition = {
   name: 'list_content_templates',
   title: 'List Content Templates',
   outputSchema: buildOutputSchema({ data: TEMPLATE_LIST }),
-  description: `List content templates from Adobe Journey Optimizer.
-Returns a paginated list of all content templates in the configured sandbox.
+  description: `Browse or list existing content templates in the configured Adobe Journey Optimizer sandbox.
+Returns a paginated list, with optional filtering by name, channel, or templateType and sorting by date.
 
 Example usage:
 - List all templates: {}

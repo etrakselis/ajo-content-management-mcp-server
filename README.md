@@ -14,12 +14,14 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 6. [Configuration](#configuration)
 7. [MCP Connection Examples](#mcp-connection-examples)
 8. [Available Tools — Detailed](#available-tools--detailed)
-9. [Observability](#observability)
-10. [Security](#security)
-11. [Development](#development)
-12. [Troubleshooting](#troubleshooting)
-13. [Architecture](#architecture)
-14. [License](#license)
+9. [MCP Resources](#mcp-resources)
+10. [MCP Prompts](#mcp-prompts)
+11. [Observability](#observability)
+12. [Security](#security)
+13. [Development](#development)
+14. [Troubleshooting](#troubleshooting)
+15. [Architecture](#architecture)
+16. [License](#license)
 
 ---
 
@@ -92,6 +94,8 @@ Before doing any real work, confirm *what* you're connected to and *what you can
 > "Try to tell me whether write access is enabled. If it isn't, what do I need to do to turn it on?" *(If writes are off, write attempts return a `READ_ONLY_MODE` error pointing you to `http://localhost:3000`.)*
 
 **What tools are available?**
+> "Call get_server_context and list every tool this server exposes, grouped by domain." *(`get_server_context` returns the full tool catalog, so this works even if some tools didn't surface in an initial search.)*
+
 > "What AJO content tools do you have access to? Group them into read vs. write operations."
 
 > "Summarize what each ajo-content tool does, so I know what I can ask for."
@@ -695,6 +699,62 @@ The resolved Profile union is the complete attribute set available for personali
 ```
 Returns who/what the server is operating as — `authorEmail` (self-declared at setup, unverified), `sandbox`, `tenantNamespace`, `orgName`, and `writeAccess`. Use it to answer "who is this running on behalf of?" or "which sandbox am I on?" without performing a content operation.
 
+It also returns `tools` — the full catalog of every tool this server exposes, grouped by domain (`[{ group, tools: [{ name, title }] }]`). This is the reliable way for a client to discover all capabilities by exact name in a single call, which matters when the client defers tools and a fuzzy tool search ranks one below its result cutoff. The same catalog is also rendered into the server `instructions` at connection time, so the two channels cover each other (instructions need no tool call but are dropped by some clients; this tool result is high-salience but requires the call).
+
+---
+
+## MCP Resources
+
+Alongside its tools, the server exposes MCP **resources** — addressable, readable context a client can fetch directly (and, in clients with a resource picker, attach via `@`-mention) without invoking a tool. All resources use the `ajo://` URI scheme.
+
+### Static resources
+
+These are always listed (via `resources/list`) and have fixed URIs.
+
+| URI | Description |
+|-----|-------------|
+| `ajo://server/status` | Live configuration and authentication status (JSON): server name/version, whether it's configured, auth state, write access, and tool count. |
+| `ajo://sandbox/channel-reference` | Canonical reference (text) mapping AJO channels to valid `templateType` values, required template/fragment content shapes, and `subType` options. Read before constructing create/update payloads. |
+| `ajo://error-codes` | Reference (text) of every error code the server can return, with cause and recovery action for each. |
+
+### Browsable collections
+
+Name→id **directories**, so a human or client can locate an object by name and then drill into it — solving the discovery problem that bare UUIDs can't (nobody knows a fragment's UUID by heart). Each entry includes a `resource` link to the per-object resource below.
+
+| URI | Description |
+|-----|-------------|
+| `ajo://fragments` | Directory of content fragments (`{ count, truncated, next?, items: [{ id, name, type, status, channels, modifiedAt, resource }] }`). Follows the API's pagination cursor to include every fragment, bounded by a safety cap (up to 5,000); if the cap is hit, `truncated` is `true` and `next` carries a resume cursor. |
+| `ajo://templates` | Directory of content templates, same shape (with `templateType` in place of `type`/`status`). |
+
+### Templated resources (by UUID)
+
+Listed via `resources/templates/list`. The `{id}` variable is the object's UUID; resolving the URI returns the live object plus its current etag — so the etag needed for a follow-up update/patch comes back with the read, no extra fetch.
+
+| URI template | Description |
+|--------------|-------------|
+| `ajo://fragment/{id}` | A single content fragment by UUID, as JSON (`{ data, etag }`). |
+| `ajo://template/{id}` | A single content template by UUID, as JSON (`{ data, etag }`). |
+
+> **Argument completion:** for the `{id}` of the templated resources, the server provides live autocompletion (via the MCP completions capability) backed by the current fragment/template list, so clients that support it can suggest real IDs as you type.
+
+A typical browse-then-read flow: read `ajo://fragments` to find the fragment named "Global Footer" and its id → read `ajo://fragment/<that-id>` for the full object and etag. The `get_content_fragment` / `get_content_template` tools remain the model-driven equivalent of the per-object read.
+
+---
+
+## MCP Prompts
+
+Beyond the free-form [Example Prompts](#example-prompts) above (which you type yourself), the server also publishes **MCP prompts** — named, parameterized workflows the client surfaces as ready-to-run commands (e.g. Claude Desktop's slash-command / prompt picker). Selecting one injects a fully-formed, multi-step instruction set into the conversation, so the model executes a known-good procedure instead of improvising. Each prompt also **embeds the relevant reference resource** inline (the channel reference or error-code reference), so the model has it on hand while running the workflow rather than having to fetch it.
+
+| Prompt | Argument(s) | What it does |
+|--------|-------------|--------------|
+| `discover-personalization-paths` | `use_case` *(optional)* — what you want to personalize, e.g. "greet by first name" | Walks the XDM lookup sequence (`list_xdm_field_groups` → `get_xdm_field_group`, or the Profile union) to find the **real** attribute paths in this sandbox, so personalization expressions reference attributes that actually exist instead of guessed defaults. Embeds the channel reference. |
+| `publish-fragment` | `fragment_id` *(required)* — UUID of the fragment | Runs the full async publish-and-verify workflow: check current state → trigger publication → poll `get_fragment_publication_status` until `complete` or `error`. Embeds the error-code reference for recovery. |
+| `audit-content-library` | `content_type` *(optional)* — `templates`, `fragments`, or `both` (default `both`) | Surveys the sandbox: pages through all content, groups by type/channel/status, and flags action items (stale templates, drafts never published, fragments with failed/in-progress publications). Embeds the channel reference. |
+
+> **Argument completion:** the server provides autocompletion for prompt arguments (via the MCP completions capability) — `content_type` offers the static `templates`/`fragments`/`both` choices, and `publish-fragment`'s `fragment_id` is backed by a live lookup of fragments in the sandbox, so clients that support it suggest real IDs as you type.
+
+These map to the workflow guidance the server's `instructions` point the model at — use `discover-personalization-paths` before inserting any `{{ }}` expression, `publish-fragment` for the full publication cycle, and `audit-content-library` to take stock of a sandbox.
+
 ---
 
 ## Observability
@@ -801,7 +861,11 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── index.ts            Entry point — starts STDIO + HTTP transports, graceful shutdown
 │   │   └── app.ts              Express app — landing page, /api/* config endpoints, /mcp endpoint
 │   ├── mcp/
-│   │   ├── server.ts           MCP server factory, tool routing, STDIO/HTTP transport setup
+│   │   ├── server.ts           MCP server factory, tool routing, resources, prompts, STDIO/HTTP setup
+│   │   ├── resources.ts        Static, collection, and templated resource definitions (ajo:// URIs)
+│   │   ├── prompts.ts          Guided workflow prompt definitions (discover-personalization-paths, etc.)
+│   │   ├── tool-catalog.ts     Builds the grouped tool catalog (for get_server_context + instructions)
+│   │   ├── access-policy.ts    Runtime read-only / write-access toggle
 │   │   ├── connected-clients.ts  Tracks which MCP clients are connected (for the landing page)
 │   │   └── sdk-types.d.ts      Local type declarations for the MCP SDK
 │   ├── tools/

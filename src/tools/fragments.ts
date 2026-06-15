@@ -17,8 +17,8 @@ export const listContentFragmentsDefinition = {
   name: 'list_content_fragments',
   title: 'List Content Fragments',
   outputSchema: buildOutputSchema({ data: FRAGMENT_LIST }),
-  description: `List content fragments from Adobe Journey Optimizer.
-Returns a paginated list of all content fragments in the configured sandbox.
+  description: `Browse or list existing content fragments in the configured Adobe Journey Optimizer sandbox.
+Returns a paginated list, with optional filtering by status or type and sorting by date.
 
 Example usage:
 - List all fragments: {}
@@ -128,6 +128,7 @@ export const getContentFragmentDefinition = {
   title: 'Get Content Fragment',
   outputSchema: buildOutputSchema({ data: FRAGMENT_OBJECT, etag: ETAG_FIELD }),
   description: `Fetch a single content fragment by ID from Adobe Journey Optimizer.
+This returns the current/editable fragment (including unpublished draft changes) and its etag. For the frozen version actually live in campaigns, use get_live_fragment instead.
 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
@@ -323,7 +324,7 @@ export const getLiveFragmentDefinition = {
   title: 'Get Live (Published) Fragment',
   outputSchema: buildOutputSchema({ data: FRAGMENT_OBJECT }),
   description: `Fetch the content of a fragment's last successful publication.
-Use this to retrieve the frozen/published version of a fragment that is live in campaigns.
+Use this to retrieve the frozen/published version of a fragment that is live in campaigns. This is NOT the current editable fragment — for that (including unpublished draft changes) and its etag, use get_content_fragment instead.
 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 

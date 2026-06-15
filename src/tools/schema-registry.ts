@@ -24,7 +24,7 @@ export const listXdmSchemasDefinition = {
   name: 'list_xdm_schemas',
   title: 'List XDM Schemas',
   outputSchema: buildOutputSchema({ data: LIST_DATA }),
-  description: `List XDM schemas in the Experience Platform Schema Registry for the configured sandbox.
+  description: `List or browse XDM schemas in the Experience Platform Schema Registry for the configured sandbox.
 Returns concise summaries (title, $id, meta:altId, version). ${PERSONALIZATION_HINT}
 
 Example usage:
@@ -100,7 +100,7 @@ export const listXdmFieldGroupsDefinition = {
   name: 'list_xdm_field_groups',
   title: 'List XDM Field Groups',
   outputSchema: buildOutputSchema({ data: LIST_DATA }),
-  description: `List XDM field groups (the building blocks that contribute attributes to schemas) in the Schema Registry. Most customers define custom field groups under their tenant namespace — those are where non-default personalization attributes come from. ${PERSONALIZATION_HINT}
+  description: `List or browse XDM field groups (the building blocks that contribute attributes to schemas) in the Schema Registry. Most customers define custom field groups under their tenant namespace — those are where non-default personalization attributes come from. ${PERSONALIZATION_HINT}
 
 Example usage:
 - Custom field groups: {} or { "container": "tenant" }
@@ -174,7 +174,7 @@ export const listXdmUnionSchemasDefinition = {
   name: 'list_xdm_union_schemas',
   title: 'List XDM Union Schemas',
   outputSchema: buildOutputSchema({ data: LIST_DATA }),
-  description: `List XDM union schemas (tenant container). A union is the merged view of every schema that shares a class — e.g. the full Profile union combines all enabled Profile field groups into one schema. This is the single best source of the complete set of attributes available for personalization. ${PERSONALIZATION_HINT}`,
+  description: `List or browse XDM union schemas (tenant container). A union is the merged view of every schema that shares a class — e.g. the full Profile union combines all enabled Profile field groups into one schema. This is the single best source of the complete set of attributes available for personalization. ${PERSONALIZATION_HINT}`,
   annotations: { title: 'List XDM Union Schemas', readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,

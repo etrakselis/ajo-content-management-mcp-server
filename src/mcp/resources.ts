@@ -10,7 +10,13 @@
 export const RESOURCE_URIS = {
   serverStatus: 'ajo://server/status',
   channelReference: 'ajo://sandbox/channel-reference',
-  errorCodes: 'ajo://error-codes'
+  errorCodes: 'ajo://error-codes',
+  // Browsable collections: name→id directories so a human/client can find a
+  // specific object by name, then drill into ajo://fragment/{id} or
+  // ajo://template/{id}. Solves the discovery half that the templated
+  // resolve-by-id resources can't (nobody knows a fragment's UUID by heart).
+  fragments: 'ajo://fragments',
+  templates: 'ajo://templates'
 } as const;
 
 // Descriptors advertised by ListResources. `title` is the human-friendly display
@@ -36,8 +42,67 @@ export const RESOURCE_DESCRIPTORS = [
     title: 'Error Code Reference',
     description: 'All error codes this server can return, with their cause and the correct recovery action for each.',
     mimeType: 'text/plain'
+  },
+  {
+    uri: RESOURCE_URIS.fragments,
+    name: 'content-fragments',
+    title: 'Content Fragments (Directory)',
+    description: 'Browsable directory of content fragments in the sandbox (name, id, type, status, and a ajo://fragment/{id} resource link for each). Use this to find a fragment by name before reading it. Results cap at 5,000 items; if truncated, the response includes truncated: true and a next cursor you can pass to list_content_fragments to retrieve more.',
+    mimeType: 'application/json'
+  },
+  {
+    uri: RESOURCE_URIS.templates,
+    name: 'content-templates',
+    title: 'Content Templates (Directory)',
+    description: 'Browsable directory of content templates in the sandbox (name, id, templateType, channels, and a ajo://template/{id} resource link for each). Use this to find a template by name before reading it. Results cap at 5,000 items; if truncated, the response includes truncated: true and a next cursor you can pass to list_content_templates to retrieve more.',
+    mimeType: 'application/json'
   }
 ] as const;
+
+// ─── Dynamic (templated) resources ──────────────────────────────────────────
+// Individual content objects addressable by UUID, so a client/user can attach a
+// specific fragment or template as context (e.g. via @-mention) instead of going
+// through a tool round-trip. The {id} variable is the object's UUID. Advertised
+// by ListResourceTemplates; resolved in the ReadResource handler. The body is the
+// same { data, etag } shape the get_* tools return, so the etag is available for a
+// follow-up update/patch without a separate fetch.
+
+export const RESOURCE_TEMPLATE_URIS = {
+  fragment: 'ajo://fragment/{id}',
+  template: 'ajo://template/{id}'
+} as const;
+
+export const RESOURCE_TEMPLATE_DESCRIPTORS = [
+  {
+    uriTemplate: RESOURCE_TEMPLATE_URIS.fragment,
+    name: 'content-fragment',
+    title: 'Content Fragment by ID',
+    description: 'A single content fragment by its UUID, as JSON ({ data, etag }). Use list_content_fragments to discover IDs. The etag is required for update/patch.',
+    mimeType: 'application/json'
+  },
+  {
+    uriTemplate: RESOURCE_TEMPLATE_URIS.template,
+    name: 'content-template',
+    title: 'Content Template by ID',
+    description: 'A single content template by its UUID, as JSON ({ data, etag }). Use list_content_templates to discover IDs. The etag is required for update/patch.',
+    mimeType: 'application/json'
+  }
+] as const;
+
+const FRAGMENT_URI_RE = /^ajo:\/\/fragment\/([^/]+)$/;
+const TEMPLATE_URI_RE = /^ajo:\/\/template\/([^/]+)$/;
+
+// Extract the UUID from a templated resource URI, or null if the URI is not of
+// that kind. The id is URI-decoded so percent-encoded values resolve correctly.
+export function parseFragmentUri(uri: string): string | null {
+  const m = FRAGMENT_URI_RE.exec(uri);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+export function parseTemplateUri(uri: string): string | null {
+  const m = TEMPLATE_URI_RE.exec(uri);
+  return m ? decodeURIComponent(m[1]) : null;
+}
 
 export const CHANNEL_REFERENCE_TEXT = `AJO Content Type & Channel Reference
 ======================================
