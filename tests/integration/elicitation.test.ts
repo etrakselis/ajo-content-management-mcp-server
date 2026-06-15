@@ -6,7 +6,8 @@
  * supports elicitation (declines block the write; accepts let it through),
  * destructive writes are re-confirmed every time, non-destructive writes are
  * confirmed once per sandbox per session, and clients without elicitation
- * support fall back to executing the write directly.
+ * support fall back to the confirm-and-retry gate (writes held with
+ * WRITE_CONFIRMATION_REQUIRED until re-invoked with confirmWrite: true).
  */
 
 jest.mock('../../src/telemetry/index', () => ({
@@ -148,15 +149,62 @@ describe('write-confirmation via elicitation', () => {
     expect(createFragment).toHaveBeenCalledTimes(2);
   });
 
-  test('clients without elicitation support fall back to executing directly', async () => {
+  test('clients without elicitation: a write is held with WRITE_CONFIRMATION_REQUIRED until confirmed', async () => {
     const { client } = await connectClient({ elicitation: false });
 
     const res = await client.callTool({ name: 'archive_content_fragment', arguments: { fragmentId: UUID } }) as {
-      structuredContent?: { success?: boolean };
+      isError?: boolean; structuredContent?: { success?: boolean; error?: { code?: string } };
     };
 
+    expect(archiveFragment).not.toHaveBeenCalled();
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent?.error?.code).toBe('WRITE_CONFIRMATION_REQUIRED');
+  });
+
+  test('clients without elicitation: re-invoking with confirmWrite:true executes the write', async () => {
+    const { client } = await connectClient({ elicitation: false });
+
+    const res = await client.callTool({
+      name: 'archive_content_fragment',
+      arguments: { fragmentId: UUID, confirmWrite: true }
+    }) as { isError?: boolean; structuredContent?: { success?: boolean } };
+
+    // The synthetic confirmWrite flag is stripped before reaching the handler.
     expect(archiveFragment).toHaveBeenCalledWith(UUID);
+    expect(res.isError).toBeUndefined();
     expect(res.structuredContent?.success).toBe(true);
+  });
+
+  test('clients without elicitation: non-destructive writes are confirmed once per session', async () => {
+    const { client } = await connectClient({ elicitation: false });
+    const args = { name: 'Banner', type: 'html', channels: ['email'], fragment: { content: '<div/>' } };
+
+    // First call without confirmation is held.
+    const first = await client.callTool({ name: 'create_content_fragment', arguments: args }) as {
+      structuredContent?: { error?: { code?: string } };
+    };
+    expect(first.structuredContent?.error?.code).toBe('WRITE_CONFIRMATION_REQUIRED');
+    expect(createFragment).not.toHaveBeenCalled();
+
+    // Confirmed call executes and caches the target for the session.
+    await client.callTool({ name: 'create_content_fragment', arguments: { ...args, confirmWrite: true } });
+    // A later non-destructive write reuses the session confirmation — no flag needed.
+    await client.callTool({ name: 'create_content_fragment', arguments: args });
+
+    expect(createFragment).toHaveBeenCalledTimes(2);
+  });
+
+  test('clients without elicitation: destructive writes require confirmWrite every time', async () => {
+    const { client } = await connectClient({ elicitation: false });
+
+    await client.callTool({ name: 'archive_content_fragment', arguments: { fragmentId: UUID, confirmWrite: true } });
+    // Second destructive call without the flag is held again (never cached).
+    const second = await client.callTool({ name: 'archive_content_fragment', arguments: { fragmentId: UUID } }) as {
+      structuredContent?: { error?: { code?: string } };
+    };
+
+    expect(second.structuredContent?.error?.code).toBe('WRITE_CONFIRMATION_REQUIRED');
+    expect(archiveFragment).toHaveBeenCalledTimes(1);
   });
 
   test('reads are never gated by confirmation', async () => {

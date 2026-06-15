@@ -100,6 +100,18 @@ const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
 const DESTRUCTIVE_TOOLS = new Set<string>(['delete_content_template', 'archive_content_fragment']);
 const isDestructiveTool = (name: string): boolean => DESTRUCTIVE_TOOLS.has(name);
 
+// Synthetic argument the model supplies to re-invoke a write after it has
+// confirmed the target with the user, on clients that don't support elicitation
+// (the confirm-and-retry fallback). Never forwarded to the tool handler.
+const CONFIRM_ARG = 'confirmWrite';
+const stripConfirmFlag = (args: unknown): unknown => {
+  if (args && typeof args === 'object' && CONFIRM_ARG in args) {
+    const { [CONFIRM_ARG]: _omit, ...rest } = args as Record<string, unknown>;
+    return rest;
+  }
+  return args;
+};
+
 // Build a CallTool result from the standard `{ success, ... }` envelope our tool
 // handlers return. Always attaches `structuredContent` (the parsed object) so
 // clients on the 2025-06-18 spec get a schema-typed result matching each tool's
@@ -250,20 +262,26 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   };
 
   // ─── Write confirmation (elicitation) ──────────────────────────────────────
-  // Before performing a write, ask the user to confirm the target sandbox when
-  // the client supports elicitation (2025-06-18). This turns the "confirm the
-  // sandbox before writing" instruction into a protocol-level guarantee rather
-  // than relying on the model to ask. Non-destructive writes are confirmed once
-  // per sandbox per session (then cached, since the user has acknowledged the
-  // target); destructive writes (delete/archive) are confirmed every time. If the
-  // client doesn't advertise elicitation — or the request errors/times out — we
-  // fall back to the existing instruction-driven behavior and proceed, so we
-  // never block a client that simply can't prompt.
+  // Before performing a write, confirm the target sandbox with the user. This
+  // turns the "confirm the sandbox before writing" instruction into a stronger
+  // guarantee than relying on the model to ask. Non-destructive writes are
+  // confirmed once per sandbox per session (then cached, since the target has
+  // been acknowledged); destructive writes (delete/archive) are confirmed every
+  // time. Two mechanisms, depending on what the client supports:
+  //   • Elicitation (2025-06-18): prompt the user via elicitInput. If the request
+  //     errors or times out we proceed, so a flaky prompt never blocks the user.
+  //   • No elicitation (e.g. Claude Desktop): a confirm-and-retry gate — the
+  //     write is held with WRITE_CONFIRMATION_REQUIRED until the model confirms
+  //     the target with the user out-of-band and re-invokes with confirmWrite:true.
+  // Note this is a target-confirmation step, not a permission gate; whether writes
+  // are allowed at all is enforced independently by the read-only toggle in CallTool.
   const confirmedSandboxes = new Set<string>();
 
-  async function confirmWriteTarget(toolName: string, sessionId?: string): Promise<{ proceed: boolean; message?: string }> {
-    if (!server.getClientCapabilities()?.elicitation) return { proceed: true };
-
+  async function confirmWriteTarget(
+    toolName: string,
+    args: unknown,
+    sessionId?: string
+  ): Promise<{ proceed: boolean; code?: string; message?: string }> {
     const sandbox = getConfiguredSandboxName();
     const tenantId = getConfiguredTenantId();
     const tenantNs = tenantId ? `_${tenantId}` : null;
@@ -272,6 +290,8 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     const destructive = isDestructiveTool(toolName);
     const targetKey = sandbox ?? '(unconfigured)';
 
+    // Non-destructive writes only need confirming once per target per session;
+    // destructive writes are re-confirmed every time. Applies to both mechanisms.
     if (!destructive && confirmedSandboxes.has(targetKey)) return { proceed: true };
 
     const targetParts = [
@@ -283,6 +303,30 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     const message = `Confirm ${action} against ${targetParts}` +
       (author ? `, acting on behalf of ${author}` : '') + '.';
 
+    // ── Clients without elicitation: confirm-and-retry gate ──
+    // We can't show a dialog, so require the model to confirm the target with the
+    // user out-of-band and re-invoke the same tool with confirmWrite: true.
+    if (!server.getClientCapabilities()?.elicitation) {
+      const confirmed = !!args && typeof args === 'object' &&
+        (args as Record<string, unknown>)[CONFIRM_ARG] === true;
+      if (confirmed) {
+        if (!destructive) confirmedSandboxes.add(targetKey);
+        emitLog('info', `✓ ${toolName}: write confirmed for ${targetKey} (confirm-and-retry)`, sessionId);
+        return { proceed: true };
+      }
+      emitLog('info', `… ${toolName}: confirmation required for ${targetKey} (confirm-and-retry)`, sessionId);
+      return {
+        proceed: false,
+        code: 'WRITE_CONFIRMATION_REQUIRED',
+        message: `${message} This client cannot display a confirmation dialog. ` +
+          `Confirm with the user that this is the intended target` +
+          (destructive ? ' and that this irreversible operation should proceed' : '') +
+          `, then re-invoke "${toolName}" with the same arguments plus "${CONFIRM_ARG}": true. ` +
+          `Do not set "${CONFIRM_ARG}" without the user's explicit confirmation.`
+      };
+    }
+
+    // ── Clients with elicitation: prompt the user via elicitInput ──
     try {
       const result = await server.elicitInput({
         message,
@@ -294,7 +338,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
               title: destructive ? 'Confirm destructive change' : 'Confirm change',
               description: `Apply this change to sandbox "${sandbox ?? 'unconfigured'}"?` +
                 (destructive ? ' This cannot be undone.' : ''),
-              default: false
+              default: true
             }
           },
           required: ['confirm']
@@ -311,6 +355,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       emitLog('warning', `✗ ${toolName}: write ${outcome} by user`, sessionId);
       return {
         proceed: false,
+        code: 'WRITE_CANCELLED',
         message: `The user did not confirm "${toolName}" against ${targetParts}. The operation was NOT performed. ` +
           `Do not retry unless the user explicitly asks for it again.`
       };
@@ -374,12 +419,12 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     // Confirm the write target with the user before performing it (elicitation).
     // No-op for reads and for clients without elicitation support.
     if (isWriteTool(name)) {
-      const confirmation = await confirmWriteTarget(name, sessionId);
+      const confirmation = await confirmWriteTarget(name, args, sessionId);
       if (!confirmation.proceed) {
         return toToolResult({
           success: false,
           error: {
-            code: 'WRITE_CANCELLED',
+            code: confirmation.code ?? 'WRITE_CANCELLED',
             message: confirmation.message ?? `The user did not confirm "${name}"; the operation was not performed.`,
             details: {}
           }
@@ -388,7 +433,9 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     }
 
     try {
-      const result = await handler(args);
+      // Drop the synthetic confirmWrite flag (confirm-and-retry fallback) so it
+      // never reaches the tool handler or the AJO payload.
+      const result = await handler(isWriteTool(name) ? stripConfirmFlag(args) : args);
       const activeSandbox = getConfiguredSandboxName();
       const activeOrg = getConfiguredOrgName();
       const activeTenantId = getConfiguredTenantId();

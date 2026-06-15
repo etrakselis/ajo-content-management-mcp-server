@@ -377,7 +377,20 @@ When write access is on, the server adds a second safety layer: before performin
 - **Destructive writes** (`delete_content_template`, `archive_content_fragment`) are confirmed **every time** — there is no undo.
 - **Other writes** (create, update, patch, publish) are confirmed **once per sandbox per session**, then remembered for the rest of that session.
 - **Decline or dismiss** the prompt and the operation is **not performed** — the tool returns a `WRITE_CANCELLED` error and the LLM is instructed not to retry unless you ask again.
-- Clients that **don't support elicitation** skip the prompt and execute the write directly (the access-mode toggle is still enforced); in that case the LLM is instructed to confirm the sandbox with you conversationally before writing.
+- Clients that **don't support elicitation** fall back to a **confirm-and-retry gate**: the first write is held with a `WRITE_CONFIRMATION_REQUIRED` error that instructs the LLM to confirm the target with you conversationally, then re-invoke the same tool with `confirmWrite: true`. The same destructive-vs-other cadence applies (destructive ops require the confirmation every time; other writes once per sandbox per session). The access-mode toggle is still enforced independently — this gate is about confirming the *target*, not granting write permission.
+
+##### Client support for elicitation
+
+Elicitation is a newer part of the MCP spec ([2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation), with URL mode added in 2025-11-25) and client support is still uneven. A client must advertise the `elicitation` capability during the initialize handshake for the interactive prompt to appear; otherwise the server uses the confirm-and-retry fallback above. As of **2026-06-15**:
+
+| Client | Elicitation prompt | Behavior here |
+| --- | --- | --- |
+| **Claude Code** (≥ 2.1.76, Mar 2026) | ✅ Supported | Interactive confirmation dialog |
+| **Cursor** | ✅ Supported | Interactive confirmation dialog |
+| **VS Code** (MCP) | ✅ Supported | Interactive confirmation dialog |
+| **Claude Desktop** | ❌ Not yet | Confirm-and-retry gate |
+
+> This is a moving target — support is expanding, so a client listed as unsupported today may gain the interactive prompt in a future release with no change needed here (the server already advertises and uses elicitation whenever the client offers it). Re-check your client's release notes if you expect the dialog and don't see it.
 
 ### 5. Enter your email and click "Start MCP Server"
 
