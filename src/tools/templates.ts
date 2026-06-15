@@ -7,12 +7,13 @@ import {
   ListTemplatesSchema, CreateTemplateSchema, GetTemplateSchema,
   UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, DATA_OBJECT, ETAG_FIELD, LIST_DATA } from './utils.js';
 
 // ─── list_content_templates ───────────────────────────────────────────────────
 
 export const listContentTemplatesDefinition = {
   name: 'list_content_templates',
+  outputSchema: buildOutputSchema({ data: LIST_DATA }),
   description: `List content templates from Adobe Journey Optimizer.
 Returns a paginated list of all content templates in the configured sandbox.
 
@@ -54,6 +55,10 @@ export async function handleListContentTemplates(args: unknown) {
 
 export const createContentTemplateDefinition = {
   name: 'create_content_template',
+  outputSchema: buildOutputSchema({
+    id: { type: 'string', description: 'UUID of the newly created template.' },
+    location: { type: 'string', description: 'Relative path of the new template, e.g. /templates/<uuid>.' }
+  }),
   description: `Create a new content template in Adobe Journey Optimizer.
 
 Channel → templateType → template shape (channels must have exactly 1 value):
@@ -120,6 +125,7 @@ export async function handleCreateContentTemplate(args: unknown) {
 
 export const getContentTemplateDefinition = {
   name: 'get_content_template',
+  outputSchema: buildOutputSchema({ data: DATA_OBJECT, etag: ETAG_FIELD }),
   description: `Fetch a single content template by ID from Adobe Journey Optimizer.
 
 Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
@@ -155,6 +161,7 @@ export async function handleGetContentTemplate(args: unknown) {
 
 export const updateContentTemplateDefinition = {
   name: 'update_content_template',
+  outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
   description: `Replace a content template entirely (PUT). Use this when changing template content, type, or channels. To rename or move a template without touching its content, patch_content_template is lighter-weight.
 
 Channel → templateType → template shape (channels must have exactly 1 value):
@@ -222,6 +229,7 @@ export async function handleUpdateContentTemplate(args: unknown) {
 
 export const patchContentTemplateDefinition = {
   name: 'patch_content_template',
+  outputSchema: buildOutputSchema({ data: DATA_OBJECT, etag: ETAG_FIELD }),
   description: `Rename or redescribe a content template — use this when changing only metadata (name, description, or parent folder), NOT content. For content, type, or channel changes, use update_content_template instead.
 
 Only these paths are supported: /name, /description, /parentFolderId.
@@ -281,6 +289,7 @@ export async function handlePatchContentTemplate(args: unknown) {
 
 export const deleteContentTemplateDefinition = {
   name: 'delete_content_template',
+  outputSchema: buildOutputSchema(),
   description: `Delete a content template permanently by ID.
 
 ⚠️ This action is irreversible.

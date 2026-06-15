@@ -10,7 +10,7 @@ import {
   ListXdmFieldGroupsSchema, GetXdmFieldGroupSchema,
   ListXdmUnionSchemasSchema, GetXdmUnionSchemaSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, DATA_OBJECT, LIST_DATA } from './utils.js';
 
 const PERSONALIZATION_HINT =
   `Use these to find the REAL personalization attribute paths configured in this sandbox instead of ` +
@@ -22,6 +22,7 @@ const PERSONALIZATION_HINT =
 
 export const listXdmSchemasDefinition = {
   name: 'list_xdm_schemas',
+  outputSchema: buildOutputSchema({ data: LIST_DATA }),
   description: `List XDM schemas in the Experience Platform Schema Registry for the configured sandbox.
 Returns concise summaries (title, $id, meta:altId, version). ${PERSONALIZATION_HINT}
 
@@ -60,6 +61,7 @@ export async function handleListXdmSchemas(args: unknown) {
 
 export const getXdmSchemaDefinition = {
   name: 'get_xdm_schema',
+  outputSchema: buildOutputSchema({ data: DATA_OBJECT }),
   description: `Retrieve a single XDM schema by ID. By default returns the fully-resolved schema (full=true) with every referenced field group inlined, so you can see the complete property tree and the exact attribute paths to use for personalization. ${PERSONALIZATION_HINT}
 
 Pass the schema's $id or meta:altId (from list_xdm_schemas) as schemaId.`,
@@ -94,6 +96,7 @@ export async function handleGetXdmSchema(args: unknown) {
 
 export const listXdmFieldGroupsDefinition = {
   name: 'list_xdm_field_groups',
+  outputSchema: buildOutputSchema({ data: LIST_DATA }),
   description: `List XDM field groups (the building blocks that contribute attributes to schemas) in the Schema Registry. Most customers define custom field groups under their tenant namespace — those are where non-default personalization attributes come from. ${PERSONALIZATION_HINT}
 
 Example usage:
@@ -130,6 +133,7 @@ export async function handleListXdmFieldGroups(args: unknown) {
 
 export const getXdmFieldGroupDefinition = {
   name: 'get_xdm_field_group',
+  outputSchema: buildOutputSchema({ data: DATA_OBJECT }),
   description: `Retrieve a single XDM field group by ID, fully resolved by default (full=true) so you can see every attribute it defines and the exact paths. ${PERSONALIZATION_HINT}
 
 Pass the field group's $id or meta:altId (from list_xdm_field_groups) as fieldGroupId.`,
@@ -164,6 +168,7 @@ export async function handleGetXdmFieldGroup(args: unknown) {
 
 export const listXdmUnionSchemasDefinition = {
   name: 'list_xdm_union_schemas',
+  outputSchema: buildOutputSchema({ data: LIST_DATA }),
   description: `List XDM union schemas (tenant container). A union is the merged view of every schema that shares a class — e.g. the full Profile union combines all enabled Profile field groups into one schema. This is the single best source of the complete set of attributes available for personalization. ${PERSONALIZATION_HINT}`,
   annotations: { readOnlyHint: true },
   inputSchema: {
@@ -194,6 +199,7 @@ export async function handleListXdmUnionSchemas(args: unknown) {
 
 export const getXdmUnionSchemaDefinition = {
   name: 'get_xdm_union_schema',
+  outputSchema: buildOutputSchema({ data: DATA_OBJECT }),
   description: `Retrieve a single XDM union schema by ID, fully resolved by default (full=true). The resolved Profile union is the complete attribute set available for personalization in this sandbox — read its "properties" tree to find real attribute paths (custom ones nested under the tenant namespace key). ${PERSONALIZATION_HINT}
 
 Pass the union's $id or meta:altId (from list_xdm_union_schemas) as unionId.`,

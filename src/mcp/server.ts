@@ -93,6 +93,22 @@ const WRITE_TOOLS = new Set<string>([
 
 const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
 
+// Build a CallTool result from the standard `{ success, ... }` envelope our tool
+// handlers return. Always attaches `structuredContent` (the parsed object) so
+// clients on the 2025-06-18 spec get a schema-typed result matching each tool's
+// declared outputSchema, while keeping a text block for backward compatibility.
+// `isError` is set uniformly whenever success is false — so API/handler errors
+// (404, 409, validation, …) signal failure the same way READ_ONLY_MODE does.
+function toToolResult(result: unknown, textPrefix = '') {
+  const obj = (result ?? {}) as { success?: boolean };
+  const isError = obj.success === false;
+  return {
+    content: [{ type: 'text' as const, text: textPrefix + JSON.stringify(result, null, 2) }],
+    structuredContent: (result ?? {}) as Record<string, unknown>,
+    ...(isError ? { isError: true } : {})
+  };
+}
+
 // Appended to write-tool descriptions so the client/LLM knows the call is gated by
 // the server's runtime write-access setting (rather than always available).
 const WRITE_TOOL_NOTE =
@@ -190,8 +206,12 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     },
     {
       capabilities: {
-        tools: {},
-        resources: {},
+        // listChanged is declared because startStdioServer emits
+        // notifications/tools/list_changed and notifications/resources/list_changed
+        // when write access is toggled. Spec-compliant clients ignore those
+        // notifications unless the matching listChanged capability is advertised.
+        tools: { listChanged: true },
+        resources: { listChanged: true },
         prompts: {},
         logging: {},
         completions: {}
@@ -250,38 +270,26 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     // whether the tool was advertised). Read live so it applies to existing sessions.
     if (!getWritesAllowed() && isWriteTool(name)) {
       emitLog('warning', `✗ ${name}: READ_ONLY_MODE`, sessionId);
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: {
-              code: 'READ_ONLY_MODE',
-              message: `Write operations are disabled. The server is in read-only mode, so "${name}" is not permitted. Ask the user to enable write access on the setup page (http://localhost:3000) if this is intended.`,
-              details: {}
-            }
-          })
-        }],
-        isError: true
-      };
+      return toToolResult({
+        success: false,
+        error: {
+          code: 'READ_ONLY_MODE',
+          message: `Write operations are disabled. The server is in read-only mode, so "${name}" is not permitted. Ask the user to enable write access on the setup page (http://localhost:3000) if this is intended.`,
+          details: {}
+        }
+      });
     }
 
     if (!handler) {
       emitLog('warning', `✗ ${name}: TOOL_NOT_FOUND`, sessionId);
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: {
-              code: 'TOOL_NOT_FOUND',
-              message: `Unknown tool: ${name}. Available tools: ${Object.keys(TOOL_HANDLERS).join(', ')}`,
-              details: {}
-            }
-          })
-        }],
-        isError: true
-      };
+      return toToolResult({
+        success: false,
+        error: {
+          code: 'TOOL_NOT_FOUND',
+          message: `Unknown tool: ${name}. Available tools: ${Object.keys(TOOL_HANDLERS).join(', ')}`,
+          details: {}
+        }
+      });
     }
 
     try {
@@ -322,26 +330,15 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
           success: resultObj?.success !== false
         });
       }
-      return {
-        content: [{
-          type: 'text',
-          text: prefix + JSON.stringify(result, null, 2)
-        }]
-      };
+      return toToolResult(result, prefix);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error('Unhandled tool error', { tool: name, error: msg });
       emitLog('error', `✗ ${name}: ${msg}`, sessionId);
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: { code: 'INTERNAL_ERROR', message: msg, details: {} }
-          })
-        }],
-        isError: true
-      };
+      return toToolResult({
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: msg, details: {} }
+      });
     }
   });
 

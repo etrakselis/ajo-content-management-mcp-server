@@ -269,10 +269,15 @@ export async function publishFragment(fragmentId: string) {
     { fragmentId },
     { headers: { 'Content-Type': 'application/vnd.adobe.ajo.fragment.publication.request.v1.0+json' } }
   );
+  const retryAfterHeader = response.headers['retry-after'];
   return {
     accepted: true,
     location: response.headers['location'],
-    retryAfter: response.headers['retry-after']
+    // Retry-After arrives as a string header; coerce to a number to match the
+    // tool's declared outputSchema (retryAfter: number). Omit if absent/unparseable.
+    retryAfter: retryAfterHeader !== undefined && !Number.isNaN(Number(retryAfterHeader))
+      ? Number(retryAfterHeader)
+      : undefined
   };
 }
 

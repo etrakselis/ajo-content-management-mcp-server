@@ -415,7 +415,7 @@ describe('Fragment Tools Integration', () => {
   // publish
 
   test('publish_content_fragment accepts valid fragmentId', async () => {
-    mockClient.publishFragment.mockResolvedValue({ accepted: true, location: '/publications/1', retryAfter: '5' });
+    mockClient.publishFragment.mockResolvedValue({ accepted: true, location: '/publications/1', retryAfter: 5 });
     const result = await handlePublishContentFragment({ fragmentId: VALID_UUID }) as { success: boolean; accepted: boolean };
     expect(result.success).toBe(true);
     expect(result.accepted).toBe(true);

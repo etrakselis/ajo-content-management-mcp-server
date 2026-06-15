@@ -9,12 +9,13 @@ import {
   UpdateFragmentSchema, PatchFragmentSchema, PublishFragmentSchema,
   GetLiveFragmentSchema, GetPublicationStatusSchema, ArchiveFragmentSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, DATA_OBJECT, ETAG_FIELD, LIST_DATA } from './utils.js';
 
 // ─── list_content_fragments ───────────────────────────────────────────────────
 
 export const listContentFragmentsDefinition = {
   name: 'list_content_fragments',
+  outputSchema: buildOutputSchema({ data: LIST_DATA }),
   description: `List content fragments from Adobe Journey Optimizer.
 Returns a paginated list of all content fragments in the configured sandbox.
 
@@ -55,6 +56,10 @@ export async function handleListContentFragments(args: unknown) {
 
 export const createContentFragmentDefinition = {
   name: 'create_content_fragment',
+  outputSchema: buildOutputSchema({
+    id: { type: 'string', description: 'UUID of the newly created fragment.' },
+    location: { type: 'string', description: 'Relative path of the new fragment, e.g. /fragments/<uuid>.' }
+  }),
   description: `Create a new content fragment in Adobe Journey Optimizer.
 Fragments are reusable content blocks that can be embedded in campaigns and journeys.
 
@@ -118,6 +123,7 @@ export async function handleCreateContentFragment(args: unknown) {
 
 export const getContentFragmentDefinition = {
   name: 'get_content_fragment',
+  outputSchema: buildOutputSchema({ data: DATA_OBJECT, etag: ETAG_FIELD }),
   description: `Fetch a single content fragment by ID from Adobe Journey Optimizer.
 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
@@ -153,6 +159,7 @@ export async function handleGetContentFragment(args: unknown) {
 
 export const updateContentFragmentDefinition = {
   name: 'update_content_fragment',
+  outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
   description: `Replace a content fragment entirely (PUT). Use this when changing fragment content, type, or channels. To rename or move a fragment without touching its content, patch_content_fragment is lighter-weight.
 
 Workflow:
@@ -210,6 +217,7 @@ export async function handleUpdateContentFragment(args: unknown) {
 
 export const patchContentFragmentDefinition = {
   name: 'patch_content_fragment',
+  outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
   description: `Rename or redescribe a content fragment — use this when changing only metadata (name, description, or parent folder), NOT content. For content, type, or channel changes, use update_content_fragment instead.
 
 Only these paths are supported: /name, /description, /parentFolderId.
@@ -265,6 +273,11 @@ export async function handlePatchContentFragment(args: unknown) {
 
 export const publishContentFragmentDefinition = {
   name: 'publish_content_fragment',
+  outputSchema: buildOutputSchema({
+    accepted: { type: 'boolean', description: 'true if the async publication request was accepted.' },
+    location: { type: 'string', description: 'Status resource path for the publication request.' },
+    retryAfter: { type: 'number', description: 'Suggested seconds to wait before polling get_fragment_publication_status.' }
+  }),
   description: `Publish a content fragment to make it available for use in campaigns and journeys.
 Publishing freezes the fragment content. Required before activating a campaign/journey that uses this fragment.
 Publication is asynchronous — after calling this tool, poll get_fragment_publication_status every 5 seconds until status is "complete" or "error". Publication typically finishes within 30 seconds; if still "inProgress" after 6 polls (~30 s), stop and tell the user it is taking longer than expected.
@@ -301,6 +314,7 @@ export async function handlePublishContentFragment(args: unknown) {
 
 export const getLiveFragmentDefinition = {
   name: 'get_live_fragment',
+  outputSchema: buildOutputSchema({ data: DATA_OBJECT }),
   description: `Fetch the content of a fragment's last successful publication.
 Use this to retrieve the frozen/published version of a fragment that is live in campaigns.
 
@@ -336,6 +350,15 @@ export async function handleGetLiveFragment(args: unknown) {
 
 export const getFragmentPublicationStatusDefinition = {
   name: 'get_fragment_publication_status',
+  outputSchema: buildOutputSchema({
+    data: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'Current publication state — typically "inProgress", "complete", or "error" (passthrough of the AJO API value).' },
+        errors: { type: 'array', description: 'Populated when status is "error".' }
+      }
+    }
+  }),
   description: `Check the status of the last publication request for a content fragment.
 Use this after publish_content_fragment to track the async publication process.
 
@@ -376,6 +399,10 @@ export async function handleGetFragmentPublicationStatus(args: unknown) {
 
 export const archiveContentFragmentDefinition = {
   name: 'archive_content_fragment',
+  outputSchema: buildOutputSchema({
+    id: { type: 'string', description: 'UUID of the archived fragment.' },
+    etag: { type: 'string', description: 'New ETag after archival.' }
+  }),
   description: `Archive a content fragment in Adobe Journey Optimizer.
 Fragments cannot be deleted via the API — archiving is the permanent equivalent. An archived fragment
 is removed from the active library and can no longer be used in new campaigns or journeys.

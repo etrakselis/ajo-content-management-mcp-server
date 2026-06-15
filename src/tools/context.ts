@@ -3,7 +3,7 @@ import {
   getConfiguredTenantId, getConfiguredAuthorEmail
 } from '../adobe/client.js';
 import { getWritesAllowed } from '../mcp/access-policy.js';
-import { notConfiguredError, withTelemetry } from './utils.js';
+import { notConfiguredError, withTelemetry, buildOutputSchema } from './utils.js';
 
 // ─── get_server_context ────────────────────────────────────────────────────
 // A reliable, on-demand way for the LLM to report who/what this server is
@@ -13,6 +13,19 @@ import { notConfiguredError, withTelemetry } from './utils.js';
 
 export const getServerContextDefinition = {
   name: 'get_server_context',
+  outputSchema: buildOutputSchema({
+    data: {
+      type: 'object',
+      properties: {
+        authorEmail: { type: ['string', 'null'], description: 'Self-declared author email (not verified); null if unset.' },
+        sandbox: { type: ['string', 'null'], description: 'Configured AJO sandbox name.' },
+        tenantNamespace: { type: ['string', 'null'], description: 'Tenant namespace (e.g. _acme); null if unknown.' },
+        orgName: { type: ['string', 'null'], description: 'Adobe org name.' },
+        writeAccess: { type: 'boolean', description: 'Whether write operations are currently enabled.' },
+        configured: { type: 'boolean', description: 'Whether credentials and sandbox are configured.' }
+      }
+    }
+  }),
   description: `Return the identity and configuration this MCP server is currently operating as: the author it is acting on behalf of (a self-declared email captured at setup — not verified), the AJO sandbox, the tenant namespace, the org name, and whether write access is enabled.
 
 Use this to answer questions like "who is this server running on behalf of?", "which sandbox / tenant am I connected to?", or "can I make changes (is write access on)?".
