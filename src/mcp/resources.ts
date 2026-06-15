@@ -115,6 +115,14 @@ READ_ONLY_MODE
             retry the exact same operation once they confirm it is enabled. Do not abandon
             the request — just wait for the user to flip the toggle.
 
+WRITE_CANCELLED
+  Cause:    The server asked the user to confirm the write (its target sandbox/tenant)
+            and the user declined or dismissed the confirmation prompt. The operation was
+            NOT performed.
+  Recovery: Do not retry the write. Acknowledge that the change was cancelled and ask the
+            user how they would like to proceed (e.g. confirm the intended sandbox). Only
+            attempt the operation again if the user explicitly asks for it.
+
 VALIDATION_ERROR
   Cause:    Either (a) the tool was called with invalid/missing input parameters (Zod
             validation), or (b) the AJO API rejected the request body (HTTP 400).

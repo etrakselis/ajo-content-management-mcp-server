@@ -64,19 +64,79 @@ export function buildOutputSchema(successProps: Record<string, unknown> = {}) {
 // Reusable success-field fragments.
 export const DATA_OBJECT = { type: 'object' as const, description: 'Operation result payload (passthrough of the AJO API response).' };
 export const ETAG_FIELD = { type: 'string' as const, description: 'Current ETag — pass to a subsequent update/patch for optimistic locking.' };
+
+// Standard pagination envelope, shared by every list result.
+const PAGE_PROPS = {
+  type: 'object' as const,
+  // count/next come straight from the API; tolerate null (some endpoints
+  // express "no next page" as next: null rather than by omission).
+  properties: { count: { type: ['number', 'null'] }, next: { type: ['string', 'null'], description: 'Cursor for the next page; pass as `start`. Null or absent on the last page.' } }
+};
+
+// Generic list result — used by the XDM/Schema-Registry tools whose item shapes
+// vary by container and aren't worth enumerating. Content tools use the typed
+// FRAGMENT_LIST / TEMPLATE_LIST below instead.
 export const LIST_DATA = {
   type: 'object' as const,
   description: 'Paginated list result.',
-  properties: {
-    _page: {
-      type: 'object',
-      // count/next come straight from the API; tolerate null (some endpoints
-      // express "no next page" as next: null rather than by omission).
-      properties: { count: { type: ['number', 'null'] }, next: { type: ['string', 'null'], description: 'Cursor for the next page; pass as `start`. Null or absent on the last page.' } }
-    },
-    items: { type: 'array', items: { type: 'object' } }
-  }
+  properties: { _page: PAGE_PROPS, items: { type: 'array', items: { type: 'object' } } }
 };
+
+// ─── Typed content-object schemas ───────────────────────────────────────────
+// The known fields on a content fragment / template. These are a passthrough of
+// the AJO API object, so MORE fields may be present — the schemas are kept loose
+// on purpose: no `required`, no enums, no `additionalProperties: false`. That
+// gives the model a typed contract for the fields it actually uses (id, name,
+// status, channels, …) while guaranteeing the host's structuredContent
+// validation never fails because the API added or omitted a field, or returned a
+// status value outside an enum we hard-coded. Common values are documented in
+// the field descriptions instead.
+
+const FRAGMENT_PROPS = {
+  id: { type: 'string', description: 'Fragment UUID.' },
+  name: { type: 'string', description: 'Fragment name.' },
+  type: { type: 'string', description: 'Fragment type: "html" or "expression".' },
+  status: { type: 'string', description: 'Lifecycle status. Typical values: DRAFT, PUBLISHED, PUBLISHING, ARCHIVED.' },
+  channels: { type: 'array', items: { type: 'string' }, description: 'Target channels (exactly one), e.g. ["email"] (html) or ["shared"] (expression).' },
+  fragment: { type: 'object', description: 'Content payload. html: { content: "..." }; expression: { expression: "..." }.' },
+  subType: { type: 'string', description: 'Sub-type for expression fragments: TEXT | HTML | JSON.' },
+  description: { type: 'string', description: 'Optional description.' },
+  createdAt: { type: 'string', description: 'ISO-8601 creation timestamp.' },
+  modifiedAt: { type: 'string', description: 'ISO-8601 last-modified timestamp.' }
+} as const;
+
+const TEMPLATE_PROPS = {
+  id: { type: 'string', description: 'Template UUID.' },
+  name: { type: 'string', description: 'Template name.' },
+  templateType: { type: 'string', description: 'Template type: html | html_primary_page | html_sub_page | content.' },
+  channels: { type: 'array', items: { type: 'string' }, description: 'Target channels (exactly one), e.g. ["email"], ["push"], ["sms"].' },
+  template: { type: 'object', description: 'Content payload; shape depends on channel/templateType (see ajo://sandbox/channel-reference).' },
+  subType: { type: 'string', description: 'Sub-type for code-based content templates: HTML | JSON.' },
+  description: { type: 'string', description: 'Optional description.' },
+  createdAt: { type: 'string', description: 'ISO-8601 creation timestamp.' },
+  modifiedAt: { type: 'string', description: 'ISO-8601 last-modified timestamp.' }
+} as const;
+
+const listSchemaOf = (itemProps: Record<string, unknown>, label: string) => ({
+  type: 'object' as const,
+  description: `Paginated ${label} list result.`,
+  properties: { _page: PAGE_PROPS, items: { type: 'array', items: { type: 'object', properties: itemProps } } }
+});
+
+export const FRAGMENT_OBJECT = {
+  type: 'object' as const,
+  description: 'A content fragment (passthrough of the AJO API object; may include additional fields).',
+  properties: FRAGMENT_PROPS
+};
+
+export const TEMPLATE_OBJECT = {
+  type: 'object' as const,
+  description: 'A content template (passthrough of the AJO API object; may include additional fields).',
+  properties: TEMPLATE_PROPS
+};
+
+export const FRAGMENT_LIST = listSchemaOf(FRAGMENT_PROPS, 'content fragment');
+export const TEMPLATE_LIST = listSchemaOf(TEMPLATE_PROPS, 'content template');
 
 export async function withTelemetry<T>(toolName: string, fn: () => Promise<T>): Promise<T> {
   const requestId = uuidv4();

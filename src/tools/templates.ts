@@ -7,14 +7,14 @@ import {
   ListTemplatesSchema, CreateTemplateSchema, GetTemplateSchema,
   UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, DATA_OBJECT, ETAG_FIELD, LIST_DATA } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
 
 // ─── list_content_templates ───────────────────────────────────────────────────
 
 export const listContentTemplatesDefinition = {
   name: 'list_content_templates',
   title: 'List Content Templates',
-  outputSchema: buildOutputSchema({ data: LIST_DATA }),
+  outputSchema: buildOutputSchema({ data: TEMPLATE_LIST }),
   description: `List content templates from Adobe Journey Optimizer.
 Returns a paginated list of all content templates in the configured sandbox.
 
@@ -128,7 +128,7 @@ export async function handleCreateContentTemplate(args: unknown) {
 export const getContentTemplateDefinition = {
   name: 'get_content_template',
   title: 'Get Content Template',
-  outputSchema: buildOutputSchema({ data: DATA_OBJECT, etag: ETAG_FIELD }),
+  outputSchema: buildOutputSchema({ data: TEMPLATE_OBJECT, etag: ETAG_FIELD }),
   description: `Fetch a single content template by ID from Adobe Journey Optimizer.
 
 Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
@@ -234,7 +234,7 @@ export async function handleUpdateContentTemplate(args: unknown) {
 export const patchContentTemplateDefinition = {
   name: 'patch_content_template',
   title: 'Rename or Move Content Template',
-  outputSchema: buildOutputSchema({ data: DATA_OBJECT, etag: ETAG_FIELD }),
+  outputSchema: buildOutputSchema({ data: TEMPLATE_OBJECT, etag: ETAG_FIELD }),
   description: `Rename or redescribe a content template — use this when changing only metadata (name, description, or parent folder), NOT content. For content, type, or channel changes, use update_content_template instead.
 
 Only these paths are supported: /name, /description, /parentFolderId.

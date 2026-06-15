@@ -9,14 +9,14 @@ import {
   UpdateFragmentSchema, PatchFragmentSchema, PublishFragmentSchema,
   GetLiveFragmentSchema, GetPublicationStatusSchema, ArchiveFragmentSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, DATA_OBJECT, ETAG_FIELD, LIST_DATA } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
 
 // ─── list_content_fragments ───────────────────────────────────────────────────
 
 export const listContentFragmentsDefinition = {
   name: 'list_content_fragments',
   title: 'List Content Fragments',
-  outputSchema: buildOutputSchema({ data: LIST_DATA }),
+  outputSchema: buildOutputSchema({ data: FRAGMENT_LIST }),
   description: `List content fragments from Adobe Journey Optimizer.
 Returns a paginated list of all content fragments in the configured sandbox.
 
@@ -126,7 +126,7 @@ export async function handleCreateContentFragment(args: unknown) {
 export const getContentFragmentDefinition = {
   name: 'get_content_fragment',
   title: 'Get Content Fragment',
-  outputSchema: buildOutputSchema({ data: DATA_OBJECT, etag: ETAG_FIELD }),
+  outputSchema: buildOutputSchema({ data: FRAGMENT_OBJECT, etag: ETAG_FIELD }),
   description: `Fetch a single content fragment by ID from Adobe Journey Optimizer.
 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
@@ -321,7 +321,7 @@ export async function handlePublishContentFragment(args: unknown) {
 export const getLiveFragmentDefinition = {
   name: 'get_live_fragment',
   title: 'Get Live (Published) Fragment',
-  outputSchema: buildOutputSchema({ data: DATA_OBJECT }),
+  outputSchema: buildOutputSchema({ data: FRAGMENT_OBJECT }),
   description: `Fetch the content of a fragment's last successful publication.
 Use this to retrieve the frozen/published version of a fragment that is live in campaigns.
 

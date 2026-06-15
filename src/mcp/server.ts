@@ -94,6 +94,12 @@ const WRITE_TOOLS = new Set<string>([
 
 const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
 
+// Writes with no undo. These are always re-confirmed with the user (never cached)
+// when the client supports elicitation. The AJO API has no delete for fragments,
+// so archive is the permanent equivalent.
+const DESTRUCTIVE_TOOLS = new Set<string>(['delete_content_template', 'archive_content_fragment']);
+const isDestructiveTool = (name: string): boolean => DESTRUCTIVE_TOOLS.has(name);
+
 // Build a CallTool result from the standard `{ success, ... }` envelope our tool
 // handlers return. Always attaches `structuredContent` (the parsed object) so
 // clients on the 2025-06-18 spec get a schema-typed result matching each tool's
@@ -243,6 +249,78 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     server.sendLoggingMessage({ level, data }, sessionId).catch(() => {});
   };
 
+  // ─── Write confirmation (elicitation) ──────────────────────────────────────
+  // Before performing a write, ask the user to confirm the target sandbox when
+  // the client supports elicitation (2025-06-18). This turns the "confirm the
+  // sandbox before writing" instruction into a protocol-level guarantee rather
+  // than relying on the model to ask. Non-destructive writes are confirmed once
+  // per sandbox per session (then cached, since the user has acknowledged the
+  // target); destructive writes (delete/archive) are confirmed every time. If the
+  // client doesn't advertise elicitation — or the request errors/times out — we
+  // fall back to the existing instruction-driven behavior and proceed, so we
+  // never block a client that simply can't prompt.
+  const confirmedSandboxes = new Set<string>();
+
+  async function confirmWriteTarget(toolName: string, sessionId?: string): Promise<{ proceed: boolean; message?: string }> {
+    if (!server.getClientCapabilities()?.elicitation) return { proceed: true };
+
+    const sandbox = getConfiguredSandboxName();
+    const tenantId = getConfiguredTenantId();
+    const tenantNs = tenantId ? `_${tenantId}` : null;
+    const org = getConfiguredOrgName();
+    const author = getConfiguredAuthorEmail();
+    const destructive = isDestructiveTool(toolName);
+    const targetKey = sandbox ?? '(unconfigured)';
+
+    if (!destructive && confirmedSandboxes.has(targetKey)) return { proceed: true };
+
+    const targetParts = [
+      org ? `org "${org}"` : null,
+      tenantNs ? `tenant "${tenantNs}"` : null,
+      `sandbox "${sandbox ?? 'unconfigured'}"`
+    ].filter(Boolean).join(', ');
+    const action = destructive ? `a DESTRUCTIVE operation (${toolName})` : `"${toolName}"`;
+    const message = `Confirm ${action} against ${targetParts}` +
+      (author ? `, acting on behalf of ${author}` : '') + '.';
+
+    try {
+      const result = await server.elicitInput({
+        message,
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            confirm: {
+              type: 'boolean',
+              title: destructive ? 'Confirm destructive change' : 'Confirm change',
+              description: `Apply this change to sandbox "${sandbox ?? 'unconfigured'}"?` +
+                (destructive ? ' This cannot be undone.' : ''),
+              default: false
+            }
+          },
+          required: ['confirm']
+        }
+      });
+
+      if (result.action === 'accept' && result.content?.confirm === true) {
+        if (!destructive) confirmedSandboxes.add(targetKey);
+        emitLog('info', `✓ ${toolName}: write confirmed for ${targetKey}`, sessionId);
+        return { proceed: true };
+      }
+
+      const outcome = result.action === 'accept' ? 'not confirmed' : result.action; // decline | cancel
+      emitLog('warning', `✗ ${toolName}: write ${outcome} by user`, sessionId);
+      return {
+        proceed: false,
+        message: `The user did not confirm "${toolName}" against ${targetParts}. The operation was NOT performed. ` +
+          `Do not retry unless the user explicitly asks for it again.`
+      };
+    } catch (err) {
+      // Capability advertised but the elicitation failed — don't block the user.
+      logger.warn('Elicitation failed; proceeding without confirmation', { tool: toolName, error: err instanceof Error ? err.message : String(err) });
+      return { proceed: true };
+    }
+  }
+
   // ─── Tool Discovery ────────────────────────────────────────────────────────
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -291,6 +369,22 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
           details: {}
         }
       });
+    }
+
+    // Confirm the write target with the user before performing it (elicitation).
+    // No-op for reads and for clients without elicitation support.
+    if (isWriteTool(name)) {
+      const confirmation = await confirmWriteTarget(name, sessionId);
+      if (!confirmation.proceed) {
+        return toToolResult({
+          success: false,
+          error: {
+            code: 'WRITE_CANCELLED',
+            message: confirmation.message ?? `The user did not confirm "${name}"; the operation was not performed.`,
+            details: {}
+          }
+        });
+      }
     }
 
     try {

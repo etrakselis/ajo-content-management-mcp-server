@@ -370,6 +370,15 @@ Read-only is the safe default — leave it off unless you explicitly want client
 
 The full tool set is **always advertised** to clients regardless of this setting, and enforcement happens when a tool is *called*. This is deliberate: many clients (e.g. Claude Desktop) cache the tool list when they connect and don't react to a mid-session tool-list change, so hiding write tools would strand them in read-only even after you turned writes on. Instead, the server tells the LLM that writes are runtime-gated, so it attempts the operation when asked and surfaces the `READ_ONLY_MODE` error if it's currently off. Because of this, flipping the toggle **takes effect immediately with no client restart** — once you switch to On, the next write attempt simply succeeds.
 
+#### Write confirmation
+
+When write access is on, the server adds a second safety layer: before performing a write it asks you to confirm the target, naming the org, tenant namespace, and sandbox (and the author it's acting as). This uses the MCP [elicitation](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation) capability, so the confirmation is enforced by the server rather than left to the LLM to remember to ask.
+
+- **Destructive writes** (`delete_content_template`, `archive_content_fragment`) are confirmed **every time** — there is no undo.
+- **Other writes** (create, update, patch, publish) are confirmed **once per sandbox per session**, then remembered for the rest of that session.
+- **Decline or dismiss** the prompt and the operation is **not performed** — the tool returns a `WRITE_CANCELLED` error and the LLM is instructed not to retry unless you ask again.
+- Clients that **don't support elicitation** skip the prompt and execute the write directly (the access-mode toggle is still enforced); in that case the LLM is instructed to confirm the sandbox with you conversationally before writing.
+
 ### 5. Enter your email and click "Start MCP Server"
 
 The launch step requires **your email address**. It's mandatory and is recorded with every content change made while the server runs, so create/update/delete/publish/archive actions can be attributed to a person (see [Audit log](#audit-log)). It is **not verified** — it's an honor-system field, so enter your real address.
