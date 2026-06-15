@@ -25,7 +25,7 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 
 ## Overview
 
-This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 21 tools covering the full template and fragment lifecycle plus read-only Experience Platform Schema Registry (XDM) lookups, handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 22 tools covering the full template and fragment lifecycle, read-only Experience Platform Schema Registry (XDM) lookups, and a server-context lookup, handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
 
 The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{_yourtenant.profile.person.firstName}}`.
 
@@ -79,12 +79,12 @@ Once your LLM client is connected to this MCP server, you can talk to it in plai
 
 Before doing any real work, confirm *what* you're connected to and *what you can do*. These are the prompts to run first.
 
-**Which server / tenant / sandbox am I on?**
-> "Which MCP server are you using to manage AJO content, and what tenant namespace and sandbox is it connected to?"
+**Which server / tenant / sandbox am I on, and who am I acting as?**
+> "Call get_server_context and tell me who this server is acting on behalf of, which sandbox and tenant it's on, and whether write access is enabled."
 
-> "Before we start, confirm the Adobe Journey Optimizer environment: tenant namespace and sandbox name."
+> "Before we start, confirm the Adobe Journey Optimizer environment: author email, tenant namespace, and sandbox name."
 
-> "List one content template and tell me the org, tenant, and sandbox it came from." *(Every tool result is prefixed with `[tenant: … | sandbox: …]` — and `org: …` if an org name was supplied during setup — so this is the most reliable way to see the exact target.)*
+> "List one content template and tell me the org, tenant, sandbox, and author it came from." *(Every tool result is prefixed with `[tenant: … | sandbox: … | author: …]` — plus `org: …` if an org name was supplied during setup — so this is the most reliable way to see the exact target. The `get_server_context` tool returns the same details on demand, without performing any content operation.)*
 
 **What can I do right now (read-only vs read-write)?**
 > "Are you currently allowed to create or modify content through the ajo-content server, or is it read-only?"
@@ -370,9 +370,29 @@ Read-only is the safe default — leave it off unless you explicitly want client
 
 The full tool set is **always advertised** to clients regardless of this setting, and enforcement happens when a tool is *called*. This is deliberate: many clients (e.g. Claude Desktop) cache the tool list when they connect and don't react to a mid-session tool-list change, so hiding write tools would strand them in read-only even after you turned writes on. Instead, the server tells the LLM that writes are runtime-gated, so it attempts the operation when asked and surfaces the `READ_ONLY_MODE` error if it's currently off. Because of this, flipping the toggle **takes effect immediately with no client restart** — once you switch to On, the next write attempt simply succeeds.
 
-### 5. Click "Start MCP Server"
+### 5. Enter your email and click "Start MCP Server"
 
-The server authenticates once, caches the token, and begins accepting MCP connections. The connection summary then shows the active **access mode** — your tenant namespace and selected sandbox are already shown above (in the tenant banner and Step 2), so they aren't repeated here.
+The launch step requires **your email address**. It's mandatory and is recorded with every content change made while the server runs, so create/update/delete/publish/archive actions can be attributed to a person (see [Audit log](#audit-log)). It is **not verified** — it's an honor-system field, so enter your real address.
+
+Once you provide it, click Start. The server authenticates once, caches the token, and begins accepting MCP connections. The connection summary then shows the active **access mode** — your tenant namespace and selected sandbox are already shown above (in the tenant banner and Step 2), so they aren't repeated here.
+
+### Audit log
+
+Every content write is appended to an audit trail as one JSON object per line (JSONL), tagged with the email you entered at launch plus the sandbox, tenant namespace, tool, resource ID/name, and timestamp. Records are also mirrored to the server logs (`docker logs ajo-content-mcp`).
+
+```json
+{"timestamp":"2026-06-15T06:12:14.161Z","action":"create_content_fragment","authorEmail":"alice@example.com","resourceType":"fragment","resourceId":"b6d70a45-…","resourceName":"Promo Banner","sandbox":"my-sandbox","tenantNamespace":"_mytenant","success":true}
+```
+
+The file path is set by the `AUDIT_LOG_PATH` environment variable. `docker-compose.yml` defaults it to `/audit/audit-log.jsonl` and bind-mounts the host's `./audit/` directory there, so the log persists across restarts and lands in your working tree — ready to commit to a **private** repo. (The author email is unverified and self-declared; keep the repo private since the log contains email addresses.)
+
+The author identity is also surfaced to the connected LLM through three channels, in increasing order of reliability:
+
+- **Server `instructions`** sent at connection time (*"You are acting on behalf of &lt;email&gt;…"*). Advisory — some clients don't pass this to the model, so don't depend on it alone.
+- **Every tool result** is prefixed with `[… | author: <email>]`, so the identity is visible whenever any tool runs.
+- **The `get_server_context` tool**, which returns the author, sandbox, tenant, and write-access state on demand. This is the dependable way to ask the LLM "who is this running on behalf of?" — tools are always visible to the model, unlike the instructions.
+
+These reflect the email entered at the most recent setup; reconnect the client after reconfiguring with a different email.
 
 ---
 
@@ -462,7 +482,7 @@ Protocol: Streamable HTTP (MCP 2024-11-05)
 
 ## Available Tools — Detailed
 
-All 21 tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)).
+All 22 tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)).
 
 ### Content templates
 
@@ -642,6 +662,14 @@ Lists union schemas (tenant). A union merges all field groups of a class into on
 ```
 The resolved Profile union is the complete attribute set available for personalization.
 
+### Server context
+
+#### `get_server_context` *(read)*
+```json
+{}
+```
+Returns who/what the server is operating as — `authorEmail` (self-declared at setup, unverified), `sandbox`, `tenantNamespace`, `orgName`, and `writeAccess`. Use it to answer "who is this running on behalf of?" or "which sandbox am I on?" without performing a content operation.
+
 ---
 
 ## Observability
@@ -754,7 +782,8 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   ├── tools/
 │   │   ├── templates.ts        Content template tool definitions + handlers
 │   │   ├── fragments.ts        Content fragment tool definitions + handlers
-│   │   └── schema-registry.ts  XDM schema / field group / union lookup tools (read-only)
+│   │   ├── schema-registry.ts  XDM schema / field group / union lookup tools (read-only)
+│   │   └── context.ts          get_server_context tool — reports author/sandbox/tenant (read-only)
 │   ├── adobe/
 │   │   ├── client.ts           AJO Content API client (axios + retry, injects auth headers)
 │   │   └── schema-registry-client.ts  AEP Schema Registry (XDM) read client
@@ -763,7 +792,8 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   ├── validation/
 │   │   └── schemas.ts          Zod schemas for the credentials file and tool inputs
 │   ├── telemetry/
-│   │   └── index.ts            Winston logging + Prometheus metrics registry
+│   │   ├── index.ts            Winston logging + Prometheus metrics registry
+│   │   └── audit.ts            Append-only JSONL audit trail for content writes
 │   └── ui/
 │       └── landing.ts          Single-page setup UI (HTML/CSS/JS), served at /
 ├── Dockerfile                  Multi-stage build (npm ci → tsc → slim runtime image)

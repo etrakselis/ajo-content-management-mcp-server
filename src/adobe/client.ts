@@ -8,8 +8,9 @@ export interface AdobeClientConfig {
   sandboxName: string;
   imsOrg: string;
   apiKey: string;
-  orgName?: string;   // user-supplied display name, e.g. "Adobe"
-  tenantId?: string;  // auto-detected AEP namespace, e.g. "etrakselis"
+  orgName?: string;      // user-supplied display name, e.g. "Adobe"
+  tenantId?: string;     // auto-detected AEP namespace, e.g. "etrakselis"
+  authorEmail?: string;  // self-declared author email, recorded with content changes
   baseUrl?: string;
 }
 
@@ -93,6 +94,10 @@ export function getConfiguredOrgName(): string | null {
 
 export function getConfiguredTenantId(): string | null {
   return clientConfig?.tenantId ?? null;
+}
+
+export function getConfiguredAuthorEmail(): string | null {
+  return clientConfig?.authorEmail ?? null;
 }
 
 export function getConfiguredApiKey(): string | null {

@@ -1,80 +1,94 @@
 import {
   recordClient,
-  openStream,
-  closeStream,
   removeClient,
+  addSession,
+  openSessionStream,
+  closeSessionStream,
+  removeSession,
   getConnectedClients
 } from '../../src/mcp/connected-clients';
 
-// Reset module state between tests by re-importing with a fresh module registry
-beforeEach(() => {
-  jest.resetModules();
-});
+// Note: the module keeps a single in-memory client map, so state carries across
+// tests in this file. Assertions therefore look up clients by name rather than
+// asserting exact list lengths.
 
 describe('connected-clients', () => {
 
-  test('getConnectedClients returns empty list initially', () => {
-    const clients = getConnectedClients();
-    expect(Array.isArray(clients)).toBe(true);
+  test('getConnectedClients returns an array initially', () => {
+    expect(Array.isArray(getConnectedClients())).toBe(true);
   });
 
-  test('recordClient adds a client and it appears in getConnectedClients', () => {
-    recordClient('Claude Code', '1.0.0', 'stdio');
-    const clients = getConnectedClients();
-    const found = clients.find(c => c.name === 'Claude Code' && c.transport === 'stdio');
+  // ── STDIO clients (keyed by name) ──────────────────────────────────────────
+
+  test('recordClient adds a stdio client that appears in the list', () => {
+    recordClient('Claude Code', '1.0.0');
+    const found = getConnectedClients().find(c => c.name === 'Claude Code' && c.transport === 'stdio');
     expect(found).toBeDefined();
     expect(found!.version).toBe('1.0.0');
   });
 
-  test('recordClient ignores mcp-remote-fallback-test client', () => {
-    recordClient('mcp-remote-fallback-test', undefined, 'http');
-    const clients = getConnectedClients();
-    const found = clients.find(c => c.name === 'mcp-remote-fallback-test');
-    expect(found).toBeUndefined();
+  test('recordClient ignores the mcp-remote-fallback-test probe', () => {
+    const added = recordClient('mcp-remote-fallback-test', undefined);
+    expect(added).toBe(false);
+    expect(getConnectedClients().find(c => c.name === 'mcp-remote-fallback-test')).toBeUndefined();
   });
 
-  test('recordClient updates version and lastSeenAt on subsequent calls', () => {
-    recordClient('Claude Desktop', '1.0.0', 'http');
-    const before = getConnectedClients().find(c => c.name === 'Claude Desktop')!;
-    recordClient('Claude Desktop', '1.1.0', 'http');
-    const after = getConnectedClients().find(c => c.name === 'Claude Desktop')!;
+  test('recordClient updates version and preserves firstSeenAt on repeat calls', () => {
+    recordClient('Cursor', '1.0.0');
+    const before = getConnectedClients().find(c => c.name === 'Cursor')!;
+    recordClient('Cursor', '1.1.0');
+    const after = getConnectedClients().find(c => c.name === 'Cursor')!;
     expect(after.version).toBe('1.1.0');
     expect(after.firstSeenAt).toBe(before.firstSeenAt);
   });
 
   test('removeClient removes a stdio client', () => {
-    recordClient('TestClient', undefined, 'stdio');
-    expect(getConnectedClients().find(c => c.name === 'TestClient')).toBeDefined();
-    removeClient('TestClient', 'stdio');
-    expect(getConnectedClients().find(c => c.name === 'TestClient')).toBeUndefined();
+    recordClient('TempClient', undefined);
+    expect(getConnectedClients().find(c => c.name === 'TempClient')).toBeDefined();
+    removeClient('TempClient');
+    expect(getConnectedClients().find(c => c.name === 'TempClient')).toBeUndefined();
   });
 
-  test('openStream increments stream count, keeping HTTP client visible', () => {
-    recordClient('HTTP Client', '1.0.0', 'http');
-    openStream('HTTP Client', '1.0.0');
-    const found = getConnectedClients().find(c => c.name === 'HTTP Client');
+  // ── HTTP clients (keyed by MCP session id) ──────────────────────────────────
+
+  test('addSession registers an HTTP client keyed by session id', () => {
+    addSession('sess-1', 'Claude Desktop', '2.0.0');
+    const found = getConnectedClients().find(c => c.name === 'Claude Desktop' && c.transport === 'http');
     expect(found).toBeDefined();
+    expect(found!.version).toBe('2.0.0');
   });
 
-  test('closeStream without open streams does not throw', () => {
-    expect(() => closeStream('NonExistentClient')).not.toThrow();
+  test('addSession ignores the mcp-remote-fallback-test probe', () => {
+    addSession('sess-probe', 'mcp-remote-fallback-test', undefined);
+    expect(getConnectedClients().find(c => c.name === 'mcp-remote-fallback-test')).toBeUndefined();
   });
 
-  test('HTTP client with open stream stays connected after closeStream with others open', () => {
-    recordClient('Streaming Client', '1.0', 'http');
-    openStream('Streaming Client', '1.0');
-    openStream('Streaming Client', '1.0');
-    closeStream('Streaming Client'); // still has 1 open stream
-    const found = getConnectedClients().find(c => c.name === 'Streaming Client');
-    expect(found).toBeDefined();
+  test('an HTTP session with an open stream stays visible', () => {
+    addSession('sess-stream', 'Streaming Client', '1.0');
+    openSessionStream('sess-stream');
+    openSessionStream('sess-stream');
+    closeSessionStream('sess-stream'); // one stream still open
+    expect(getConnectedClients().find(c => c.name === 'Streaming Client')).toBeDefined();
   });
 
-  test('getConnectedClients returns results sorted by lastSeenAt descending', () => {
-    recordClient('ClientA', '1.0', 'stdio');
-    recordClient('ClientB', '1.0', 'stdio');
-    const clients = getConnectedClients().filter(c => ['ClientA', 'ClientB'].includes(c.name));
-    if (clients.length === 2) {
-      expect(clients[0].lastSeenAt >= clients[1].lastSeenAt).toBe(true);
+  test('closeSessionStream / removeSession on unknown ids do not throw', () => {
+    expect(() => closeSessionStream('nope')).not.toThrow();
+    expect(() => removeSession('nope')).not.toThrow();
+  });
+
+  test('removeSession removes an HTTP client', () => {
+    addSession('sess-remove', 'Removable', '1.0');
+    expect(getConnectedClients().find(c => c.name === 'Removable')).toBeDefined();
+    removeSession('sess-remove');
+    expect(getConnectedClients().find(c => c.name === 'Removable')).toBeUndefined();
+  });
+
+  test('results are sorted by lastSeenAt descending', () => {
+    recordClient('ClientA', '1.0');
+    recordClient('ClientB', '1.0');
+    const clients = getConnectedClients();
+    for (let i = 1; i < clients.length; i++) {
+      expect(clients[i - 1].lastSeenAt >= clients[i].lastSeenAt).toBe(true);
     }
   });
 });

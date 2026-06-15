@@ -103,6 +103,21 @@ function parseConfigRequest(body: Record<string, unknown>): ParsedConfigRequest 
   };
 }
 
+// Self-declared author email. We require a syntactically valid address but make
+// no attempt to verify ownership — it's an honor-system attribution field.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function parseAuthorEmail(value: unknown): { ok: true; email: string } | { ok: false; error: string } {
+  if (typeof value !== 'string' || !value.trim()) {
+    return { ok: false, error: 'Your email is required so content changes can be attributed to you.' };
+  }
+  const email = value.trim();
+  if (email.length > 254 || !EMAIL_RE.test(email)) {
+    return { ok: false, error: 'Please enter a valid email address.' };
+  }
+  return { ok: true, email };
+}
+
 interface SandboxSummary {
   name: string;
   title?: string;
@@ -450,6 +465,13 @@ export function createExpressApp(): express.Application {
     }
     const { creds, sandboxName, orgName } = parsedReq;
 
+    // Self-declared author email — mandatory; recorded with every content change.
+    const emailResult = parseAuthorEmail((req.body as { authorEmail?: unknown })?.authorEmail);
+    if (!emailResult.ok) {
+      return res.status(400).json({ success: false, error: emailResult.error });
+    }
+    const authorEmail = emailResult.email;
+
     // Access mode — read-only by default; writes only when explicitly enabled.
     setWritesAllowed(req.body?.allowWrites === true);
 
@@ -481,7 +503,8 @@ export function createExpressApp(): express.Application {
       imsOrg: creds.IMS_ORG!,
       apiKey: creds.API_KEY!,
       orgName,
-      tenantId: detectedTenantId
+      tenantId: detectedTenantId,
+      authorEmail
     });
 
     // ── Step 3: validate sandbox via lightweight read call ────────────────────
@@ -521,6 +544,7 @@ export function createExpressApp(): express.Application {
       sandboxName,
       imsOrg: creds.IMS_ORG,
       tenantId: detectedTenantId,
+      authorEmail,
       hasClientSecret: !!(creds.CLIENT_SECRET && creds.CLIENT_SECRET !== 'placeholder123')
     });
 
@@ -530,6 +554,7 @@ export function createExpressApp(): express.Application {
       sandboxName,
       tenantId: detectedTenantId,
       tenantNamespace: detectedTenantId ? `_${detectedTenantId}` : undefined,
+      authorEmail,
       writesAllowed: getWritesAllowed(),
       mcpEndpoint: '/mcp'
     });

@@ -14,6 +14,10 @@ jest.mock('../../src/telemetry/index', () => ({
 
 jest.mock('../../src/adobe/client', () => ({
   isClientConfigured: jest.fn(),
+  getConfiguredSandboxName: jest.fn().mockReturnValue('my-sandbox'),
+  getConfiguredOrgName: jest.fn().mockReturnValue(null),
+  getConfiguredTenantId: jest.fn().mockReturnValue('mytenant'),
+  getConfiguredAuthorEmail: jest.fn().mockReturnValue('author@example.com'),
   listTemplates: jest.fn(),
   createTemplate: jest.fn(),
   getTemplate: jest.fn(),
@@ -53,10 +57,35 @@ import {
   handleArchiveContentFragment
 } from '../../src/tools/fragments';
 
+import { handleGetServerContext } from '../../src/tools/context';
+
 import * as client from '../../src/adobe/client';
 
 const mockClient = client as jest.Mocked<typeof client>;
 const VALID_UUID = 'b6d70a45-a149-453b-85ba-809a5d40066d';
+
+// ─── Server Context Tool ──────────────────────────────────────────────────────
+
+describe('get_server_context', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('reports the author, sandbox, and tenant when configured', async () => {
+    mockClient.isClientConfigured.mockReturnValue(true);
+    const result = await handleGetServerContext({}) as { success: boolean; data: Record<string, unknown> };
+    expect(result.success).toBe(true);
+    expect(result.data.authorEmail).toBe('author@example.com');
+    expect(result.data.sandbox).toBe('my-sandbox');
+    expect(result.data.tenantNamespace).toBe('_mytenant');
+    expect(result.data).toHaveProperty('writeAccess');
+  });
+
+  test('returns NOT_CONFIGURED when the server is not set up', async () => {
+    mockClient.isClientConfigured.mockReturnValue(false);
+    const result = await handleGetServerContext({}) as { success: boolean; error: { code: string } };
+    expect(result.success).toBe(false);
+    expect(result.error.code).toBe('NOT_CONFIGURED');
+  });
+});
 
 // ─── Template Tools ───────────────────────────────────────────────────────────
 

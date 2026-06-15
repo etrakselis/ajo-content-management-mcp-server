@@ -187,7 +187,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     .file-accepted svg { width: 16px; height: 16px; flex-shrink: 0; }
     .field-group { display: flex; flex-direction: column; gap: 6px; }
     label { font-size: 13px; font-weight: 500; }
-    input[type="text"] {
+    input[type="text"], input[type="email"] {
       height: 40px;
       border: 1px solid var(--adobe-border);
       border-radius: 6px;
@@ -198,7 +198,8 @@ export const landingPageHtml = `<!DOCTYPE html>
       transition: border-color 0.15s;
       width: 100%;
     }
-    input[type="text"]:focus { border-color: var(--adobe-red); }
+    input[type="text"]:focus, input[type="email"]:focus { border-color: var(--adobe-red); }
+    .required-mark { color: var(--adobe-red); }
     select {
       height: 40px;
       border: 1px solid var(--adobe-border);
@@ -497,6 +498,11 @@ export const landingPageHtml = `<!DOCTYPE html>
     <section class="step hidden" id="step4">
     <div class="step-label">Step 4 — Launch</div>
     <div class="card">
+      <div class="field-group" style="margin-bottom: 18px;">
+        <label for="authorEmailInput">Your email <span class="required-mark">*</span></label>
+        <input type="email" id="authorEmailInput" placeholder="you@company.com" autocomplete="email" />
+        <span class="hint">Required. Recorded with every content change made while the server runs, so create/update/delete actions can be attributed to you. This is <strong>not verified</strong> — please enter your real address.</span>
+      </div>
       <div class="error-msg" id="errorMsg"></div>
       <button class="btn-primary" id="startBtn" disabled>
         Start MCP Server
@@ -692,6 +698,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('fileAccepted').classList.remove('show');
       dropzone.style.display = '';
       document.getElementById('writeToggle').checked = false;
+      document.getElementById('authorEmailInput').value = '';
       document.getElementById('resetNotice').classList.add('show');
       checkReady();
     }
@@ -860,8 +867,25 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('step4').classList.toggle('hidden', !(hasCreds && hasSandbox));
     }
 
+    // Self-declared author email — required before launch. Validated only for
+    // basic shape; ownership is never verified.
+    function getAuthorEmail() {
+      return document.getElementById('authorEmailInput').value.trim();
+    }
+    function isAuthorEmailValid() {
+      return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(getAuthorEmail());
+    }
+
+    document.getElementById('authorEmailInput').addEventListener('input', () => {
+      // Editing the author after activation invalidates it — it was sent at launch.
+      if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) {
+        resetActivationUI();
+      }
+      checkReady();
+    });
+
     function checkReady() {
-      startBtn.disabled = !credentials || !getSandboxName();
+      startBtn.disabled = !credentials || !getSandboxName() || !isAuthorEmailValid();
       syncSteps();
     }
 
@@ -935,7 +959,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       const allowWrites = document.getElementById('writeToggle').checked;
       let data;
       try {
-        data = await postJson('/api/configure', { credentials, sandboxName: sandbox, orgName: org || undefined, allowWrites });
+        data = await postJson('/api/configure', { credentials, sandboxName: sandbox, orgName: org || undefined, allowWrites, authorEmail: getAuthorEmail() });
       } catch (err) {
         clearInterval(stepTimer);
         return failStart('Network error: ' + err.message);

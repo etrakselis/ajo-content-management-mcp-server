@@ -22,14 +22,35 @@ jest.mock('axios', () => {
 jest.mock('../../src/mcp/server', () => ({
   createMcpServer: () => ({
     connect: jest.fn().mockResolvedValue(undefined),
-    setRequestHandler: jest.fn()
-  }),
-  createHttpTransport: () => ({
-    handleRequest: jest.fn().mockImplementation((_req, res) => {
-      res.json({ ok: true });
-    }),
-    onclose: null,
-    sessionId: 'test-session-id'
+    setRequestHandler: jest.fn(),
+    notification: jest.fn().mockResolvedValue(undefined)
+  })
+}));
+
+// The /mcp handler drives the SDK's Streamable HTTP transport directly. Mock it
+// with a controllable stand-in: handleRequest replies { ok: true }, and on an
+// `initialize` body it invokes onsessioninitialized with a fixed session id (the
+// real transport mints the id and hands it back the same way), so the handler's
+// session bookkeeping can be exercised deterministically.
+const MOCK_SESSION_ID = 'test-session-id';
+jest.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
+  StreamableHTTPServerTransport: jest.fn().mockImplementation((opts: {
+    onsessioninitialized?: (sid: string) => void;
+  }) => {
+    const transport: Record<string, unknown> = {
+      sessionId: undefined,
+      onclose: undefined,
+      handleRequest: jest.fn(async (_req: unknown, res: { json: (b: unknown) => void }, body: unknown) => {
+        const msgs = Array.isArray(body) ? body : [body];
+        const isInit = msgs.some((m) => m && typeof m === 'object' && (m as { method?: string }).method === 'initialize');
+        if (isInit && typeof opts.onsessioninitialized === 'function') {
+          transport.sessionId = MOCK_SESSION_ID;
+          opts.onsessioninitialized(MOCK_SESSION_ID);
+        }
+        res.json({ ok: true });
+      })
+    };
+    return transport;
   })
 }));
 
@@ -142,11 +163,47 @@ describe('Express App', () => {
           ],
           name: 'Test Credentials'
         },
-        sandboxName: 'my-sandbox'
+        sandboxName: 'my-sandbox',
+        authorEmail: 'author@example.com'
       });
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.mcpEndpoint).toBe('/mcp');
+      expect(res.body.authorEmail).toBe('author@example.com');
+    });
+
+    test('returns 400 when author email is missing', async () => {
+      const res = await request(app).post('/api/configure').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'my-api-key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toMatch(/email is required/i);
+    });
+
+    test('returns 400 when author email is malformed', async () => {
+      const res = await request(app).post('/api/configure').send({
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'my-api-key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox',
+        authorEmail: 'not-an-email'
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/valid email/i);
     });
   });
 
@@ -315,7 +372,8 @@ describe('Express App', () => {
         ],
         name: 'Test'
       },
-      sandboxName: 'my-sandbox'
+      sandboxName: 'my-sandbox',
+      authorEmail: 'author@example.com'
     };
 
     test('returns 401 when token acquisition fails', async () => {
@@ -368,7 +426,8 @@ describe('Express App', () => {
           ],
           name: 'Test'
         },
-        sandboxName: 'my-sandbox'
+        sandboxName: 'my-sandbox',
+        authorEmail: 'author@example.com'
       });
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -385,7 +444,8 @@ describe('Express App', () => {
           ],
           name: 'Test'
         },
-        sandboxName: 'my-sandbox'
+        sandboxName: 'my-sandbox',
+        authorEmail: 'author@example.com'
       });
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -402,7 +462,8 @@ describe('Express App', () => {
           ],
           name: 'Test'
         },
-        sandboxName: 'my-sandbox'
+        sandboxName: 'my-sandbox',
+        authorEmail: 'author@example.com'
       });
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -487,51 +548,64 @@ describe('Express App', () => {
   });
 
   describe('POST /mcp', () => {
-    test('handles an initialize message and routes through transport', async () => {
-      const res = await request(app).post('/mcp').send({
-        jsonrpc: '2.0',
-        method: 'initialize',
-        id: 1,
-        params: {
-          clientInfo: { name: 'TestMcpClient', version: '2.0.0' },
-          capabilities: {}
-        }
-      });
+    const initBody = (clientName?: string) => ({
+      jsonrpc: '2.0',
+      method: 'initialize',
+      id: 1,
+      params: {
+        ...(clientName ? { clientInfo: { name: clientName, version: '2.0.0' } } : {}),
+        capabilities: {}
+      }
+    });
+
+    test('starts a session on initialize and routes through the transport', async () => {
+      const res = await request(app).post('/mcp').send(initBody('TestMcpClient'));
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
 
-    test('handles non-initialize messages', async () => {
-      const res = await request(app).post('/mcp').send({
-        jsonrpc: '2.0',
-        method: 'tools/list',
-        id: 2,
-        params: {}
-      });
-      expect(res.status).toBe(200);
-    });
-
-    test('handles a batch array of messages', async () => {
-      const res = await request(app).post('/mcp').send([
-        { jsonrpc: '2.0', method: 'tools/list', id: 1, params: {} }
-      ]);
-      expect(res.status).toBe(200);
-    });
-
     test('handles initialize with missing clientInfo gracefully', async () => {
-      const res = await request(app).post('/mcp').send({
-        jsonrpc: '2.0',
-        method: 'initialize',
-        id: 3,
-        params: { capabilities: {} }
-      });
+      const res = await request(app).post('/mcp').send(initBody());
       expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
     });
 
-    test('GET /mcp tracks SSE stream when lastHttpInit is set from prior initialize', async () => {
-      // lastHttpInit was set by 'handles an initialize message' test above (same app instance)
-      const res = await request(app).get('/mcp');
+    test('routes a follow-up request to its existing session', async () => {
+      // The initialize creates the session (mock assigns MOCK_SESSION_ID).
+      await request(app).post('/mcp').send(initBody('SessionClient'));
+      const res = await request(app)
+        .post('/mcp')
+        .set('mcp-session-id', 'test-session-id')
+        .send({ jsonrpc: '2.0', method: 'tools/list', id: 2, params: {} });
       expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+    });
+
+    test('opens the SSE stream on GET for an existing session', async () => {
+      await request(app).post('/mcp').send(initBody('SseClient'));
+      const res = await request(app).get('/mcp').set('mcp-session-id', 'test-session-id');
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+    });
+
+    test('rejects a non-initialize request with no session (400)', async () => {
+      const res = await request(app).post('/mcp').send({
+        jsonrpc: '2.0', method: 'tools/list', id: 3, params: {}
+      });
+      expect(res.status).toBe(400);
+    });
+
+    test('rejects an unknown session id with 404 so the client reinitializes', async () => {
+      const res = await request(app)
+        .post('/mcp')
+        .set('mcp-session-id', 'does-not-exist')
+        .send({ jsonrpc: '2.0', method: 'tools/list', id: 4, params: {} });
+      expect(res.status).toBe(404);
+    });
+
+    test('GET /mcp with no session returns 400', async () => {
+      const res = await request(app).get('/mcp');
+      expect(res.status).toBe(400);
     });
   });
 });

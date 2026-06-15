@@ -11,6 +11,14 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - LOG_LEVEL=info
+      # Where the content-change audit trail (JSONL) is written. Points at the
+      # writable volume below so it survives restarts and lands on the host,
+      # where it can be committed to a (private) repo.
+      - AUDIT_LOG_PATH=/audit/audit-log.jsonl
+    volumes:
+      # Bind-mount a host directory for the audit log. Writable even though the
+      # container rootfs is read-only (volumes override the read-only mount).
+      - ./audit:/audit
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 30s

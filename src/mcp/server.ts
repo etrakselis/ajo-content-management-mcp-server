@@ -13,11 +13,12 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js';
 import { tokenManager } from '../auth/token-manager.js';
-import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, listFragments } from '../adobe/client.js';
+import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, getConfiguredAuthorEmail, listFragments } from '../adobe/client.js';
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
 import { logger } from '../telemetry/index.js';
+import { recordAudit } from '../telemetry/audit.js';
 
 // Template tools
 import {
@@ -52,6 +53,9 @@ import {
   getXdmUnionSchemaDefinition, handleGetXdmUnionSchema
 } from '../tools/schema-registry.js';
 
+// Server context — read-only; reports who/what this server is operating as
+import { getServerContextDefinition, handleGetServerContext } from '../tools/context.js';
+
 const ALL_TOOLS = [
   listContentTemplatesDefinition,
   createContentTemplateDefinition,
@@ -74,7 +78,9 @@ const ALL_TOOLS = [
   listXdmFieldGroupsDefinition,
   getXdmFieldGroupDefinition,
   listXdmUnionSchemasDefinition,
-  getXdmUnionSchemaDefinition
+  getXdmUnionSchemaDefinition,
+  // Server context — read-only
+  getServerContextDefinition
 ];
 
 // Tools that modify content. When the server is in read-only mode these are
@@ -115,7 +121,9 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   list_xdm_field_groups: handleListXdmFieldGroups,
   get_xdm_field_group: handleGetXdmFieldGroup,
   list_xdm_union_schemas: handleListXdmUnionSchemas,
-  get_xdm_union_schema: handleGetXdmUnionSchema
+  get_xdm_union_schema: handleGetXdmUnionSchema,
+  // Server context — read-only
+  get_server_context: handleGetServerContext
 };
 
 export function createMcpServer(transport: TransportKind = 'http'): Server {
@@ -123,6 +131,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   const orgName = getConfiguredOrgName();
   const tenantId = getConfiguredTenantId();
   const tenantNamespace = tenantId ? `_${tenantId}` : null;
+  const authorEmail = getConfiguredAuthorEmail();
 
   let tenantDesc: string | null = null;
   if (sandbox) {
@@ -157,6 +166,14 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     `expressions into any template or fragment. Use the 'publish-fragment' prompt for the full async publication ` +
     `workflow. Use 'audit-content-library' to survey all content in the sandbox.`;
 
+  // Surface the self-declared author identity to the LLM. Captured at setup like
+  // the tenant/sandbox above, so it shares their lifecycle (present once the user
+  // has completed setup; omitted entirely if no email is configured).
+  const authorNote = authorEmail
+    ? ` You are acting on behalf of ${authorEmail}; this identity is recorded with every content change ` +
+      `(create, update, delete, publish, archive) made through this server.`
+    : '';
+
   const instructions = (tenantDesc
     ? `You are connected to Adobe Journey Optimizer for ${tenantDesc}. ` +
       `Always display the tenant namespace and sandbox name when discussing content operations. ` +
@@ -164,7 +181,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       `sandbox "${sandbox}"${tenantNamespace ? ` (tenant: ${tenantNamespace})` : ''} is the intended target.`
     : `You are connected to an AJO Content MCP server. ` +
       `No sandbox has been configured yet — ask the user to open http://localhost:3000 and complete setup before making any content changes.`)
-    + dynamicNote + personalizationNote + resourceNote + promptNote;
+    + authorNote + dynamicNote + personalizationNote + resourceNote + promptNote;
 
   const server = new Server(
     {
@@ -272,16 +289,38 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       const activeSandbox = getConfiguredSandboxName();
       const activeOrg = getConfiguredOrgName();
       const activeTenantId = getConfiguredTenantId();
+      const activeAuthor = getConfiguredAuthorEmail();
       const parts: string[] = [];
       if (activeOrg) parts.push(`org: ${activeOrg}`);
       if (activeTenantId) parts.push(`tenant: _${activeTenantId}`);
       if (activeSandbox) parts.push(`sandbox: ${activeSandbox}`);
+      if (activeAuthor) parts.push(`author: ${activeAuthor}`);
       const prefix = parts.length > 0 ? `[${parts.join(' | ')}]\n` : '';
-      const resultObj = result as { success?: boolean; error?: { code?: string } };
+      const resultObj = result as { success?: boolean; error?: { code?: string }; id?: string };
       if (resultObj?.success === false) {
         emitLog('warning', `✗ ${name}: ${resultObj.error?.code ?? 'error'}`, sessionId);
       } else {
         emitLog('info', `✓ ${name}`, sessionId);
+      }
+
+      // Audit trail: attribute every content write to the self-declared author.
+      // Only writes reach here in non-read-only mode (read-only writes are
+      // rejected above). Captures both successful and handler-rejected attempts.
+      if (isWriteTool(name)) {
+        const callArgs = (args ?? {}) as Record<string, unknown>;
+        const argId = typeof callArgs.fragmentId === 'string'
+          ? callArgs.fragmentId
+          : (typeof callArgs.templateId === 'string' ? callArgs.templateId : undefined);
+        recordAudit({
+          action: name,
+          authorEmail: getConfiguredAuthorEmail() ?? 'unknown',
+          resourceType: name.includes('fragment') ? 'fragment' : name.includes('template') ? 'template' : 'unknown',
+          resourceId: argId ?? resultObj?.id,
+          resourceName: typeof callArgs.name === 'string' ? callArgs.name : undefined,
+          sandbox: activeSandbox,
+          tenantNamespace: activeTenantId ? `_${activeTenantId}` : null,
+          success: resultObj?.success !== false
+        });
       }
       return {
         content: [{
