@@ -3,6 +3,11 @@ import { startStdioServer } from '../mcp/server.js';
 import { logger } from '../telemetry/index.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
+// Bind to loopback only by default — this is a single-user local tool with no
+// caller authentication, so it must not be reachable from the LAN. Override with
+// HOST=0.0.0.0 only behind a reverse proxy that adds auth (e.g. a container that
+// publishes to 127.0.0.1 on the host).
+const HOST = process.env.HOST || '127.0.0.1';
 
 async function main() {
   // STDIO transport — must be started before the HTTP server so the event loop is
@@ -14,8 +19,9 @@ async function main() {
   // HTTP streaming transport
   const app = createExpressApp();
 
-  const server = app.listen(PORT, () => {
+  const server = app.listen(PORT, HOST, () => {
     logger.info(`AJO Content MCP Server started`, {
+      host: HOST,
       port: PORT,
       ui: `http://localhost:${PORT}`,
       mcp: `http://localhost:${PORT}/mcp`,

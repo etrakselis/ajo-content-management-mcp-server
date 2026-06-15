@@ -6,10 +6,16 @@ services:
     image: ajo-content-mcp
     container_name: ajo-content-mcp
     ports:
-      - "3000:3000"
+      # Publish to the host's loopback only — never expose to the LAN. The app has
+      # no caller authentication, so reachability is the security boundary.
+      - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
+      # Bind all interfaces *inside the container's isolated network namespace* so
+      # the published port above can reach it; host-side loopback binding (above)
+      # is what actually limits exposure.
+      - HOST=0.0.0.0
       - LOG_LEVEL=info
       # Where the content-change audit trail (JSONL) is written. Points at the
       # writable volume below so it survives restarts and lands on the host,

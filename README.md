@@ -290,6 +290,8 @@ docker compose up -d --build
 
 The setup UI is now available at **http://localhost:3000** — continue to [Configuration](#configuration).
 
+> **Can't reach the page?** The server listens on the loopback interface only (it isn't exposed to your network by design). On systems where `localhost` resolves to IPv6 first, the browser normally falls back to IPv4 automatically — but if you hit a connection-refused error, use **http://127.0.0.1:3000** instead, or set `HOST=::1` in `docker-compose.yml` to bind the IPv6 loopback.
+
 Common follow-up commands:
 
 ```bash

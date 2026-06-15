@@ -258,6 +258,44 @@ function getInitClientInfo(body: unknown): { name?: string; version?: string } |
   return null;
 }
 
+/**
+ * Is `origin` a loopback origin (the bundled setup page)? Port-agnostic so it
+ * accepts the page whether the user browsed to localhost or 127.0.0.1 on any port.
+ */
+function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * CSRF guard for state-changing endpoints. This server has no caller auth, so a
+ * malicious page the operator visits in the same browser could otherwise POST to
+ * these endpoints (e.g. flip on write access). We reject any request a browser
+ * marks as cross-site, or that carries a non-loopback Origin.
+ *
+ * Non-browser MCP clients (stdio bridges, curl) send neither Sec-Fetch-Site nor
+ * Origin; they can't be a CSRF vector and are allowed through untouched.
+ */
+function csrfGuard(req: Request, res: Response, next: NextFunction): void {
+  const site = req.headers['sec-fetch-site'];
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') {
+    logger.warn('Blocked cross-site request', { path: req.path, secFetchSite: site });
+    res.status(403).json({ success: false, error: 'Cross-site request blocked.' });
+    return;
+  }
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && !isLoopbackOrigin(origin)) {
+    logger.warn('Blocked request from disallowed origin', { path: req.path, origin });
+    res.status(403).json({ success: false, error: 'Request origin not allowed.' });
+    return;
+  }
+  next();
+}
+
 export function createExpressApp(): express.Application {
   const app = express();
 
@@ -346,7 +384,7 @@ export function createExpressApp(): express.Application {
   // landing page can populate the sandbox dropdown instead of asking the user to
   // type a name. Validation/activation still happen at /api/configure; this is a
   // best-effort convenience probe and never mutates server state.
-  app.post('/api/list-sandboxes', discoverLimiter, async (req: Request, res: Response) => {
+  app.post('/api/list-sandboxes', csrfGuard, discoverLimiter, async (req: Request, res: Response) => {
     const extracted = extractCredentials((req.body as { credentials?: unknown })?.credentials);
     if (!extracted.ok) {
       return res.status(extracted.status).json({ success: false, error: extracted.error });
@@ -424,7 +462,7 @@ export function createExpressApp(): express.Application {
   // detection WITHOUT activating the server. The landing page calls this before
   // configuring so it can reveal the org-name input up front when the namespace
   // can't be auto-detected.
-  app.post('/api/detect-tenant', authLimiter, async (req: Request, res: Response) => {
+  app.post('/api/detect-tenant', csrfGuard, authLimiter, async (req: Request, res: Response) => {
     const parsedReq = parseConfigRequest(req.body);
     if (!parsedReq.ok) {
       return res.status(parsedReq.status).json({ success: false, error: parsedReq.error });
@@ -458,7 +496,7 @@ export function createExpressApp(): express.Application {
     });
   });
 
-  app.post('/api/configure', authLimiter, async (req: Request, res: Response) => {
+  app.post('/api/configure', csrfGuard, authLimiter, async (req: Request, res: Response) => {
     const parsedReq = parseConfigRequest(req.body);
     if (!parsedReq.ok) {
       return res.status(parsedReq.status).json({ success: false, error: parsedReq.error });
@@ -563,7 +601,7 @@ export function createExpressApp(): express.Application {
   // Flip the read/write access mode live (after activation), without a full
   // reconfigure. Enforcement (CallTool) is immediate; already-connected clients
   // keep their previously-advertised tool list until they reconnect.
-  app.post('/api/access-mode', (req: Request, res: Response) => {
+  app.post('/api/access-mode', csrfGuard, (req: Request, res: Response) => {
     if (!tokenManager.isConfigured()) {
       return res.status(409).json({ success: false, error: 'Server is not configured yet.' });
     }
