@@ -116,7 +116,7 @@ describe('Express App', () => {
       const res = await request(app).get('/');
       expect(res.status).toBe(200);
       expect(res.headers['content-type']).toContain('text/html');
-      expect(res.text).toContain('AJO Content MCP Server');
+      expect(res.text).toContain('<title>ET AJO Content MCP</title>');
     });
   });
 

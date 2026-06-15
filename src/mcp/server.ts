@@ -112,6 +112,34 @@ const stripConfirmFlag = (args: unknown): unknown => {
   return args;
 };
 
+// The confirmWrite flag must be declared in each write tool's input schema, not
+// just referenced in the fallback message: strict clients (e.g. Claude Desktop)
+// validate arguments against the schema and drop any property that isn't there,
+// so an undeclared flag never reaches the server and the gate can't be cleared.
+// Injected into write tools in ListTools (below) so it lives in one place.
+const CONFIRM_PROP = {
+  type: 'boolean' as const,
+  description: 'Confirmation gate for clients without MCP elicitation support. Leave this unset on the ' +
+    'first call — the server will hold the write and return a WRITE_CONFIRMATION_REQUIRED message naming ' +
+    'the target (org, tenant, sandbox). Only after the user has explicitly confirmed that target, re-invoke ' +
+    'the same tool with the same arguments plus confirmWrite: true. Never set this without the user’s confirmation.'
+};
+
+// Append the runtime-gate note to a write tool's description and declare the
+// confirmWrite flag on its input schema. Returns a shallow copy so the shared
+// ALL_TOOLS definitions are never mutated.
+function augmentWriteTool<T extends { description: string; inputSchema: unknown }>(tool: T): T {
+  const schema = (tool.inputSchema ?? {}) as { properties?: Record<string, unknown> };
+  return {
+    ...tool,
+    description: tool.description + WRITE_TOOL_NOTE,
+    inputSchema: {
+      ...schema,
+      properties: { ...(schema.properties ?? {}), [CONFIRM_ARG]: CONFIRM_PROP }
+    }
+  };
+}
+
 // Build a CallTool result from the standard `{ success, ... }` envelope our tool
 // handlers return. Always attaches `structuredContent` (the parsed object) so
 // clients on the 2025-06-18 spec get a schema-typed result matching each tool's
@@ -372,12 +400,9 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     // Always advertise the full tool set — many clients cache this list at connect
     // and ignore tools/list_changed, so hiding write tools would strand them in
     // read-only even after the toggle is flipped on. Write enforcement happens in
-    // CallTool instead. A note on each write tool flags the runtime gate.
-    const tools = ALL_TOOLS.map(t =>
-      isWriteTool(t.name)
-        ? { ...t, description: t.description + WRITE_TOOL_NOTE }
-        : t
-    );
+    // CallTool instead. Write tools get the runtime-gate note and the confirmWrite
+    // flag (see augmentWriteTool).
+    const tools = ALL_TOOLS.map(t => (isWriteTool(t.name) ? augmentWriteTool(t) : t));
     return { tools };
   });
 

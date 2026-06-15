@@ -378,6 +378,7 @@ When write access is on, the server adds a second safety layer: before performin
 - **Other writes** (create, update, patch, publish) are confirmed **once per sandbox per session**, then remembered for the rest of that session.
 - **Decline or dismiss** the prompt and the operation is **not performed** — the tool returns a `WRITE_CANCELLED` error and the LLM is instructed not to retry unless you ask again.
 - Clients that **don't support elicitation** fall back to a **confirm-and-retry gate**: the first write is held with a `WRITE_CONFIRMATION_REQUIRED` error that instructs the LLM to confirm the target with you conversationally, then re-invoke the same tool with `confirmWrite: true`. The same destructive-vs-other cadence applies (destructive ops require the confirmation every time; other writes once per sandbox per session). The access-mode toggle is still enforced independently — this gate is about confirming the *target*, not granting write permission.
+  - `confirmWrite` is declared as an **optional boolean** on every write tool's input schema. It has to be advertised this way because strict clients (e.g. Claude Desktop) validate arguments against the schema and silently drop any property that isn't declared — so a flag the LLM tacked on without it being in the schema would never reach the server, and the gate could never be cleared. Leave it unset on the first call (that's what triggers the hold); the server strips it from the arguments before they reach the underlying AJO API.
 
 ##### Client support for elicitation
 

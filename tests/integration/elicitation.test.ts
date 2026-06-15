@@ -207,6 +207,20 @@ describe('write-confirmation via elicitation', () => {
     expect(archiveFragment).toHaveBeenCalledTimes(1);
   });
 
+  test('write tools advertise the confirmWrite flag; read tools do not', async () => {
+    const { client } = await connectClient({ elicitation: false });
+    const { tools } = await client.listTools();
+
+    const archive = tools.find(t => t.name === 'archive_content_fragment')!;
+    const props = archive.inputSchema.properties as Record<string, unknown> | undefined;
+    expect(props?.confirmWrite).toBeDefined();
+    // Optional — the gate holds the write when it's absent, so it must not be required.
+    expect(archive.inputSchema.required as string[] | undefined).not.toContain('confirmWrite');
+
+    const read = tools.find(t => t.name === 'list_content_fragments')!;
+    expect((read.inputSchema.properties as Record<string, unknown> | undefined)?.confirmWrite).toBeUndefined();
+  });
+
   test('reads are never gated by confirmation', async () => {
     const { client, elicitHandler } = await connectClient({
       elicitation: true,
