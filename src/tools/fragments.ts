@@ -19,12 +19,15 @@ import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, 
 // verbatim by both create_ and update_ so the two never drift.
 const FRAGMENT_CONTENT_SCHEMA = {
   type: 'object' as const,
-  description: 'Content payload. Shape depends on `type`: html → { "content": "<html>..." }; expression → { "expression": "..." }.',
+  description: 'Content payload. Shape depends on `type`: html → { "content": "<html>...", editorContext? }; expression → { "expression": "..." }.',
   oneOf: [
     {
       title: 'HTML fragment content',
       required: ['content'],
-      properties: { content: { type: 'string', description: 'HTML markup. Required when type is "html".' } }
+      properties: {
+        content: { type: 'string', description: 'HTML markup. Required when type is "html".' },
+        editorContext: { type: 'object', description: 'Opaque editor metadata (key-value). Optional.' }
+      }
     },
     {
       title: 'Expression fragment content',

@@ -19,19 +19,44 @@ import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, 
 // and update_ so the two never drift.
 const TEMPLATE_CONTENT_SCHEMA = {
   type: 'object' as const,
-  description: 'Template content. Which keys apply depends on the channel: ' +
-    'email / landingpage (html) → { html }; push → { title, message, deeplink? }; ' +
-    'sms → { body }; inapp → { header, body, buttonText?, buttonLink? }; ' +
-    'code / directMail / shared → free-form (provider-defined). Extra keys are allowed.',
+  description: 'Template content. The shape depends on channel + templateType (per the AJO Content API spec). ' +
+    'Extra keys are allowed (additionalProperties:true) so provider-defined channels are not falsely rejected, ' +
+    'but use these exact shapes:\n' +
+    '• email, templateType "content" (DEFAULT for new email) → { subject (required), html: { body: "<html>..." } (required), text?: { body, syncFromHtml? }, "x-amp-html"?: { body }, headers?, editorContext? }  ← carries the SUBJECT LINE; body is still drag-and-drop editable\n' +
+    '• email, templateType "html" (legacy/existing design templates) → { html: "<html>...", editorContext? }  (html is a STRING; subject is NOT carried here)\n' +
+    '• landingpage → { html: "<html>...", editorContext? }  (html is a STRING)\n' +
+    '• push → { pushType?: "message"|"silent", title?, message?, ios?: {...}, android?: {...} }  (deep links go in ios/android interaction.uri — there is no top-level "deeplink")\n' +
+    '• sms → { text (required), messageType?: "sms"|"mms", title?: "mms subject", mediaUri? }  (the body field is "text", NOT "body")\n' +
+    '• inapp → { body: { html: "<html>..." } (required, an OBJECT), mobileParameters?, editorContext? }\n' +
+    '• directMail → { fileName (required), appendTimeStamp?, notes?, notesPosition?: "header"|"footer", sortBy?, attributes?: [{ label, data }] }\n' +
+    '• code / shared → free-form (provider-defined).',
   properties: {
-    html: { type: 'string', description: 'Full HTML document. Used by email and landingpage templates.' },
-    title: { type: 'string', description: 'Push notification title.' },
-    message: { type: 'string', description: 'Push notification body text.' },
-    deeplink: { type: 'string', description: 'Push deep-link URL (optional).' },
-    body: { type: 'string', description: 'SMS body, or in-app body text.' },
-    header: { type: 'string', description: 'In-app header text.' },
-    buttonText: { type: 'string', description: 'In-app button label (optional).' },
-    buttonLink: { type: 'string', description: 'In-app button URL (optional).' }
+    // email (templateType "content" → email-variant-detail)
+    subject: { type: 'string', description: 'Email subject line. REQUIRED for email content templates (templateType "content", channel "email") — the recommended default for new email templates. Not used by the legacy templateType "html".' },
+    headers: { type: 'object', description: 'Custom email headers (key-value), email content variant.' },
+    editorContext: { type: 'object', description: 'Opaque editor metadata (key-value). Optional for email/landingpage/inapp.' },
+    // shared: html is a STRING for templateType "html"/landingpage, but an OBJECT { body } for the email-variant-detail and in-app shapes — see the per-channel guide above.
+    html: { description: 'HTML content. A STRING for templateType "html" and landingpage. An OBJECT { body: "<html>" } for the email "content" variant.' },
+    // push (push-variant-detail)
+    pushType: { type: 'string', enum: ['message', 'silent'], description: 'Push type (push channel). Default "message".' },
+    title: { type: 'string', description: 'Push notification title, or — for sms with messageType "mms" — the mms subject/title.' },
+    message: { type: 'string', description: 'Push notification message body.' },
+    ios: { type: 'object', description: 'iOS-specific push properties (interaction{type,uri}, media, badge, soundName, actions, etc.). Deep links go in ios.interaction.uri.' },
+    android: { type: 'object', description: 'Android-specific push properties (interaction{type,uri}, channelId, visibility, priority, actions, etc.). Deep links go in android.interaction.uri.' },
+    // sms (sms-variant-detail) — also the email content variant's plain-text part
+    text: { description: 'SMS: the message text STRING (REQUIRED for sms; the field is "text", NOT "body"). Email content variant: the plain-text MIME part as an OBJECT { body, syncFromHtml? }.' },
+    messageType: { type: 'string', enum: ['sms', 'mms'], description: 'SMS message type. Default "sms".' },
+    mediaUri: { type: 'string', description: 'Media URL for mms messages (sms channel).' },
+    // inapp (in-app-variant-detail)
+    body: { type: 'object', description: 'In-app body, an OBJECT: { html: "<html>" }. REQUIRED for inapp templates.' },
+    mobileParameters: { type: 'object', description: 'In-app message settings (key-value), optional.' },
+    // directMail (direct-mail-variant-detail)
+    fileName: { type: 'string', description: 'Direct-mail export file name. REQUIRED for directMail templates.' },
+    appendTimeStamp: { type: 'boolean', description: 'Whether to append a timestamp to the directMail file name.' },
+    notes: { type: 'string', description: 'Notes/instructions for print partners (directMail).' },
+    notesPosition: { type: 'string', enum: ['header', 'footer'], description: 'Where to include directMail notes.' },
+    sortBy: { type: 'string', description: 'Label to sort directMail data by.' },
+    attributes: { type: 'array', description: 'DirectMail content rows: [{ label, data }].', items: { type: 'object' } }
   },
   additionalProperties: true
 };
@@ -106,17 +131,39 @@ export const createContentTemplateDefinition = {
   }),
   description: `Create a new content template in Adobe Journey Optimizer.
 
-Channel → templateType → template shape (channels must have exactly 1 value):
-  "email"       → "html"               → { "html": "<html>..." }
-  "push"        → "content"            → { "title": "...", "message": "...", "deeplink": "..." }
-  "sms"         → "content"            → { "body": "..." }
-  "inapp"       → "content"            → { "header": "...", "body": "...", "buttonText": "...", "buttonLink": "..." }
-  "code"        → "content" + subType  → { ... }  subType: "HTML" or "JSON"
-  "directMail"  → "content"            → { ... }  (shape is provider-defined)
-  "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page" for confirmation pages)
-  "shared"      → "content"            → { ... }
+CHOOSING templateType — "html" vs "content" (they select entirely different content shapes, not two flavors of the same thing):
+  • "content" → a channel-aware container whose shape is selected by "channels". It is the ONLY option for push/sms/inapp/directMail,
+                and for email it is the "structured" form that holds the subject line plus the HTML body and text/x-amp-html/headers parts.
+                The email HTML body still uses the Visual Email Designer (drag-and-drop) — content is a superset of "html" plus a subject,
+                so PREFER "content" for NEW email templates.
+  • "html"    → a raw EMAIL design body only: { html: "<string>" } with NO subject/text/headers (subject is set on the message/campaign).
+                Mainly here to read and edit EXISTING design templates of this type; not the recommended choice for new email templates.
+                Only valid for the email channel.
+  • "html_primary_page" / "html_sub_page" → landing-page bodies ({ html: "<string>" }); separate from both of the above.
+  Decision guide:
+    - email (NEW)      → "content" (default — gives you a subject line; HTML body still drag-and-drop editable).
+    - email (existing) → match whatever templateType the fetched template already uses ("html" or "content") — don't switch it on a plain edit.
+    - push / sms / inapp / directMail → must use "content".
+    - landingpage → "html_primary_page" (or "html_sub_page" for confirmation pages).
+    - code → "content" + subType.
 
-⚠ VISUAL EMAIL DESIGNER REQUIREMENT (templateType "html", channel "email"):
+Channel → templateType → template shape (channels must have exactly 1 value):
+  "email"       → "content"            → { "subject": "...", "html": { "body": "<html>..." } }  ← DEFAULT for new email (subject + html.body both REQUIRED)
+  "email"       → "html"               → { "html": "<html>..." }  (legacy/existing design templates only; html is a STRING, NO subject)
+  "push"        → "content"            → { "title": "...", "message": "...", "pushType"?: "message"|"silent", "ios"?: {...}, "android"?: {...} }  (deep links go in ios/android interaction.uri)
+  "sms"         → "content"            → { "text": "..." }  (field is "text", not "body"; optional: messageType, title, mediaUri)
+  "inapp"       → "content"            → { "body": { "html": "<html>..." } }  (body is an OBJECT; optional: mobileParameters, editorContext)
+  "code"        → "content" + subType  → { ... }  subType: "HTML" or "JSON"
+  "directMail"  → "content"            → { "fileName": "...", ... }  (fileName REQUIRED; optional: appendTimeStamp, notes, notesPosition, sortBy, attributes)
+  "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page" for confirmation pages)
+  "shared"      → "content"            → { ... }  (provider-defined)
+
+⚠ EMAIL SUBJECT LINE: For new email templates use templateType "content", channel "email" (the email-variant-detail shape) —
+  "subject" is required and "html" is an object { body: "..." }, and the body is still drag-and-drop editable in the Visual Email
+  Designer. The older templateType "html" carries NO subject (it's set on the message/campaign); only use it when editing an
+  existing "html" template.
+
+⚠ VISUAL EMAIL DESIGNER REQUIREMENT (channel "email", both templateType "content" html.body and templateType "html"):
   The HTML must use AJO's native serialization format (acr-* class namespace,
   structure/component catalog, required <head> with content-version meta tag).
   Generic email HTML will force the designer into Compatibility mode, locking
@@ -125,7 +172,15 @@ Channel → templateType → template shape (channels must have exactly 1 value)
   template type (it returns the exact structure/component catalog and required
   <head> you must reproduce).
 
-Example usage (HTML email template):
+Example usage (email template — DEFAULT, with subject line):
+{
+  "name": "Welcome Email",
+  "templateType": "content",
+  "channels": ["email"],
+  "template": { "subject": "Welcome to Adobe!", "html": { "body": "<html>Hello {{_yourtenant.person.firstName}}</html>" } }
+}
+
+Example usage (legacy "html" email design template — no subject; use only when editing an existing one):
 {
   "name": "Welcome Email",
   "templateType": "html",
@@ -221,17 +276,30 @@ export const updateContentTemplateDefinition = {
   outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
   description: `Replace a content template entirely (PUT). Use this when changing template content, type, or channels. To rename or move a template without touching its content, patch_content_template is lighter-weight.
 
+CHOOSING templateType — "html" vs "content" (they select entirely different content shapes, not two flavors of the same thing):
+  • "content" → a channel-aware container whose shape is selected by "channels". The ONLY option for push/sms/inapp/directMail, and for
+                email the "structured" form that holds the subject line plus the HTML body and text/x-amp-html/headers parts (body is still
+                drag-and-drop editable). It is a superset of "html" plus a subject — the recommended type for new email templates.
+  • "html"    → a raw EMAIL design body only: { html: "<string>" } with NO subject/text/headers (subject is set on the message/campaign).
+                Mainly for editing EXISTING design templates of this type. Only valid for the email channel.
+  • "html_primary_page" / "html_sub_page" → landing-page bodies; separate from both.
+  ON UPDATE, PRESERVE the existing templateType: call get_content_template first and reuse whatever type it already has — do NOT flip an
+  existing "html" email to "content" (or vice-versa) unless the user explicitly asks, since that changes the required template shape.
+  Decision guide: push/sms/inapp/directMail → "content"; landingpage → "html_primary_page"|"html_sub_page"; code → "content" + subType;
+  email → keep the fetched type ("content" or "html"); for a brand-new email prefer "content" (subject line + drag-and-drop body).
+
 Channel → templateType → template shape (channels must have exactly 1 value):
-  "email"       → "html"               → { "html": "<html>..." }
-  "push"        → "content"            → { "title": "...", "message": "...", "deeplink": "..." }
-  "sms"         → "content"            → { "body": "..." }
-  "inapp"       → "content"            → { "header": "...", "body": "...", "buttonText": "...", "buttonLink": "..." }
+  "email"       → "content"            → { "subject": "...", "html": { "body": "<html>..." } }  ← preferred for email (carries a SUBJECT LINE)
+  "email"       → "html"               → { "html": "<html>..." }  (legacy/existing design templates; html is a STRING, NO subject)
+  "push"        → "content"            → { "title": "...", "message": "...", "pushType"?: "message"|"silent", "ios"?: {...}, "android"?: {...} }
+  "sms"         → "content"            → { "text": "..." }  (field is "text", not "body"; optional: messageType, title, mediaUri)
+  "inapp"       → "content"            → { "body": { "html": "<html>..." } }  (body is an OBJECT)
   "code"        → "content" + subType  → { ... }  subType: "HTML" or "JSON"
-  "directMail"  → "content"            → { ... }
+  "directMail"  → "content"            → { "fileName": "...", ... }  (fileName REQUIRED)
   "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page")
   "shared"      → "content"            → { ... }
 
-⚠ VISUAL EMAIL DESIGNER REQUIREMENT (templateType "html", channel "email"):
+⚠ VISUAL EMAIL DESIGNER REQUIREMENT (channel "email", both templateType "content" html.body and templateType "html"):
   The HTML must use AJO's native serialization format (acr-* class namespace,
   structure/component catalog, required <head> with content-version meta tag).
   Generic email HTML will force the designer into Compatibility mode, locking
@@ -245,15 +313,16 @@ Workflow:
 2. Modify the data
 3. Call update_content_template with all fields + etag
 
-Example usage:
+Example usage (email template — preserve the fetched templateType; "content" shown here):
 {
   "templateId": "b6d70a45-...",
   "etag": "\\"abc123\\"",
   "name": "Updated Template Name",
-  "templateType": "html",
+  "templateType": "content",
   "channels": ["email"],
-  "template": { "html": "<html>Updated content</html>" }
+  "template": { "subject": "Updated Subject", "html": { "body": "<html>Updated content</html>" } }
 }
+(If the fetched template is templateType "html", keep it "html" and send template { "html": "<html>..." } — that shape has no subject.)
 
 Returns: { success: true }`,
   annotations: { title: 'Update Content Template (Replace)', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
