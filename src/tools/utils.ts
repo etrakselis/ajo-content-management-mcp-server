@@ -34,7 +34,7 @@ export function validationError(err: z.ZodError) {
 
 const ERROR_OUTPUT_SCHEMA = {
   type: 'object' as const,
-  description: 'Present when success is false. See the ajo://error-codes resource for cause and recovery per code.',
+  description: 'Present when success is false. The code + message describe the failure; for fuller recovery guidance per code see the Error Code Reference (listed, with how to read it, in get_server_context\'s resource catalog).',
   properties: {
     code: { type: 'string', description: 'Machine-readable error code (e.g. VALIDATION_ERROR, NOT_FOUND, CONFLICT, READ_ONLY_MODE)' },
     message: { type: 'string', description: 'Human-readable error description' },
@@ -110,7 +110,7 @@ const TEMPLATE_PROPS = {
   name: { type: 'string', description: 'Template name.' },
   templateType: { type: 'string', description: 'Template type: html | html_primary_page | html_sub_page | content.' },
   channels: { type: 'array', items: { type: 'string' }, description: 'Target channels (exactly one), e.g. ["email"], ["push"], ["sms"].' },
-  template: { type: 'object', description: 'Content payload; shape depends on channel/templateType (see ajo://sandbox/channel-reference).' },
+  template: { type: 'object', description: 'Content payload; shape depends on channel/templateType (the channel→templateType→shape mapping is in the create_/update_content_template tool descriptions).' },
   subType: { type: 'string', description: 'Sub-type for code-based content templates: HTML | JSON.' },
   description: { type: 'string', description: 'Optional description.' },
   createdAt: { type: 'string', description: 'ISO-8601 creation timestamp.' },

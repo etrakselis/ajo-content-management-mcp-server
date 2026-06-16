@@ -68,7 +68,7 @@ export class TokenManager {
   private async fetchToken(): Promise<string> {
     if (!this.credentials) throw new Error('No credentials configured');
 
-    const { CLIENT_SECRET, API_KEY, TECHNICAL_ACCOUNT_ID, IMS, IMS_ORG, SCOPES } = this.credentials;
+    const { CLIENT_SECRET, API_KEY, IMS, SCOPES } = this.credentials;
 
     // If we already have a pre-supplied token (no client secret for OAuth), reuse it
     if (!CLIENT_SECRET || CLIENT_SECRET === 'placeholder123') {

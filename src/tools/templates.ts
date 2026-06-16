@@ -9,6 +9,49 @@ import {
 } from '../validation/schemas.js';
 import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
 
+// ─── Shared input-schema fragments ──────────────────────────────────────────
+// Unlike fragments (an exhaustive 2-shape union), a template's content shape
+// varies across 8 channels and several are free-form (code/directMail/shared),
+// so a strict oneOf would reject valid provider-defined payloads. Instead we
+// document every known content key with descriptions and keep the object open
+// (additionalProperties: true). That gives the model concrete field names per
+// channel without falsely constraining the free-form ones. Reused by create_
+// and update_ so the two never drift.
+const TEMPLATE_CONTENT_SCHEMA = {
+  type: 'object' as const,
+  description: 'Template content. Which keys apply depends on the channel: ' +
+    'email / landingpage (html) → { html }; push → { title, message, deeplink? }; ' +
+    'sms → { body }; inapp → { header, body, buttonText?, buttonLink? }; ' +
+    'code / directMail / shared → free-form (provider-defined). Extra keys are allowed.',
+  properties: {
+    html: { type: 'string', description: 'Full HTML document. Used by email and landingpage templates.' },
+    title: { type: 'string', description: 'Push notification title.' },
+    message: { type: 'string', description: 'Push notification body text.' },
+    deeplink: { type: 'string', description: 'Push deep-link URL (optional).' },
+    body: { type: 'string', description: 'SMS body, or in-app body text.' },
+    header: { type: 'string', description: 'In-app header text.' },
+    buttonText: { type: 'string', description: 'In-app button label (optional).' },
+    buttonLink: { type: 'string', description: 'In-app button URL (optional).' }
+  },
+  additionalProperties: true
+};
+
+const TEMPLATE_CHANNELS_SCHEMA = {
+  type: 'array' as const,
+  items: { type: 'string' as const, enum: ['email', 'push', 'inapp', 'sms', 'code', 'directMail', 'landingpage', 'shared'] },
+  minItems: 1,
+  maxItems: 1,
+  description: 'Target channel (exactly 1 value required).'
+};
+
+// Conditional requirement: AJO mandates subType for code-channel templates.
+// Declared as a JSON-Schema if/then so a schema-aware client enforces it before
+// the call. Adds only to `required` (no new property), so it composes cleanly
+// with the top-level additionalProperties:false and the injected confirmWrite flag.
+const CODE_CHANNEL_REQUIRES_SUBTYPE = [
+  { if: { properties: { channels: { contains: { const: 'code' } } }, required: ['channels'] }, then: { required: ['subType'] } }
+];
+
 // ─── list_content_templates ───────────────────────────────────────────────────
 
 export const listContentTemplatesDefinition = {
@@ -73,6 +116,15 @@ Channel → templateType → template shape (channels must have exactly 1 value)
   "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page" for confirmation pages)
   "shared"      → "content"            → { ... }
 
+⚠ VISUAL EMAIL DESIGNER REQUIREMENT (templateType "html", channel "email"):
+  The HTML must use AJO's native serialization format (acr-* class namespace,
+  structure/component catalog, required <head> with content-version meta tag).
+  Generic email HTML will force the designer into Compatibility mode, locking
+  the user out of drag-and-drop editing. Call the get_visual_designer_requirements
+  tool to get the full mandatory spec BEFORE constructing any HTML for this
+  template type (it returns the exact structure/component catalog and required
+  <head> you must reproduce).
+
 Example usage (HTML email template):
 {
   "name": "Welcome Email",
@@ -96,13 +148,14 @@ Returns: { success: true, id: "<uuid>", location: "/templates/<uuid>" }`,
     type: 'object' as const,
     additionalProperties: false,
     required: ['name', 'templateType', 'channels'],
+    allOf: CODE_CHANNEL_REQUIRES_SUBTYPE,
     properties: {
       name: { type: 'string', description: 'Template name (required)' },
       description: { type: 'string', description: 'Optional description' },
       templateType: { type: 'string', enum: ['html', 'html_primary_page', 'html_sub_page', 'content'], description: 'Template type' },
-      channels: { type: 'array', items: { type: 'string', enum: ['email', 'push', 'inapp', 'sms', 'code', 'directMail', 'landingpage', 'shared'] }, minItems: 1, maxItems: 1, description: 'Target channel (exactly 1 value required)' },
-      template: { type: 'object', description: 'Template content object. Shape depends on templateType/channel.' },
-      subType: { type: 'string', enum: ['HTML', 'JSON'], description: 'Sub-type for code channel templates' },
+      channels: TEMPLATE_CHANNELS_SCHEMA,
+      template: TEMPLATE_CONTENT_SCHEMA,
+      subType: { type: 'string', enum: ['HTML', 'JSON'], description: 'Sub-type for code channel templates (HTML | JSON). REQUIRED when channel is "code"; not used for other channels.' },
       parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder (optional)' },
       source: { type: 'object', description: 'Source/origin metadata { origin: "ajo"|"aem"|"external" }' }
     }
@@ -178,6 +231,15 @@ Channel → templateType → template shape (channels must have exactly 1 value)
   "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page")
   "shared"      → "content"            → { ... }
 
+⚠ VISUAL EMAIL DESIGNER REQUIREMENT (templateType "html", channel "email"):
+  The HTML must use AJO's native serialization format (acr-* class namespace,
+  structure/component catalog, required <head> with content-version meta tag).
+  Generic email HTML will force the designer into Compatibility mode, locking
+  the user out of drag-and-drop editing. Call the get_visual_designer_requirements
+  tool to get the full mandatory spec BEFORE constructing any HTML for this
+  template type (it returns the exact structure/component catalog and required
+  <head> you must reproduce).
+
 Workflow:
 1. Call get_content_template to get current data + etag
 2. Modify the data
@@ -199,15 +261,16 @@ Returns: { success: true }`,
     type: 'object' as const,
     additionalProperties: false,
     required: ['templateId', 'etag', 'name', 'templateType', 'channels'],
+    allOf: CODE_CHANNEL_REQUIRES_SUBTYPE,
     properties: {
       templateId: { type: 'string', format: 'uuid', description: 'UUID of the template to update' },
       etag: { type: 'string', description: 'ETag from get_content_template (required for optimistic locking)' },
       name: { type: 'string', description: 'Template name' },
       description: { type: 'string', description: 'Optional description' },
       templateType: { type: 'string', enum: ['html', 'html_primary_page', 'html_sub_page', 'content'], description: 'Template type — must match the channel (email→html, push/sms/inapp/code→content, landingpage→html_primary_page or html_sub_page)' },
-      channels: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 1, description: 'Target channel (exactly 1 value required)' },
-      template: { type: 'object', description: 'Full replacement template content. Shape depends on channel: email→{html}, push→{title,message}, sms→{body}, inapp→{header,body}, code→{}+subType' },
-      subType: { type: 'string', enum: ['HTML', 'JSON'], description: 'Sub-type for code channel templates' },
+      channels: TEMPLATE_CHANNELS_SCHEMA,
+      template: TEMPLATE_CONTENT_SCHEMA,
+      subType: { type: 'string', enum: ['HTML', 'JSON'], description: 'Sub-type for code channel templates (HTML | JSON). REQUIRED when channel is "code"; not used for other channels.' },
       parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder' },
       source: { type: 'object', description: 'Source/origin metadata { origin: "ajo"|"aem"|"external" }' }
     }

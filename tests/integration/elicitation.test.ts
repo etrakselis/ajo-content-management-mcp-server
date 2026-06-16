@@ -39,7 +39,8 @@ jest.mock('../../src/adobe/client', () => ({
   listTemplates: jest.fn(), createTemplate: jest.fn(), getTemplate: jest.fn(),
   updateTemplate: jest.fn(), patchTemplate: jest.fn(), deleteTemplate: jest.fn(),
   getFragment: jest.fn(), updateFragment: jest.fn(), patchFragment: jest.fn(),
-  publishFragment: jest.fn(), getLiveFragment: jest.fn(), getLastPublicationStatus: jest.fn()
+  publishFragment: jest.fn().mockResolvedValue({ accepted: true, location: '/fragments/frag-1/publishStatus' }),
+  getLiveFragment: jest.fn(), getLastPublicationStatus: jest.fn()
 }));
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -47,7 +48,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createMcpServer } from '../../src/mcp/server';
 import { setWritesAllowed } from '../../src/mcp/access-policy';
-import { archiveFragment, createFragment } from '../../src/adobe/client';
+import { archiveFragment, createFragment, publishFragment } from '../../src/adobe/client';
 
 const UUID = 'b6d70a45-a149-453b-85ba-809a5d40066d';
 
@@ -132,6 +133,33 @@ describe('write-confirmation via elicitation', () => {
 
     expect(elicitHandler).toHaveBeenCalledTimes(2);
     expect(archiveFragment).toHaveBeenCalledTimes(2);
+  });
+
+  test('publishing is re-confirmed every time (irreversible, never cached)', async () => {
+    const { client, elicitHandler } = await connectClient({
+      elicitation: true,
+      respond: () => ({ action: 'accept', content: { confirm: true } })
+    });
+
+    await client.callTool({ name: 'publish_content_fragment', arguments: { fragmentId: UUID } });
+    await client.callTool({ name: 'publish_content_fragment', arguments: { fragmentId: UUID } });
+
+    // Publishing cannot be undone, so it is confirmed on every call (not cached).
+    expect(elicitHandler).toHaveBeenCalledTimes(2);
+    expect(publishFragment).toHaveBeenCalledTimes(2);
+  });
+
+  test('publishing is blocked when the user declines the confirmation', async () => {
+    const { client } = await connectClient({
+      elicitation: true,
+      respond: () => ({ action: 'decline' as const })
+    });
+
+    const res = await client.callTool({ name: 'publish_content_fragment', arguments: { fragmentId: UUID } }) as {
+      structuredContent?: { error?: { code?: string } };
+    };
+    expect(res.structuredContent?.error?.code).toBe('WRITE_CANCELLED');
+    expect(publishFragment).not.toHaveBeenCalled();
   });
 
   test('non-destructive writes are confirmed once per sandbox per session', async () => {

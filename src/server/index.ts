@@ -46,7 +46,7 @@ async function main() {
 
   // ─── Graceful Shutdown ─────────────────────────────────────────────────────
 
-  async function shutdown(signal: string) {
+  function shutdown(signal: string) {
     logger.info(`Received ${signal}, shutting down gracefully`);
 
     server.close((err) => {

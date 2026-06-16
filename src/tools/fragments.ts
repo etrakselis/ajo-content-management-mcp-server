@@ -11,6 +11,51 @@ import {
 } from '../validation/schemas.js';
 import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
 
+// ─── Shared input-schema fragments ──────────────────────────────────────────
+// The content payload is a discriminated union on `type`: html fragments carry
+// { content }, expression fragments carry { expression }. Declaring it as oneOf
+// surfaces the required shape to the model/client up front instead of leaving
+// `fragment` an opaque object it has to infer from the description prose. Reused
+// verbatim by both create_ and update_ so the two never drift.
+const FRAGMENT_CONTENT_SCHEMA = {
+  type: 'object' as const,
+  description: 'Content payload. Shape depends on `type`: html → { "content": "<html>..." }; expression → { "expression": "..." }.',
+  oneOf: [
+    {
+      title: 'HTML fragment content',
+      required: ['content'],
+      properties: { content: { type: 'string', description: 'HTML markup. Required when type is "html".' } }
+    },
+    {
+      title: 'Expression fragment content',
+      required: ['expression'],
+      properties: { expression: { type: 'string', description: 'Personalization expression. Required when type is "expression".' } }
+    }
+  ]
+};
+
+const FRAGMENT_CHANNELS_SCHEMA = {
+  type: 'array' as const,
+  items: { type: 'string' as const, enum: ['email', 'shared'] },
+  minItems: 1,
+  maxItems: 1,
+  description: 'Target channel (exactly 1). html → ["email"]; expression → ["shared"].'
+};
+
+const FRAGMENT_SUBTYPE_SCHEMA = {
+  type: 'string' as const,
+  enum: ['TEXT', 'HTML', 'JSON'],
+  description: 'Sub-type for expression fragments (TEXT | HTML | JSON). REQUIRED when type is "expression"; not used for html fragments.'
+};
+
+// Conditional requirement: AJO mandates subType for expression fragments. Declared
+// as a JSON-Schema if/then so a schema-aware client enforces it before the call.
+// Adds only to `required` (no new property), so it composes cleanly with the
+// top-level additionalProperties:false and the confirmWrite flag injected later.
+const EXPRESSION_REQUIRES_SUBTYPE = [
+  { if: { properties: { type: { const: 'expression' } }, required: ['type'] }, then: { required: ['subType'] } }
+];
+
 // ─── list_content_fragments ───────────────────────────────────────────────────
 
 export const listContentFragmentsDefinition = {
@@ -65,6 +110,15 @@ export const createContentFragmentDefinition = {
   description: `Create a new content fragment in Adobe Journey Optimizer.
 Fragments are reusable content blocks that can be embedded in campaigns and journeys.
 
+⚠ VISUAL EMAIL DESIGNER REQUIREMENT (type "html", channel "email"):
+  The HTML content must use AJO's native serialization format (acr-* class
+  namespace, structure/component catalog, required <head> with content-version
+  meta tag). Generic HTML will force the designer into Compatibility mode,
+  locking the user out of drag-and-drop editing. Call the
+  get_visual_designer_requirements tool to get the full mandatory spec BEFORE
+  constructing any HTML for this fragment type (it returns the exact
+  structure/component catalog and required <head> you must reproduce).
+
 Example usage (HTML fragment):
 {
   "name": "Header Banner",
@@ -93,13 +147,14 @@ Returns: { success: true, id: "<uuid>", location: "/fragments/<uuid>" }`,
     type: 'object' as const,
     additionalProperties: false,
     required: ['name', 'type', 'channels', 'fragment'],
+    allOf: EXPRESSION_REQUIRES_SUBTYPE,
     properties: {
       name: { type: 'string', description: 'Fragment name (required)' },
       description: { type: 'string', description: 'Optional description' },
       type: { type: 'string', enum: ['html', 'expression'], description: 'Fragment type' },
-      channels: { type: 'array', items: { type: 'string', enum: ['email', 'shared'] }, minItems: 1, maxItems: 1, description: 'Target channel (exactly 1). html→email, expression→shared' },
-      fragment: { type: 'object', description: 'Fragment content. For html: { content: "<html>..." }. For expression: { expression: "..." }' },
-      subType: { type: 'string', enum: ['TEXT', 'HTML', 'JSON'], description: 'Sub-type for expression fragments' },
+      channels: FRAGMENT_CHANNELS_SCHEMA,
+      fragment: FRAGMENT_CONTENT_SCHEMA,
+      subType: FRAGMENT_SUBTYPE_SCHEMA,
       parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder' },
       source: { type: 'object', description: 'Source metadata { origin: "ajo"|"external" }' }
     }
@@ -167,6 +222,15 @@ export const updateContentFragmentDefinition = {
   outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
   description: `Replace a content fragment entirely (PUT). Use this when changing fragment content, type, or channels. To rename or move a fragment without touching its content, patch_content_fragment is lighter-weight.
 
+⚠ VISUAL EMAIL DESIGNER REQUIREMENT (type "html", channel "email"):
+  The HTML content must use AJO's native serialization format (acr-* class
+  namespace, structure/component catalog, required <head> with content-version
+  meta tag). Generic HTML will force the designer into Compatibility mode,
+  locking the user out of drag-and-drop editing. Call the
+  get_visual_designer_requirements tool to get the full mandatory spec BEFORE
+  constructing any HTML for this fragment type (it returns the exact
+  structure/component catalog and required <head> you must reproduce).
+
 Workflow:
 1. Call get_content_fragment to get current data + etag
 2. Modify the data
@@ -188,14 +252,16 @@ Returns: { success: true }`,
     type: 'object' as const,
     additionalProperties: false,
     required: ['fragmentId', 'etag', 'name', 'type', 'channels', 'fragment'],
+    allOf: EXPRESSION_REQUIRES_SUBTYPE,
     properties: {
       fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to update' },
       etag: { type: 'string', description: 'ETag from get_content_fragment' },
       name: { type: 'string', description: 'Fragment name' },
       description: { type: 'string', description: 'Optional description' },
       type: { type: 'string', enum: ['html', 'expression'], description: 'Fragment type: html → email channel; expression → shared channel' },
-      channels: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 1, description: 'Target channel (exactly 1). html fragments use ["email"]; expression fragments use ["shared"]' },
-      fragment: { type: 'object', description: 'Full replacement content. For html: { content: "<html>..." }. For expression: { expression: "..." }' },
+      channels: FRAGMENT_CHANNELS_SCHEMA,
+      fragment: FRAGMENT_CONTENT_SCHEMA,
+      subType: FRAGMENT_SUBTYPE_SCHEMA,
       parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder' },
       source: { type: 'object', description: 'Source metadata { origin: "ajo"|"external" }' }
     }
@@ -285,8 +351,11 @@ export const publishContentFragmentDefinition = {
     location: { type: 'string', description: 'Status resource path for the publication request.' },
     retryAfter: { type: 'number', description: 'Suggested seconds to wait before polling get_fragment_publication_status.' }
   }),
-  description: `Publish a content fragment to make it available for use in campaigns and journeys.
+  description: `Publish a content fragment to make it available for use in live campaigns and journeys.
 Publishing freezes the fragment content. Required before activating a campaign/journey that uses this fragment.
+
+⚠ IRREVERSIBLE — confirm with the user first. Publishing CANNOT be undone (AJO has no unpublish). Do NOT publish unless the user has explicitly asked to; in particular, publishing is NOT required to embed a fragment in a content template (a DRAFT fragment embeds and renders fine). The server enforces this: every publish call is re-confirmed with the user (via elicitation, or a WRITE_CONFIRMATION_REQUIRED confirm-and-retry gate on clients without it).
+
 Publication is asynchronous — after calling this tool, poll get_fragment_publication_status every 5 seconds until status is "complete" or "error". Publication typically finishes within 30 seconds; if still "inProgress" after 6 polls (~30 s), stop and tell the user it is taking longer than expected.
 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }

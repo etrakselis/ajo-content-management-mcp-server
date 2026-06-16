@@ -4,6 +4,7 @@ import {
 } from '../adobe/client.js';
 import { getWritesAllowed } from '../mcp/access-policy.js';
 import type { ToolCatalogGroup } from '../mcp/tool-catalog.js';
+import { RESOURCE_ACCESS_CATALOG } from '../mcp/resources.js';
 import { notConfiguredError, withTelemetry, buildOutputSchema } from './utils.js';
 
 // The full tool catalog, injected once at server startup (server.ts derives it
@@ -53,19 +54,32 @@ export const getServerContextDefinition = {
               }
             }
           }
+        },
+        resources: {
+          type: 'array',
+          description: 'Catalog of every resource this server exposes, each with how to actually obtain it. Many clients (e.g. Claude Desktop) do not let the model read MCP resources directly, so use the "access" hint — it names the tool to call or says where the content already lives.',
+          items: {
+            type: 'object',
+            properties: {
+              uri: { type: 'string', description: 'Resource URI (e.g. ajo://error-codes).' },
+              title: { type: 'string', description: 'Human-friendly title.' },
+              description: { type: 'string', description: 'What the resource contains.' },
+              access: { type: 'string', description: 'How the model can obtain this content (a tool to call, or where it already appears).' }
+            }
+          }
         }
       }
     }
   }),
   description: `Return the identity and configuration this MCP server is currently operating as: the author it is acting on behalf of (a self-declared email captured at setup — not verified), the AJO sandbox, the tenant namespace, the org name, and whether write access is enabled.
 
-It also returns the full catalog of tools this server exposes (grouped by domain) — call this first to discover every available capability by exact name, instead of guessing at tool searches.
+It also returns the full catalog of tools this server exposes (grouped by domain) — call this first to discover every available capability by exact name, instead of guessing at tool searches — and a catalog of every resource it exposes, each with an "access" hint telling you how to actually obtain that content (which tool to call, or where it already lives). The resource catalog matters because many clients do not let the model read MCP resources directly.
 
-Use this to answer questions like "who is this server running on behalf of?", "which sandbox / tenant am I connected to?", "can I make changes (is write access on)?", or "what can this server do?".
+Use this to answer questions like "who is this server running on behalf of?", "which sandbox / tenant am I connected to?", "can I make changes (is write access on)?", "what can this server do?", or "what resources are available and how do I read them?".
 
 Example usage: {}
 
-Returns: { success: true, data: { authorEmail, sandbox, tenantNamespace, orgName, writeAccess, configured, tools: [{ group, tools: [{ name, title }] }] } }`,
+Returns: { success: true, data: { authorEmail, sandbox, tenantNamespace, orgName, writeAccess, configured, tools: [{ group, tools: [{ name, title }] }], resources: [{ uri, title, description, access }] } }`,
   annotations: { title: 'Get Server Context (Identity & Config)', readOnlyHint: true, openWorldHint: false },
   inputSchema: {
     type: 'object' as const,
@@ -87,7 +101,8 @@ export async function handleGetServerContext(_args?: unknown) {
         orgName: getConfiguredOrgName(),
         writeAccess: getWritesAllowed(),
         configured: true,
-        tools: toolCatalog
+        tools: toolCatalog,
+        resources: RESOURCE_ACCESS_CATALOG
       }
     };
   });

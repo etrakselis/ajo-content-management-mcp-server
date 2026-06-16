@@ -27,6 +27,18 @@ const TemplateChannelEnum = z.enum(['email', 'push', 'inapp', 'sms', 'code', 'di
 const TemplateTypeEnum = z.enum(['html', 'html_primary_page', 'html_sub_page', 'content']);
 const TemplateSubTypeEnum = z.enum(['HTML', 'JSON']);
 
+// AJO mandates a subType for code-channel templates (HTML vs JSON tells it how to
+// interpret the raw content). Enforce it here so the model gets a clear, early
+// error instead of an opaque API rejection.
+function checkTemplateSubType(
+  data: { channels: string[]; subType?: 'HTML' | 'JSON' },
+  ctx: z.RefinementCtx
+): void {
+  if (data.channels?.includes('code') && !data.subType) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['subType'], message: 'code channel templates require subType (HTML | JSON)' });
+  }
+}
+
 export const CreateTemplateSchema = z.object({
   name: z.string().min(1, 'Template name is required').max(255),
   description: z.string().optional(),
@@ -39,7 +51,7 @@ export const CreateTemplateSchema = z.object({
   subType: TemplateSubTypeEnum.optional(),
   parentFolderId: z.string().uuid().nullable().optional(),
   template: z.record(z.unknown()).optional()
-});
+}).superRefine(checkTemplateSubType);
 
 export const GetTemplateSchema = z.object({
   templateId: UuidSchema
@@ -59,7 +71,7 @@ export const UpdateTemplateSchema = z.object({
   subType: TemplateSubTypeEnum.optional(),
   parentFolderId: z.string().uuid().nullable().optional(),
   template: z.record(z.unknown()).optional()
-});
+}).superRefine(checkTemplateSubType);
 
 export const PatchTemplateSchema = z.object({
   templateId: UuidSchema,
@@ -77,6 +89,29 @@ export const ListTemplatesSchema = PaginationSchema;
 
 const FragmentTypeEnum = z.enum(['html', 'expression']);
 const FragmentChannelEnum = z.enum(['email', 'shared']);
+const FragmentSubTypeEnum = z.enum(['TEXT', 'HTML', 'JSON']);
+
+// Enforce the content shape that the tool inputSchema advertises as a oneOf:
+// html fragments must carry fragment.content, expression fragments must carry
+// fragment.expression. AJO also mandates a subType for expression fragments, so
+// require it here too. Catches a wrong-shaped payload (with a clear path) instead
+// of letting it through to a less helpful AJO API rejection.
+function checkFragmentContentShape(
+  data: { type: 'html' | 'expression'; fragment: Record<string, unknown>; subType?: 'TEXT' | 'HTML' | 'JSON' },
+  ctx: z.RefinementCtx
+): void {
+  if (data.type === 'html' && typeof data.fragment?.content !== 'string') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['fragment', 'content'], message: 'html fragments require fragment.content (a string)' });
+  }
+  if (data.type === 'expression') {
+    if (typeof data.fragment?.expression !== 'string') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['fragment', 'expression'], message: 'expression fragments require fragment.expression (a string)' });
+    }
+    if (!data.subType) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['subType'], message: 'expression fragments require subType (TEXT | HTML | JSON)' });
+    }
+  }
+}
 
 export const CreateFragmentSchema = z.object({
   name: z.string().min(1, 'Fragment name is required').max(255),
@@ -87,9 +122,10 @@ export const CreateFragmentSchema = z.object({
     origin: z.enum(['ajo', 'external']),
     metadata: z.record(z.unknown()).optional()
   }).optional(),
+  subType: FragmentSubTypeEnum.optional(),
   parentFolderId: z.string().uuid().nullable().optional(),
   fragment: z.record(z.unknown())
-});
+}).superRefine(checkFragmentContentShape);
 
 export const GetFragmentSchema = z.object({
   fragmentId: UuidSchema
@@ -106,9 +142,10 @@ export const UpdateFragmentSchema = z.object({
     origin: z.enum(['ajo', 'external']),
     metadata: z.record(z.unknown()).optional()
   }).optional(),
+  subType: FragmentSubTypeEnum.optional(),
   parentFolderId: z.string().uuid().nullable().optional(),
   fragment: z.record(z.unknown())
-});
+}).superRefine(checkFragmentContentShape);
 
 export const PatchFragmentSchema = z.object({
   fragmentId: UuidSchema,

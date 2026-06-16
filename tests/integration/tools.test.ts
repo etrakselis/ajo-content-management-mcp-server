@@ -58,6 +58,7 @@ import {
 } from '../../src/tools/fragments';
 
 import { handleGetServerContext } from '../../src/tools/context';
+import { handleGetVisualDesignerRequirements } from '../../src/tools/visual-designer';
 
 import * as client from '../../src/adobe/client';
 
@@ -77,6 +78,16 @@ describe('get_server_context', () => {
     expect(result.data.sandbox).toBe('my-sandbox');
     expect(result.data.tenantNamespace).toBe('_mytenant');
     expect(result.data).toHaveProperty('writeAccess');
+    // Resource routing catalog: present, and each entry has an access hint so the
+    // model knows how to obtain content it can't read as an MCP resource directly.
+    const resources = result.data.resources as Array<{ uri: string; access: string }>;
+    expect(Array.isArray(resources)).toBe(true);
+    expect(resources.length).toBeGreaterThan(0);
+    expect(resources.every(r => typeof r.access === 'string' && r.access.length > 0)).toBe(true);
+    const errorCodes = resources.find(r => r.uri === 'ajo://error-codes');
+    expect(errorCodes).toBeDefined();
+    const visual = resources.find(r => r.uri === 'ajo://visual-designer-requirements');
+    expect(visual?.access).toContain('get_visual_designer_requirements');
   });
 
   test('returns NOT_CONFIGURED when the server is not set up', async () => {
@@ -84,6 +95,24 @@ describe('get_server_context', () => {
     const result = await handleGetServerContext({}) as { success: boolean; error: { code: string } };
     expect(result.success).toBe(false);
     expect(result.error.code).toBe('NOT_CONFIGURED');
+  });
+});
+
+// ─── Visual Designer Requirements Tool ────────────────────────────────────────
+
+describe('get_visual_designer_requirements', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('returns the full spec without requiring configuration', async () => {
+    // Pure static reference — must work even when the server is not configured.
+    mockClient.isClientConfigured.mockReturnValue(false);
+    const result = await handleGetVisualDesignerRequirements({}) as { success: boolean; requirements: string };
+    expect(result.success).toBe(true);
+    expect(typeof result.requirements).toBe('string');
+    // Spot-check that the catalog and verbatim <head> markers are present.
+    expect(result.requirements).toContain('richtext.structure_1_1_column');
+    expect(result.requirements).toContain('button:2');
+    expect(result.requirements).toContain('content-version');
   });
 });
 

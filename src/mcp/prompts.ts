@@ -2,7 +2,8 @@ import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import {
   RESOURCE_URIS,
   CHANNEL_REFERENCE_TEXT,
-  ERROR_CODES_TEXT
+  ERROR_CODES_TEXT,
+  VISUAL_DESIGNER_REQUIREMENTS_TEXT
 } from './resources.js';
 
 export interface PromptDefinition {
@@ -266,8 +267,18 @@ Use the attached channel & content-type reference as the canonical list of valid
       const nameHint = name ? `"${name}"` : '<name confirmed with user>';
 
       const typeAndShapeHint = isFragment
-        ? `type "${fragmentType}", channels: ${JSON.stringify(fragmentChannels)}, fragment: { ... }`
-        : `templateType "${templateType}", channels: ["${channel}"]${channel === 'code' ? ', subType: "HTML" | "JSON"' : ''}, template: { ... }`;
+        ? `type "${fragmentType}", channels: ${JSON.stringify(fragmentChannels)}${fragmentType === 'expression' ? ', subType: "TEXT" | "HTML" | "JSON" (required for expression fragments)' : ''}, fragment: { ... }`
+        : `templateType "${templateType}", channels: ["${channel}"]${channel === 'code' ? ', subType: "HTML" | "JSON" (required for code)' : ''}, template: { ... }`;
+
+      const isVisualEmail = channel === 'email';
+      const visualEmailStep = isVisualEmail ? `
+Step 1b — Read the Visual Email Designer requirements (MANDATORY for this channel):
+  The HTML you produce must use AJO's native serialization format. Generic email HTML
+  will force the designer into Compatibility mode and lock the user out of drag-and-drop
+  editing. The attached visual-designer-requirements resource (below) contains all
+  mandatory rules, the complete structure and component catalogs, and the required <head>
+  block. Read it in full before constructing any HTML content.
+` : '';
 
       return [
         {
@@ -282,7 +293,7 @@ Step 1 — Confirm the content shape:
   Look up "${channel}" in the reference. The correct shape is:
     ${typeAndShapeHint}
   Confirm with the user what the actual body content should be.
-${channel === 'landingpage' ? '  Note: use "html_primary_page" for the main page and "html_sub_page" for confirmation/thank-you pages.\n' : ''}
+${channel === 'landingpage' ? '  Note: use "html_primary_page" for the main page and "html_sub_page" for confirmation/thank-you pages.\n' : ''}${visualEmailStep}
 Step 2 — Look up personalization paths (skip if the content has no personalization):
   If the content will address the recipient by name or reference their data, call list_xdm_field_groups with container "tenant" to list all customer-defined field groups. For any group whose title is relevant to "${useCase}", call get_xdm_field_group with full=true. Custom attributes are nested under the tenant namespace key (e.g. "${tenantExample}") in the "properties" tree. Do NOT guess paths like {{profile.person.firstName}} — use only what you find.
 
@@ -298,7 +309,8 @@ Step 5 — Report outcome:
   On success, tell the user the new ${isFragment ? 'fragment' : 'template'} ID and confirm it was created.${isFragment ? '\n  Remind the user that a fragment must be published before it can be used in campaigns — use the "publish-fragment" prompt for the full async publication workflow.' : ''}`
           }
         },
-        embeddedResource(RESOURCE_URIS.channelReference, CHANNEL_REFERENCE_TEXT)
+        embeddedResource(RESOURCE_URIS.channelReference, CHANNEL_REFERENCE_TEXT),
+        ...(isVisualEmail ? [embeddedResource(RESOURCE_URIS.visualDesignerRequirements, VISUAL_DESIGNER_REQUIREMENTS_TEXT)] : [])
       ];
     }
 

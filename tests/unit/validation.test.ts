@@ -51,6 +51,22 @@ describe('Validation Schemas', () => {
       const result = CreateTemplateSchema.safeParse({ name: 'Test' });
       expect(result.success).toBe(false);
     });
+
+    test('accepts code template with subType', () => {
+      const result = CreateTemplateSchema.safeParse({
+        name: 'Code Block', templateType: 'content', channels: ['code'],
+        subType: 'JSON', template: { foo: 'bar' }
+      });
+      expect(result.success).toBe(true);
+    });
+
+    test('rejects code template missing subType (AJO mandates it)', () => {
+      const result = CreateTemplateSchema.safeParse({
+        name: 'Code Block', templateType: 'content', channels: ['code'],
+        template: { foo: 'bar' }
+      });
+      expect(result.success).toBe(false);
+    });
   });
 
   describe('CreateFragmentSchema', () => {
@@ -64,14 +80,25 @@ describe('Validation Schemas', () => {
       expect(result.success).toBe(true);
     });
 
-    test('accepts expression fragment', () => {
+    test('accepts expression fragment with subType', () => {
+      const result = CreateFragmentSchema.safeParse({
+        name: 'Greeting',
+        type: 'expression',
+        channels: ['shared'],
+        fragment: { expression: 'Hello {{profile.name}}' },
+        subType: 'TEXT'
+      });
+      expect(result.success).toBe(true);
+    });
+
+    test('rejects expression fragment missing subType (AJO mandates it)', () => {
       const result = CreateFragmentSchema.safeParse({
         name: 'Greeting',
         type: 'expression',
         channels: ['shared'],
         fragment: { expression: 'Hello {{profile.name}}' }
       });
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
     });
 
     test('rejects invalid type', () => {
@@ -80,6 +107,37 @@ describe('Validation Schemas', () => {
         type: 'video',
         channels: ['email'],
         fragment: {}
+      });
+      expect(result.success).toBe(false);
+    });
+
+    test('rejects html fragment missing fragment.content', () => {
+      const result = CreateFragmentSchema.safeParse({
+        name: 'Test', type: 'html', channels: ['email'], fragment: {}
+      });
+      expect(result.success).toBe(false);
+    });
+
+    test('rejects expression fragment missing fragment.expression', () => {
+      const result = CreateFragmentSchema.safeParse({
+        name: 'Test', type: 'expression', channels: ['shared'], fragment: { content: 'wrong key' }
+      });
+      expect(result.success).toBe(false);
+    });
+
+    test('retains subType for expression fragments (no longer stripped)', () => {
+      const result = CreateFragmentSchema.safeParse({
+        name: 'Greeting', type: 'expression', channels: ['shared'],
+        fragment: { expression: 'Hi {{x}}' }, subType: 'TEXT'
+      });
+      expect(result.success).toBe(true);
+      expect(result.success && result.data.subType).toBe('TEXT');
+    });
+
+    test('rejects an invalid subType value', () => {
+      const result = CreateFragmentSchema.safeParse({
+        name: 'Greeting', type: 'expression', channels: ['shared'],
+        fragment: { expression: 'Hi {{x}}' }, subType: 'YAML'
       });
       expect(result.success).toBe(false);
     });

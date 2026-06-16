@@ -18,7 +18,7 @@ import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, get
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
-import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_TEMPLATE_DESCRIPTORS, parseFragmentUri, parseTemplateUri, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT } from './resources.js';
+import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_TEMPLATE_DESCRIPTORS, parseFragmentUri, parseTemplateUri, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT, VISUAL_DESIGNER_REQUIREMENTS_TEXT } from './resources.js';
 import { logger } from '../telemetry/index.js';
 import { recordAudit } from '../telemetry/audit.js';
 
@@ -57,6 +57,7 @@ import {
 
 // Server context — read-only; reports who/what this server is operating as
 import { getServerContextDefinition, handleGetServerContext, setToolCatalog } from '../tools/context.js';
+import { getVisualDesignerRequirementsDefinition, handleGetVisualDesignerRequirements } from '../tools/visual-designer.js';
 import { buildToolCatalog, formatToolCatalog } from './tool-catalog.js';
 
 const ALL_TOOLS = [
@@ -83,7 +84,9 @@ const ALL_TOOLS = [
   listXdmUnionSchemasDefinition,
   getXdmUnionSchemaDefinition,
   // Server context — read-only
-  getServerContextDefinition
+  getServerContextDefinition,
+  // Visual Email Designer HTML spec — read-only reference
+  getVisualDesignerRequirementsDefinition
 ];
 
 // Catalog derived from the live tool list (so it never drifts). Registered into
@@ -115,6 +118,15 @@ const MAX_DIRECTORY_PAGES = 50;
 // so archive is the permanent equivalent.
 const DESTRUCTIVE_TOOLS = new Set<string>(['delete_content_template', 'archive_content_fragment']);
 const isDestructiveTool = (name: string): boolean => DESTRUCTIVE_TOOLS.has(name);
+
+// Irreversible (but NON-destructive) writes: they don't delete or overwrite
+// anything, but they can't be undone either, so — like destructive writes — they
+// are re-confirmed with the user every time (never cached). Publishing a fragment
+// cannot be reversed: AJO has no way to unpublish. Publication is also unnecessary
+// for embedding a fragment in a template (only for live campaign/journey use,
+// which is out of scope here), so the model must never publish on a hunch.
+const IRREVERSIBLE_TOOLS = new Set<string>(['publish_content_fragment']);
+const isIrreversibleTool = (name: string): boolean => IRREVERSIBLE_TOOLS.has(name);
 
 // Synthetic argument the model supplies to re-invoke a write after it has
 // confirmed the target with the user, on clients that don't support elicitation
@@ -202,7 +214,9 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   list_xdm_union_schemas: handleListXdmUnionSchemas,
   get_xdm_union_schema: handleGetXdmUnionSchema,
   // Server context — read-only
-  get_server_context: handleGetServerContext
+  get_server_context: handleGetServerContext,
+  // Visual Email Designer HTML spec — read-only reference
+  get_visual_designer_requirements: handleGetVisualDesignerRequirements
 };
 
 export function createMcpServer(transport: TransportKind = 'http'): Server {
@@ -236,13 +250,13 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     `(list_xdm_field_groups / get_xdm_field_group, or get_xdm_union_schema for the full merged Profile view), ` +
     `then build personalization expressions from the actual attribute locations you find.`;
 
-  const resourceNote = ` Before constructing any create or update payload, read the ` +
-    `ajo://sandbox/channel-reference resource to confirm the correct templateType, channel, and content shape ` +
-    `for the target channel. If you encounter an error, read ajo://error-codes for the cause and recovery action. ` +
-    `Read ajo://server/status to diagnose NOT_CONFIGURED or UNAUTHORIZED errors. ` +
-    `To find an object by name, read the ajo://fragments or ajo://templates directory; each entry includes a ` +
-    `resource link (ajo://fragment/{id} or ajo://template/{id}) you can then read for the full object plus its ` +
-    `current etag.`;
+  const resourceNote = ` This server also exposes reference resources, but many clients (e.g. Claude ` +
+    `Desktop) do not let the model read MCP resources directly — so call get_server_context for the resource ` +
+    `catalog, which lists every resource with an "access" hint for how to actually obtain its content. In ` +
+    `particular: the channel→templateType→content-shape mapping is already in the create_/update_ tool ` +
+    `descriptions; the full Visual Email Designer HTML spec is returned by the get_visual_designer_requirements ` +
+    `tool; server status is in get_server_context; and to find an object by name call list_content_fragments / ` +
+    `list_content_templates, then get_content_fragment / get_content_template by id for the full object plus etag.`;
 
   const promptNote = ` Use the 'discover-personalization-paths' prompt before inserting personalization ` +
     `expressions into any template or fragment. Use the 'publish-fragment' prompt for the full async publication ` +
@@ -342,20 +356,29 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     const org = getConfiguredOrgName();
     const author = getConfiguredAuthorEmail();
     const destructive = isDestructiveTool(toolName);
+    const irreversible = isIrreversibleTool(toolName);
+    // Both destructive and irreversible writes are re-confirmed every time (never
+    // cached); only ordinary writes are confirmed once per target per session.
+    const alwaysConfirm = destructive || irreversible;
     const targetKey = sandbox ?? '(unconfigured)';
 
-    // Non-destructive writes only need confirming once per target per session;
-    // destructive writes are re-confirmed every time. Applies to both mechanisms.
-    if (!destructive && confirmedSandboxes.has(targetKey)) return { proceed: true };
+    // Ordinary writes only need confirming once per target per session;
+    // destructive/irreversible writes are re-confirmed every time. Both mechanisms.
+    if (!alwaysConfirm && confirmedSandboxes.has(targetKey)) return { proceed: true };
 
     const targetParts = [
       org ? `org "${org}"` : null,
       tenantNs ? `tenant "${tenantNs}"` : null,
       `sandbox "${sandbox ?? 'unconfigured'}"`
     ].filter(Boolean).join(', ');
-    const action = destructive ? `a DESTRUCTIVE operation (${toolName})` : `"${toolName}"`;
+    const action = destructive
+      ? `a DESTRUCTIVE operation (${toolName})`
+      : irreversible
+      ? `an IRREVERSIBLE operation (${toolName})`
+      : `"${toolName}"`;
     const message = `Confirm ${action} against ${targetParts}` +
-      (author ? `, acting on behalf of ${author}` : '') + '.';
+      (author ? `, acting on behalf of ${author}` : '') + '.' +
+      (irreversible ? ' Publishing cannot be undone — AJO has no way to unpublish a fragment, and a fragment does NOT need to be published to be embedded in a template.' : '');
 
     // ── Clients without elicitation: confirm-and-retry gate ──
     // We can't show a dialog, so require the model to confirm the target with the
@@ -364,7 +387,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       const confirmed = !!args && typeof args === 'object' &&
         (args as Record<string, unknown>)[CONFIRM_ARG] === true;
       if (confirmed) {
-        if (!destructive) confirmedSandboxes.add(targetKey);
+        if (!alwaysConfirm) confirmedSandboxes.add(targetKey);
         emitLog('info', `✓ ${toolName}: write confirmed for ${targetKey} (confirm-and-retry)`, sessionId);
         return { proceed: true };
       }
@@ -375,6 +398,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
         message: `${message} This client cannot display a confirmation dialog. ` +
           `Confirm with the user that this is the intended target` +
           (destructive ? ' and that this irreversible operation should proceed' : '') +
+          (irreversible ? ' and that this fragment should be published (it is irreversible and is NOT required for embedding)' : '') +
           `, then re-invoke "${toolName}" with the same arguments plus "${CONFIRM_ARG}": true. ` +
           `Do not set "${CONFIRM_ARG}" without the user's explicit confirmation.`
       };
@@ -389,9 +413,10 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
           properties: {
             confirm: {
               type: 'boolean',
-              title: destructive ? 'Confirm destructive change' : 'Confirm change',
+              title: destructive ? 'Confirm destructive change' : irreversible ? 'Confirm irreversible publish' : 'Confirm change',
               description: `Apply this change to sandbox "${sandbox ?? 'unconfigured'}"?` +
-                (destructive ? ' This cannot be undone.' : ''),
+                (destructive ? ' This cannot be undone.' : '') +
+                (irreversible ? ' Publishing cannot be undone (AJO has no unpublish), and is not required to embed the fragment in a template.' : ''),
               default: true
             }
           },
@@ -400,7 +425,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       });
 
       if (result.action === 'accept' && result.content?.confirm === true) {
-        if (!destructive) confirmedSandboxes.add(targetKey);
+        if (!alwaysConfirm) confirmedSandboxes.add(targetKey);
         emitLog('info', `✓ ${toolName}: write confirmed for ${targetKey}`, sessionId);
         return { proceed: true };
       }
@@ -602,6 +627,12 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     if (uri === RESOURCE_URIS.errorCodes) {
       return {
         contents: [{ uri, mimeType: 'text/plain', text: ERROR_CODES_TEXT }]
+      };
+    }
+
+    if (uri === RESOURCE_URIS.visualDesignerRequirements) {
+      return {
+        contents: [{ uri, mimeType: 'text/plain', text: VISUAL_DESIGNER_REQUIREMENTS_TEXT }]
       };
     }
 

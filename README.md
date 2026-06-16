@@ -707,6 +707,8 @@ It also returns `tools` — the full catalog of every tool this server exposes, 
 
 Alongside its tools, the server exposes MCP **resources** — addressable, readable context a client can fetch directly (and, in clients with a resource picker, attach via `@`-mention) without invoking a tool. All resources use the `ajo://` URI scheme.
 
+> **Claude Desktop note:** attaching these resources to the chat via the **+** menu currently **fails in Claude Desktop** ("failed to attach resource"). This is a limitation in how Claude Desktop handles local servers bridged through `mcp-remote` — it affects *every* such server (including Adobe's own AJO MCP server), and is **not** a sign that this server is broken. It does **not** affect functionality: all tools work normally, and the same reference content is reachable by the model through tools — `get_visual_designer_requirements` for the Visual Email Designer spec, and `get_server_context` for the full catalog of tools *and* resources (each listed with how to obtain it). See [Troubleshooting](#claude-desktop-failed-to-attach-resource-in-the-chat-ui).
+
 ### Static resources
 
 These are always listed (via `resources/list`) and have fixed URIs.
@@ -832,6 +834,15 @@ npm run dev
 - Check `/ready` returns `{ "ready": true }`
 - Verify the MCP client is connected to `http://localhost:3000/mcp`
 - Review logs: `docker compose logs -f`
+
+### Claude Desktop: "failed to attach resource" in the chat UI
+Attaching this server's **resources** or **prompts** to the chat via the **+** menu fails in Claude Desktop ("failed to attach resource" / "server not found"). **This is a Claude Desktop limitation, not a problem with this server**, and it does **not** affect functionality.
+
+- It affects **every** local server connected through the `mcp-remote` bridge — reproducible with Adobe's own AJO MCP server too, not just this one.
+- The server is healthy: the request actually **succeeds** at the protocol level. `docker compose logs -f` shows the `resources/read` / `prompts/get` returning a normal result — the failure is purely in Claude Desktop's attach UI.
+- **Tools are unaffected** and work normally (they use a different path than the resource picker).
+- The model can still reach the same content through tools: call **`get_visual_designer_requirements`** for the Visual Email Designer HTML spec, and **`get_server_context`** for the full catalog of tools *and* resources (each resource listed with an "access" hint for how to obtain it).
+- Resources *do* attach normally in clients connected as **native/remote** connectors, and in any client that supports reading MCP resources directly.
 
 ### Which server actually handled a request?
 LLM clients **cannot reliably report their own MCP connections** — if you ask the model "which MCP servers are you connected to?" or "which server did you use?", it may omit this local server, list unrelated cloud connectors, or claim it was "proxied" through another server. That's the model guessing from tool names, not ground truth.
