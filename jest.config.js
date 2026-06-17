@@ -13,14 +13,15 @@ module.exports = {
     'src/**/*.ts',
     '!src/**/*.d.ts'
   ],
-  // Thresholds track the suite's current floor so CI stays green; raise these as
-  // coverage improves (notably prompts.ts, schema-registry.ts, personalization.ts).
+  // Thresholds track the suite's current floor (kept a point or two under measured
+  // coverage so incidental churn doesn't redden CI). Raise as coverage improves —
+  // the largest remaining gaps are prompts.ts, schema-registry.ts, personalization.ts.
   coverageThreshold: {
     global: {
-      lines: 70,
-      functions: 60,
-      branches: 45,
-      statements: 70
+      lines: 72,
+      functions: 62,
+      branches: 49,
+      statements: 71
     }
   },
   moduleNameMapper: {

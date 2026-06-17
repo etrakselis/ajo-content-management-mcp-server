@@ -80,7 +80,7 @@ Use this to answer questions like "who is this server running on behalf of?", "w
 Example usage: {}
 
 Returns: { success: true, data: { authorEmail, sandbox, tenantNamespace, orgName, writeAccess, configured, tools: [{ group, tools: [{ name, title }] }], resources: [{ uri, title, description, access }] } }`,
-  annotations: { title: 'Get Server Context (Identity & Config)', readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, openWorldHint: false },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,

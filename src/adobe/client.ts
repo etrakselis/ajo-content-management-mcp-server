@@ -24,6 +24,17 @@ export interface PaginationParams {
 let clientConfig: AdobeClientConfig | null = null;
 let httpClient: AxiosInstance | null = null;
 
+// Collapse interpolated identifiers (UUIDs, numeric ids) in a request path to a
+// fixed ":id" placeholder before using it as a Prometheus label. The raw paths
+// embed per-object UUIDs (e.g. /templates/<uuid>), which would otherwise create
+// an unbounded number of label values and grow the metrics registry without limit.
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+function normalizeEndpoint(url: string | undefined): string {
+  if (!url) return 'unknown';
+  const path = url.split('?')[0];
+  return path.replace(UUID_RE, ':id');
+}
+
 export function configureAdobeClient(config: AdobeClientConfig): void {
   clientConfig = config;
 
@@ -66,7 +77,7 @@ export function configureAdobeClient(config: AdobeClientConfig): void {
     (error: AxiosError) => {
       if (error.response) {
         adobeApiErrorCounter.inc({
-          endpoint: error.config?.url || 'unknown',
+          endpoint: normalizeEndpoint(error.config?.url),
           status_code: String(error.response.status)
         });
         logger.error('Adobe API error', {

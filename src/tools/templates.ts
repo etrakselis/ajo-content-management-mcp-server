@@ -93,7 +93,7 @@ Example usage:
 - Sort ascending: { orderBy: "+modifiedAt" }
 
 Returns: { _page: { count, next }, items: [{ id, name, templateType, channels, ... }] }`,
-  annotations: { title: 'List Content Templates', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -198,7 +198,7 @@ Example usage (push notification template):
 }
 
 Returns: { success: true, id: "<uuid>", location: "/templates/<uuid>" }`,
-  annotations: { title: 'Create Content Template', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -243,7 +243,7 @@ Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { id, name, templateType, channels, template, createdAt, modifiedAt, ... }, etag: "..." }
 The etag is required for update (PUT/PATCH) operations.`,
-  annotations: { title: 'Get Content Template', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -340,7 +340,7 @@ Example usage (email template — preserve the fetched templateType; "content" s
 (If the fetched template is templateType "html", keep it "html" and send template { "html": "<html>..." } — that shape has no subject.)
 
 Returns: { success: true }`,
-  annotations: { title: 'Update Content Template (Replace)', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -397,7 +397,7 @@ Example usage:
 }
 
 Returns: { success: true, data: { updated template }, etag: "new-etag" }`,
-  annotations: { title: 'Rename or Move Content Template', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -450,7 +450,7 @@ export const deleteContentTemplateDefinition = {
 Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true }`,
-  annotations: { title: 'Delete Content Template', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,

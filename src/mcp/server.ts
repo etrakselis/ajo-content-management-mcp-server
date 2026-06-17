@@ -171,6 +171,15 @@ function augmentWriteTool<T extends { description: string; inputSchema: unknown 
   };
 }
 
+// The display title lives once on the top-level `title` field (the spec's
+// canonical display name). Mirror it into annotations.title at serve time for
+// clients that still read the older annotation field, so the source tool
+// definitions don't repeat the same string in two places. Returns a shallow copy.
+function withAnnotationTitle<T extends { title?: string; annotations?: Record<string, unknown> }>(tool: T): T {
+  if (!tool.title || (tool.annotations && 'title' in tool.annotations)) return tool;
+  return { ...tool, annotations: { ...(tool.annotations ?? {}), title: tool.title } };
+}
+
 // Build a CallTool result from the standard `{ success, ... }` envelope our tool
 // handlers return. Always attaches `structuredContent` (the parsed object) so
 // clients on the 2025-06-18 spec get a schema-typed result matching each tool's
@@ -458,7 +467,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     // read-only even after the toggle is flipped on. Write enforcement happens in
     // CallTool instead. Write tools get the runtime-gate note and the confirmWrite
     // flag (see augmentWriteTool).
-    const tools = ALL_TOOLS.map(t => (isWriteTool(t.name) ? augmentWriteTool(t) : t));
+    const tools = ALL_TOOLS.map(t => withAnnotationTitle(isWriteTool(t.name) ? augmentWriteTool(t) : t));
     return { tools };
   });
 

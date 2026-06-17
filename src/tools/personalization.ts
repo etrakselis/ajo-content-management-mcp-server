@@ -44,7 +44,7 @@ Example usage: { "category": "dates" }
 Example usage: { "category": "dataset-lookup" }
 
 Returns: { success: true, category: "...", syntax: "<reference text>", availableCategories: [...] }`,
-  annotations: { title: 'Get AJO Personalization Syntax', readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, openWorldHint: false },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,

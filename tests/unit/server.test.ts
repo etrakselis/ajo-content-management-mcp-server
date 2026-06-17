@@ -608,4 +608,48 @@ describe('Express App', () => {
       expect(res.status).toBe(400);
     });
   });
+
+  // DNS-rebinding + CSRF defense for the unauthenticated /mcp endpoint. supertest
+  // talks to the app over a loopback socket, so the default Host/Origin already
+  // satisfy the guard; these tests override the headers to simulate a rebound or
+  // cross-site browser request and assert the guard rejects it before the handler.
+  describe('/mcp security guard (DNS-rebinding + cross-site)', () => {
+    const init = { jsonrpc: '2.0', method: 'initialize', id: 1, params: { capabilities: {} } };
+
+    test('rejects a non-loopback Host header with 403 (DNS-rebinding)', async () => {
+      const res = await request(app).post('/mcp').set('Host', 'evil.example.com').send(init);
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toMatch(/non-loopback Host/);
+    });
+
+    test('rejects a cross-site request (Sec-Fetch-Site) with 403', async () => {
+      const res = await request(app).post('/mcp').set('Sec-Fetch-Site', 'cross-site').send(init);
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toMatch(/cross-site/);
+    });
+
+    test('rejects a non-loopback Origin with 403', async () => {
+      const res = await request(app).post('/mcp').set('Origin', 'http://evil.example.com').send(init);
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toMatch(/disallowed origin/);
+    });
+
+    test('allows a loopback Host with a same-origin loopback Origin', async () => {
+      const res = await request(app)
+        .post('/mcp')
+        .set('Host', 'localhost:3000')
+        .set('Origin', 'http://localhost:3000')
+        .set('Sec-Fetch-Site', 'same-origin')
+        .send(init);
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+    });
+
+    test('allows a non-browser client that sends neither Origin nor Sec-Fetch-Site', async () => {
+      // The default loopback Host passes; absent browser headers are not a CSRF vector.
+      const res = await request(app).post('/mcp').send(init);
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+    });
+  });
 });

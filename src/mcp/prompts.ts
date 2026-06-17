@@ -253,7 +253,10 @@ Use the attached channel & content-type reference as the canonical list of valid
       }
 
       const channelToTemplateType: Record<string, string> = {
-        email: 'html',
+        // New email templates default to "content" — it carries the subject line
+        // and its html.body is still drag-and-drop editable. (templateType "html"
+        // is the legacy, subject-less form, only for editing existing designs.)
+        email: 'content',
         push: 'content',
         sms: 'content',
         inapp: 'content',

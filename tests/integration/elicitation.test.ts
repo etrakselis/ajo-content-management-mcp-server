@@ -259,4 +259,38 @@ describe('write-confirmation via elicitation', () => {
 
     expect(elicitHandler).not.toHaveBeenCalled();
   });
+
+  test('read-only mode rejects a write before confirmation is even attempted', async () => {
+    setWritesAllowed(false);
+    const { client, elicitHandler } = await connectClient({
+      elicitation: true,
+      respond: () => ({ action: 'accept', content: { confirm: true } })
+    });
+
+    const res = await client.callTool({ name: 'archive_content_fragment', arguments: { fragmentId: UUID } }) as {
+      isError?: boolean; structuredContent?: { error?: { code?: string } };
+    };
+
+    // READ_ONLY_MODE is enforced ahead of the confirmation gate, so the user is
+    // never prompted and the handler never runs.
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent?.error?.code).toBe('READ_ONLY_MODE');
+    expect(elicitHandler).not.toHaveBeenCalled();
+    expect(archiveFragment).not.toHaveBeenCalled();
+  });
+});
+
+describe('tool display titles', () => {
+  test('annotations.title is synthesized from the top-level title for every tool', async () => {
+    const { client } = await connectClient({ elicitation: false });
+    const { tools } = await client.listTools();
+
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(tool.title).toBeTruthy();
+      // Mirrored into the older annotation field for clients that read it, without
+      // the source definitions repeating the string in two places.
+      expect(tool.annotations?.title).toBe(tool.title);
+    }
+  });
 });

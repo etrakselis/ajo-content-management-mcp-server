@@ -74,7 +74,7 @@ Example usage:
 - Filter by type: { property: ["type==html"] }
 
 Returns: { _page: { count, next }, items: [{ id, name, type, status, channels, ... }] }`,
-  annotations: { title: 'List Content Fragments', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -145,7 +145,7 @@ Example usage (Expression fragment):
 Note: _yourtenant is a placeholder — use the 'discover-personalization-paths' prompt for a guided lookup, or call list_xdm_field_groups directly, to find the real attribute PATHS. For the AJO-native expression/function SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Do both before inserting any personalization, and use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
 
 Returns: { success: true, id: "<uuid>", location: "/fragments/<uuid>" }`,
-  annotations: { title: 'Create Content Fragment', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -192,7 +192,7 @@ Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { id, name, type, status, channels, fragment, createdAt, ... }, etag: "..." }
 The etag is required for update/patch operations.`,
-  annotations: { title: 'Get Content Fragment', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -265,7 +265,7 @@ Example usage:
 }
 
 Returns: { success: true }`,
-  annotations: { title: 'Update Content Fragment (Replace)', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -320,7 +320,7 @@ Example usage:
 }
 
 Returns: { success: true }`,
-  annotations: { title: 'Rename or Move Content Fragment', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -379,7 +379,7 @@ Publication is asynchronous — after calling this tool, poll get_fragment_publi
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, accepted: true, location: "...", retryAfter: 5 }`,
-  annotations: { title: 'Publish Content Fragment', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -416,7 +416,7 @@ Use this to retrieve the frozen/published version of a fragment that is live in 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { type: "html", fragment: { content: "<div>...</div>" } } }`,
-  annotations: { title: 'Get Live (Published) Fragment', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -466,7 +466,7 @@ Status values:
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { status: "complete"|"inProgress"|"error", errors: [] } }`,
-  annotations: { title: 'Get Fragment Publication Status', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -513,7 +513,7 @@ Note: this operation calls an internal AJO GraphQL API (not the public REST API)
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, id: "<uuid>", etag: "<new-etag>" }`,
-  annotations: { title: 'Archive Content Fragment', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,

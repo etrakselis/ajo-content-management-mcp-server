@@ -31,7 +31,7 @@ Example usage:
 - Tenant (custom) schemas: {} or { "container": "tenant" }
 - Standard schemas: { "container": "global" }
 - Filter by title: { "property": "title~Profile" }`,
-  annotations: { title: 'List XDM Schemas', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -67,7 +67,7 @@ export const getXdmSchemaDefinition = {
   description: `Retrieve a single XDM schema by ID. By default returns the fully-resolved schema (full=true) with every referenced field group inlined, so you can see the complete property tree and the exact attribute paths to use for personalization. ${PERSONALIZATION_HINT}
 
 Pass the schema's $id or meta:altId (from list_xdm_schemas) as schemaId.`,
-  annotations: { title: 'Get XDM Schema', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -105,7 +105,7 @@ export const listXdmFieldGroupsDefinition = {
 Example usage:
 - Custom field groups: {} or { "container": "tenant" }
 - Standard field groups: { "container": "global" }`,
-  annotations: { title: 'List XDM Field Groups', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -141,7 +141,7 @@ export const getXdmFieldGroupDefinition = {
   description: `Retrieve a single XDM field group by ID, fully resolved by default (full=true) so you can see every attribute it defines and the exact paths. ${PERSONALIZATION_HINT}
 
 Pass the field group's $id or meta:altId (from list_xdm_field_groups) as fieldGroupId.`,
-  annotations: { title: 'Get XDM Field Group', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -175,7 +175,7 @@ export const listXdmUnionSchemasDefinition = {
   title: 'List XDM Union Schemas',
   outputSchema: buildOutputSchema({ data: LIST_DATA }),
   description: `List or browse XDM union schemas (tenant container). A union is the merged view of every schema that shares a class — e.g. the full Profile union combines all enabled Profile field groups into one schema. This is the single best source of the complete set of attributes available for personalization. ${PERSONALIZATION_HINT}`,
-  annotations: { title: 'List XDM Union Schemas', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
@@ -209,7 +209,7 @@ export const getXdmUnionSchemaDefinition = {
   description: `Retrieve a single XDM union schema by ID, fully resolved by default (full=true). The resolved Profile union is the complete attribute set available for personalization in this sandbox — read its "properties" tree to find real attribute paths (custom ones nested under the tenant namespace key). ${PERSONALIZATION_HINT}
 
 Pass the union's $id or meta:altId (from list_xdm_union_schemas) as unionId.`,
-  annotations: { title: 'Get XDM Union Schema', readOnlyHint: true, openWorldHint: true },
+  annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,

@@ -32,7 +32,7 @@ This is the same content as the ajo://visual-designer-requirements resource, exp
 Example usage: {}
 
 Returns: { success: true, requirements: "<full spec text>" }`,
-  annotations: { title: 'Get AJO Visual Email Designer HTML Requirements', readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, openWorldHint: false },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,

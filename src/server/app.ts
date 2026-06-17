@@ -271,26 +271,89 @@ function isLoopbackOrigin(origin: string): boolean {
   }
 }
 
+// Host header allowlist for the /mcp endpoint (DNS-rebinding defense). By default
+// the server binds loopback only, so a loopback Host is the legitimate case; the
+// MCP_ALLOWED_HOSTS env override (comma-separated host[:port] values) exists for
+// the documented HOST=0.0.0.0-behind-an-authenticating-proxy deployment, where
+// the forwarded Host is the public name. Mirrors the CORS_ORIGIN override above.
+const MCP_ALLOWED_HOSTS: string[] = (process.env.MCP_ALLOWED_HOSTS ?? '')
+  .split(',')
+  .map(h => h.trim().toLowerCase())
+  .filter(Boolean);
+
+/**
+ * Is `host` (an HTTP Host header value, e.g. "localhost:3000") an allowed host?
+ * DNS-rebinding defense: a page on attacker.com whose DNS has been rebound to
+ * 127.0.0.1 still sends the attacker's domain in the Host header, so rejecting
+ * any non-loopback Host blocks the rebinding vector even when the request reaches
+ * the loopback socket. Loopback is allowed port-agnostically (the threat is the
+ * hostname, not the port); the MCP_ALLOWED_HOSTS override is matched verbatim.
+ */
+function isAllowedMcpHost(host: string): boolean {
+  const value = host.toLowerCase();
+  if (MCP_ALLOWED_HOSTS.length > 0 && MCP_ALLOWED_HOSTS.includes(value)) return true;
+  try {
+    // Host header has no scheme; URL() needs one to split host:port reliably.
+    const { hostname } = new URL(`http://${host}`);
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reason a browser request should be rejected as cross-site, or null if allowed.
+ * Rejects anything a browser marks cross-site (Sec-Fetch-Site) or that carries a
+ * non-loopback Origin. Non-browser MCP clients (stdio bridges, curl) send neither
+ * header, so they pass through. Shared by csrfGuard and mcpSecurityGuard.
+ */
+function crossSiteBlockReason(req: Request): string | null {
+  const site = req.headers['sec-fetch-site'];
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') {
+    return `cross-site request (sec-fetch-site: ${site})`;
+  }
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && !isLoopbackOrigin(origin)) {
+    return `disallowed origin (${origin})`;
+  }
+  return null;
+}
+
 /**
  * CSRF guard for state-changing endpoints. This server has no caller auth, so a
  * malicious page the operator visits in the same browser could otherwise POST to
  * these endpoints (e.g. flip on write access). We reject any request a browser
  * marks as cross-site, or that carries a non-loopback Origin.
- *
- * Non-browser MCP clients (stdio bridges, curl) send neither Sec-Fetch-Site nor
- * Origin; they can't be a CSRF vector and are allowed through untouched.
  */
 function csrfGuard(req: Request, res: Response, next: NextFunction): void {
-  const site = req.headers['sec-fetch-site'];
-  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') {
-    logger.warn('Blocked cross-site request', { path: req.path, secFetchSite: site });
+  const reason = crossSiteBlockReason(req);
+  if (reason) {
+    logger.warn('Blocked cross-site request', { path: req.path, reason });
     res.status(403).json({ success: false, error: 'Cross-site request blocked.' });
     return;
   }
-  const origin = req.headers.origin;
-  if (typeof origin === 'string' && !isLoopbackOrigin(origin)) {
-    logger.warn('Blocked request from disallowed origin', { path: req.path, origin });
-    res.status(403).json({ success: false, error: 'Request origin not allowed.' });
+  next();
+}
+
+/**
+ * Security guard for the unauthenticated /mcp endpoint. Adds a Host-header
+ * allowlist (the canonical DNS-rebinding control) on top of the same cross-site
+ * checks csrfGuard applies: a page on attacker.com rebound to 127.0.0.1 sends
+ * Host: attacker.com and Origin: http://attacker.com, so both checks reject it,
+ * while genuine MCP clients (loopback Host, no Origin) pass through. Errors are
+ * JSON-RPC shaped to match the endpoint's other failure responses.
+ */
+function mcpSecurityGuard(req: Request, res: Response, next: NextFunction): void {
+  const host = req.headers.host;
+  const reason = (typeof host === 'string' && host && !isAllowedMcpHost(host))
+    ? `non-loopback Host (${host})`
+    : crossSiteBlockReason(req);
+  if (reason) {
+    logger.warn('Blocked /mcp request', { reason });
+    res.status(403).json({
+      jsonrpc: '2.0', id: null,
+      error: { code: -32000, message: `Forbidden: ${reason}.` }
+    });
     return;
   }
   next();
@@ -306,7 +369,10 @@ export function createExpressApp(): express.Application {
   }));
 
   app.use(cors({
-    origin: process.env.CORS_ORIGIN || ['http://localhost:3000', 'http://localhost:*'],
+    // The `cors` package matches array entries by exact string, so a "localhost:*"
+    // wildcard would never match — use a regex to allow loopback on any port (the
+    // bundled setup page, whatever PORT it's served on). Overridable via CORS_ORIGIN.
+    origin: process.env.CORS_ORIGIN || [/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/],
     methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id'],
     exposedHeaders: ['Mcp-Session-Id']
@@ -327,6 +393,10 @@ export function createExpressApp(): express.Application {
     max: 200,
     standardHeaders: true,
     legacyHeaders: false,
+    // The /mcp endpoint has its own (higher) limiter — skip it here, otherwise this
+    // stricter global cap would shadow it and throttle a busy MCP session (which
+    // shares the single loopback IP bucket with the landing page's polling).
+    skip: (req: Request) => req.path === '/mcp',
     message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many requests', details: {} } }
   });
 
@@ -636,7 +706,7 @@ export function createExpressApp(): express.Application {
   // tool calls that carry no clientInfo — is attributable to the right client.
   const httpSessions = new Map<string, StreamableHTTPServerTransport>();
 
-  app.all('/mcp', mcpLimiter, async (req: Request, res: Response) => {
+  app.all('/mcp', mcpSecurityGuard, mcpLimiter, async (req: Request, res: Response) => {
     try {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
