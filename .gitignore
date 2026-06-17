@@ -5,9 +5,11 @@ coverage/
 .env*
 environment-variables.json
 *.log
-# Stray dev-mode audit file written to repo root when AUDIT_LOG_PATH is unset.
-# The real, committable trail lives in audit/ (see docker-compose.yml).
+# Audit trail (JSONL) — contains author emails + resource IDs, so it's never
+# committed. Dev-mode default lands at the repo root; the Docker default lands in
+# audit/ (see docker-compose.yml). The audit/ dir itself is kept via .gitkeep.
 /audit-log.jsonl
+audit/*.jsonl
 retrieve-tenant-namespace.md
 sample_ajo_api_environment_vars.json
 openapi: 3.0.0
