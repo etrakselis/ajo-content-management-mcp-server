@@ -4,7 +4,7 @@
   "description": "Production-grade MCP server for Adobe Journey Optimizer Content Management APIs",
   "main": "dist/server/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').cpSync('src/reference','dist/reference',{recursive:true})\"",
     "start": "node dist/server/index.js",
     "dev": "ts-node src/server/index.ts",
     "test": "jest --coverage",

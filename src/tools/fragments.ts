@@ -142,7 +142,7 @@ Example usage (Expression fragment):
   },
   "subType": "TEXT"
 }
-Note: _yourtenant is a placeholder — use the 'discover-personalization-paths' prompt for a guided lookup, or call list_xdm_field_groups directly, to find the real attribute paths before inserting any personalization.
+Note: _yourtenant is a placeholder — use the 'discover-personalization-paths' prompt for a guided lookup, or call list_xdm_field_groups directly, to find the real attribute PATHS. For the AJO-native expression/function SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Do both before inserting any personalization, and use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
 
 Returns: { success: true, id: "<uuid>", location: "/fragments/<uuid>" }`,
   annotations: { title: 'Create Content Fragment', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -233,6 +233,10 @@ export const updateContentFragmentDefinition = {
   get_visual_designer_requirements tool to get the full mandatory spec BEFORE
   constructing any HTML for this fragment type (it returns the exact
   structure/component catalog and required <head> you must reproduce).
+
+PERSONALIZATION: if you are adding or changing {{ }} / {%= %} expressions, call get_personalization_syntax for the
+  AJO-native syntax (and discover-personalization-paths / list_xdm_field_groups for the real attribute paths) — never
+  invent functions or use JavaScript/Liquid/Jinja.
 
 ⚠ THIS IS A FULL REPLACE — THERE IS NO FIELD-LEVEL UPDATE. The AJO API has no way to patch a single content field
   (content, expression, …); PATCH only supports /name, /description, /parentFolderId. To change even ONE field you must

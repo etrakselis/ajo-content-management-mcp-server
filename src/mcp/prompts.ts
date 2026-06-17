@@ -137,6 +137,9 @@ Step 3 (optional shortcut) — Get the complete Profile union:
 Step 4 — Report findings:
   List the attribute paths you found with their correct personalization expression format, e.g. {{${tenantExample}.person.firstName}}. Explain what each attribute represents. If no relevant attributes were found, say so clearly so the user knows to check their schema configuration.
 
+Step 5 — Get the expression SYNTAX (when the use case needs more than a bare attribute):
+  Paths alone are not enough for conditionals, loops, formatting, fallbacks, or helper functions. For the AJO-native syntax, call get_personalization_syntax (no argument first for the index + category menu, then a category such as "core", "dates", "strings", "arrays", or "dataset-lookup"). Build expressions using ONLY the real paths from above and real AJO constructs — never JavaScript/Liquid/Jinja, and never invented function names.
+
 The attached channel & content-type reference shows where these personalization expressions belong inside each template/fragment content shape.`
           }
         },
@@ -294,8 +297,9 @@ Step 1 — Confirm the content shape:
     ${typeAndShapeHint}
   Confirm with the user what the actual body content should be.
 ${channel === 'landingpage' ? '  Note: use "html_primary_page" for the main page and "html_sub_page" for confirmation/thank-you pages.\n' : ''}${visualEmailStep}
-Step 2 — Look up personalization paths (skip if the content has no personalization):
-  If the content will address the recipient by name or reference their data, call list_xdm_field_groups with container "tenant" to list all customer-defined field groups. For any group whose title is relevant to "${useCase}", call get_xdm_field_group with full=true. Custom attributes are nested under the tenant namespace key (e.g. "${tenantExample}") in the "properties" tree. Do NOT guess paths like {{profile.person.firstName}} — use only what you find.
+Step 2 — Look up personalization paths and syntax (skip if the content has no personalization):
+  a. PATHS: If the content will address the recipient by name or reference their data, call list_xdm_field_groups with container "tenant" to list all customer-defined field groups. For any group whose title is relevant to "${useCase}", call get_xdm_field_group with full=true. Custom attributes are nested under the tenant namespace key (e.g. "${tenantExample}") in the "properties" tree. Do NOT guess paths like {{profile.person.firstName}} — use only what you find.
+  b. SYNTAX: For anything beyond a bare attribute (conditionals, loops, date/string/number formatting, fallbacks, helpers, dataset lookup), call get_personalization_syntax (no argument for the index + category menu, then the relevant category). Use only real AJO-native constructs — never JavaScript/Liquid/Jinja or invented function names.
 
 Step 3 — Confirm the complete payload with the user:
   Before creating anything, show the user the full JSON payload you plan to send and ask them to confirm or adjust it. Include the name, type/channel, and all content fields.

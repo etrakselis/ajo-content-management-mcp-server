@@ -187,7 +187,7 @@ Example usage (legacy "html" email design template — no subject; use only when
   "channels": ["email"],
   "template": { "html": "<html>Hello {{_yourtenant.person.firstName}}</html>" }
 }
-Note: _yourtenant is a placeholder — use the 'discover-personalization-paths' prompt for a guided lookup, or call list_xdm_field_groups directly, to find the real attribute paths before inserting any personalization.
+Note: _yourtenant is a placeholder — use the 'discover-personalization-paths' prompt for a guided lookup, or call list_xdm_field_groups directly, to find the real attribute PATHS. For the AJO-native expression/function SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Do both before inserting any personalization, and use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
 
 Example usage (push notification template):
 {
@@ -307,6 +307,10 @@ Channel → templateType → template shape (channels must have exactly 1 value)
   tool to get the full mandatory spec BEFORE constructing any HTML for this
   template type (it returns the exact structure/component catalog and required
   <head> you must reproduce).
+
+PERSONALIZATION: if you are adding or changing {{ }} / {%= %} expressions, call get_personalization_syntax for the
+  AJO-native syntax (and discover-personalization-paths / list_xdm_field_groups for the real attribute paths) — never
+  invent functions or use JavaScript/Liquid/Jinja.
 
 ⚠ THIS IS A FULL REPLACE — THERE IS NO FIELD-LEVEL UPDATE. The AJO API has no way to patch a single content field
   (subject, html, body, …); PATCH only supports /name, /description, /parentFolderId. To change even ONE field you must

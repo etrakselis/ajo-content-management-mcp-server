@@ -27,9 +27,9 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 
 ## Overview
 
-This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 22 tools covering the full template and fragment lifecycle, read-only Experience Platform Schema Registry (XDM) lookups, and a server-context lookup, handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 24 tools covering the full template and fragment lifecycle, read-only Experience Platform Schema Registry (XDM) lookups, a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec and the personalization syntax library), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
 
-The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{_yourtenant.profile.person.firstName}}`.
+The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{_yourtenant.profile.person.firstName}}`. Complementing them, the **authoring reference** tools teach the LLM the exact output formats AJO expects: `get_visual_designer_requirements` returns the native HTML serialization spec so generated email stays editable in the drag-and-drop designer, and `get_personalization_syntax` returns AJO's native personalization expression language (helper functions, conditionals, loops, dataset lookup) so expressions use real AJO constructs rather than generic Handlebars/Liquid.
 
 ---
 
@@ -68,6 +68,18 @@ For discovering real personalization attribute paths. Requires the AEP Schema Re
 | `get_xdm_field_group` | Retrieve a field group, fully resolved by default |
 | `list_xdm_union_schemas` | List union schemas (merged per-class view, e.g. the full Profile) |
 | `get_xdm_union_schema` | Retrieve a union schema — the complete attribute set for personalization |
+
+### Authoring References — read-only
+Reference content the LLM fetches to produce output in the exact format AJO expects. Delivered as tools (not just resources) so they work in clients that can't read MCP resources directly (e.g. Claude Desktop).
+| Tool | Description |
+|------|-------------|
+| `get_visual_designer_requirements` | The complete native-HTML serialization spec for the AJO Visual Email Designer (rules, structure/component catalog, required `<head>`). Call before authoring email HTML so it stays in drag-and-drop mode. |
+| `get_personalization_syntax` | The AJO-native personalization syntax library (expression language, helper functions, operators, contextual-data iteration, dataset lookup). Served one category at a time. Call before writing `{{ }}` / `{%= %}` expressions. |
+
+### Server Context — read-only
+| Tool | Description |
+|------|-------------|
+| `get_server_context` | Reports who/what the server is acting as (author, sandbox, tenant, org, write-access) plus the full grouped tool catalog. |
 
 ---
 
@@ -144,6 +156,10 @@ These use the Schema Registry (XDM) tools to find the attributes that actually e
 > "Create a welcome email fragment, but first look up our actual profile attributes and use the real first-name and loyalty-tier paths instead of the default XDM ones."
 
 > "Before personalizing this template, check our tenant field groups and map each placeholder I want (first name, city, points balance) to its real attribute path."
+
+> "Show me the AJO personalization syntax for a loyalty-points expiry countdown with a fallback — use get_personalization_syntax, don't improvise Handlebars."
+
+> "Build a conditional block that greets Gold-tier members differently from everyone else, using real AJO operator and if/else syntax."
 
 ---
 
@@ -511,7 +527,7 @@ Protocol: Streamable HTTP (MCP 2024-11-05)
 
 ## Available Tools — Detailed
 
-All 22 tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)).
+All 24 tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)).
 
 ### Content templates
 
@@ -701,6 +717,26 @@ Returns who/what the server is operating as — `authorEmail` (self-declared at 
 
 It also returns `tools` — the full catalog of every tool this server exposes, grouped by domain (`[{ group, tools: [{ name, title }] }]`). This is the reliable way for a client to discover all capabilities by exact name in a single call, which matters when the client defers tools and a fuzzy tool search ranks one below its result cutoff. The same catalog is also rendered into the server `instructions` at connection time, so the two channels cover each other (instructions need no tool call but are dropped by some clients; this tool result is high-salience but requires the call).
 
+### Authoring references
+
+Read-only reference content, delivered as tools so the model can fetch it on its own even in clients that can't read MCP resources directly (e.g. Claude Desktop). The `create_*` / `update_*` tools' descriptions point the model here before it authors HTML or personalization.
+
+#### `get_visual_designer_requirements` *(read)*
+```json
+{}
+```
+Returns the complete AJO Visual Email Designer HTML authoring spec (non-negotiable rules, the fixed nesting chain, the full structure and component catalogs, the verbatim required `<head>`, a known-good minimal template, and a pre-output checklist). Call it before constructing email HTML (`templateType` `html`, or `content` `html.body`, channel `email`) or HTML fragments — generic email HTML imports in Compatibility mode and loses drag-and-drop editing.
+
+#### `get_personalization_syntax` *(read)*
+```json
+{}
+```
+With **no argument**, returns the index: a syntax primer plus the menu of categories. Pass a `category` to fetch one full section (the library is large, so it's served one category at a time):
+```json
+{ "category": "dates" }
+```
+Categories: `core`, `helpers`, `operators`, `strings`, `dates`, `arrays`, `aggregation`, `arithmetic`, `objects`, `maps`, `context-iteration`, `dataset-lookup` (or `all` for the entire library). Covers AJO-native personalization **syntax** — expression language, helper functions, conditionals, loops, dataset lookup. This is syntax only; get the real attribute **paths** from the Schema Registry tools or the `discover-personalization-paths` prompt, and never guess paths or emit JavaScript/Liquid/Jinja.
+
 ---
 
 ## MCP Resources
@@ -749,13 +785,14 @@ Beyond the free-form [Example Prompts](#example-prompts) above (which you type y
 
 | Prompt | Argument(s) | What it does |
 |--------|-------------|--------------|
-| `discover-personalization-paths` | `use_case` *(optional)* — what you want to personalize, e.g. "greet by first name" | Walks the XDM lookup sequence (`list_xdm_field_groups` → `get_xdm_field_group`, or the Profile union) to find the **real** attribute paths in this sandbox, so personalization expressions reference attributes that actually exist instead of guessed defaults. Embeds the channel reference. |
+| `create-content` | `channel` *(required)* — email, push, sms, inapp, code, directMail, landingpage, or shared; `content_kind` *(optional)* — `template` (default) or `fragment`; `name` *(optional)*; `use_case` *(optional)* | Walks the full creation workflow: confirms the correct `templateType`/`type` and content shape for the channel, reads the Visual Email Designer requirements for email, looks up real XDM personalization paths and the AJO syntax when the content is personalized, confirms the complete payload with you, then calls `create_content_template` / `create_content_fragment`. Embeds the channel reference (plus the visual-designer requirements for email). |
+| `discover-personalization-paths` | `use_case` *(optional)* — what you want to personalize, e.g. "greet by first name" | Walks the XDM lookup sequence (`list_xdm_field_groups` → `get_xdm_field_group`, or the Profile union) to find the **real** attribute paths in this sandbox, so personalization expressions reference attributes that actually exist instead of guessed defaults, then points to `get_personalization_syntax` for the expression syntax. Embeds the channel reference. |
 | `publish-fragment` | `fragment_id` *(required)* — UUID of the fragment | Runs the full async publish-and-verify workflow: check current state → trigger publication → poll `get_fragment_publication_status` until `complete` or `error`. Embeds the error-code reference for recovery. |
 | `audit-content-library` | `content_type` *(optional)* — `templates`, `fragments`, or `both` (default `both`) | Surveys the sandbox: pages through all content, groups by type/channel/status, and flags action items (stale templates, drafts never published, fragments with failed/in-progress publications). Embeds the channel reference. |
 
 > **Argument completion:** the server provides autocompletion for prompt arguments (via the MCP completions capability) — `content_type` offers the static `templates`/`fragments`/`both` choices, and `publish-fragment`'s `fragment_id` is backed by a live lookup of fragments in the sandbox, so clients that support it suggest real IDs as you type.
 
-These map to the workflow guidance the server's `instructions` point the model at — use `discover-personalization-paths` before inserting any `{{ }}` expression, `publish-fragment` for the full publication cycle, and `audit-content-library` to take stock of a sandbox.
+These map to the workflow guidance the server's `instructions` point the model at — use `create-content` for the guided create workflow, `discover-personalization-paths` before inserting any `{{ }}` expression, `publish-fragment` for the full publication cycle, and `audit-content-library` to take stock of a sandbox.
 
 ---
 
@@ -875,6 +912,7 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── server.ts           MCP server factory, tool routing, resources, prompts, STDIO/HTTP setup
 │   │   ├── resources.ts        Static, collection, and templated resource definitions (ajo:// URIs)
 │   │   ├── prompts.ts          Guided workflow prompt definitions (discover-personalization-paths, etc.)
+│   │   ├── personalization-syntax.ts  Loads + splits the personalization syntax library asset into categories
 │   │   ├── tool-catalog.ts     Builds the grouped tool catalog (for get_server_context + instructions)
 │   │   ├── access-policy.ts    Runtime read-only / write-access toggle
 │   │   ├── connected-clients.ts  Tracks which MCP clients are connected (for the landing page)
@@ -883,7 +921,11 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── templates.ts        Content template tool definitions + handlers
 │   │   ├── fragments.ts        Content fragment tool definitions + handlers
 │   │   ├── schema-registry.ts  XDM schema / field group / union lookup tools (read-only)
+│   │   ├── visual-designer.ts  get_visual_designer_requirements tool — AJO email HTML spec (read-only)
+│   │   ├── personalization.ts  get_personalization_syntax tool — AJO personalization syntax library (read-only)
 │   │   └── context.ts          get_server_context tool — reports author/sandbox/tenant (read-only)
+│   ├── reference/
+│   │   └── ajo-personalization-syntax-library.md  Personalization syntax library (shipped asset, served by get_personalization_syntax)
 │   ├── adobe/
 │   │   ├── client.ts           AJO Content API client (axios + retry, injects auth headers)
 │   │   └── schema-registry-client.ts  AEP Schema Registry (XDM) read client

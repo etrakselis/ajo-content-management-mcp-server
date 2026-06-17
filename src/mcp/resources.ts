@@ -12,6 +12,7 @@ export const RESOURCE_URIS = {
   channelReference: 'ajo://sandbox/channel-reference',
   errorCodes: 'ajo://error-codes',
   visualDesignerRequirements: 'ajo://visual-designer-requirements',
+  personalizationSyntax: 'ajo://personalization-syntax',
   // Browsable collections: name→id directories so a human/client can find a
   // specific object by name, then drill into ajo://fragment/{id} or
   // ajo://template/{id}. Solves the discovery half that the templated
@@ -137,6 +138,12 @@ export const RESOURCE_ACCESS_CATALOG: ResourceAccessEntry[] = [
     access: 'Call the get_visual_designer_requirements tool to get the full spec.'
   },
   {
+    uri: RESOURCE_URIS.personalizationSyntax,
+    title: 'AJO Personalization Syntax Library',
+    description: 'AJO-native personalization syntax to embed in template/fragment bodies: expression language, helper functions, operators, contextual-data iteration, dataset lookup. Served by category to keep responses small.',
+    access: 'Call the get_personalization_syntax tool (no argument for the index + category menu, then a "category" for each section). This is SYNTAX only — get real attribute paths via the discover-personalization-paths prompt or list_xdm_field_groups / get_xdm_union_schema.'
+  },
+  {
     uri: RESOURCE_URIS.fragments,
     title: 'Content Fragments (Directory)',
     description: 'Browsable name→id directory of content fragments in the sandbox.',
@@ -183,51 +190,68 @@ Read this before constructing create or update payloads to avoid validation erro
 
 ━━━ TEMPLATES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-templateType "html" — Full HTML email  ⚠ VISUAL DESIGNER FORMAT REQUIRED
+EMAIL — two shapes; prefer "content" for new email (it carries the subject line):
+
+templateType "content" — Email with subject line  (DEFAULT for new email)
   channels:  ["email"]
-  template:  { "html": "<html>...</html>" }
+  template:  { "subject": "...", "html": { "body": "<html>...</html>" } }
+             (subject + html.body both REQUIRED; optional: "text": { "body", "syncFromHtml" },
+              "x-amp-html": { "body" }, "headers", "editorContext")
   subType:   n/a
-  IMPORTANT: The HTML for this type must follow the AJO Visual Email Designer
-  serialization format exactly, or the import falls back to Compatibility mode
-  and the user loses drag-and-drop editing. Read ajo://visual-designer-requirements
-  BEFORE constructing any HTML content for this templateType.
+  ⚠ VISUAL DESIGNER FORMAT REQUIRED: the html.body markup must follow the AJO Visual Email
+  Designer serialization format exactly, or the import falls back to Compatibility mode and the
+  user loses drag-and-drop editing. Read ajo://visual-designer-requirements BEFORE writing it.
+
+templateType "html" — Full HTML email body (legacy/existing design templates; no subject)
+  channels:  ["email"]
+  template:  { "html": "<html>...</html>" }  (html is a STRING; optional "editorContext".
+             Subject is set on the message/campaign, not here.)
+  subType:   n/a
+  ⚠ VISUAL DESIGNER FORMAT REQUIRED (same as above). Read ajo://visual-designer-requirements first.
 
 templateType "html_primary_page" — Landing page (main page)
   channels:  ["landingpage"]
-  template:  { "html": "<html>...</html>" }
+  template:  { "html": "<html>...</html>" }  (optional "editorContext")
   subType:   n/a
 
 templateType "html_sub_page" — Landing page (sub-page / confirmation)
   channels:  ["landingpage"]
-  template:  { "html": "<html>...</html>" }
+  template:  { "html": "<html>...</html>" }  (optional "editorContext")
   subType:   n/a
 
-templateType "content" — Structured content (all non-HTML channels)
+templateType "content" — Structured content (non-email channels)
   Push notification:
     channels:  ["push"]
-    template:  { "title": "...", "message": "...", "deeplink": "..." }
+    template:  { "title": "...", "message": "...", "pushType"?: "message"|"silent",
+                 "ios"?: { ... }, "android"?: { ... } }
+               (deep links go in ios/android interaction.uri — there is no top-level "deeplink")
   SMS:
     channels:  ["sms"]
-    template:  { "body": "..." }
+    template:  { "text": "..." }
+               (the body field is "text", NOT "body"; optional: "messageType": "sms"|"mms",
+                "title" (mms subject), "mediaUri")
   In-app message:
     channels:  ["inapp"]
-    template:  { "header": "...", "body": "...", "buttonText": "...", "buttonLink": "..." }
+    template:  { "body": { "html": "<html>...</html>" } }
+               (body is an OBJECT; optional: "mobileParameters", "editorContext")
   Code-based experience:
     channels:  ["code"]
     template:  { ... }  (shape is app-defined)
     subType:   "HTML" | "JSON"
   Direct mail:
     channels:  ["directMail"]
-    template:  { ... }  (shape is provider-defined)
+    template:  { "fileName": "...", ... }
+               (fileName REQUIRED; optional: "appendTimeStamp", "notes",
+                "notesPosition": "header"|"footer", "sortBy", "attributes": [{ "label", "data" }])
   Shared (multi-channel):
     channels:  ["shared"]
-    template:  { ... }
+    template:  { ... }  (provider-defined)
 
 ━━━ FRAGMENTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 type "html" — Reusable HTML block embedded in email templates  ⚠ VISUAL DESIGNER FORMAT REQUIRED
   channels:  ["email"]
-  fragment:  { "content": "<div>...</div>" }
+  fragment:  { "content": "<div>...</div>" }  (optional "editorContext")
   subType:   n/a
   IMPORTANT: The HTML content must follow the AJO Visual Email Designer
   serialization format exactly (acr-* class namespace, structure/component
@@ -245,7 +269,9 @@ type "expression" — Reusable expression / helper text
 • subType is only valid on templateType "content" + channel "code", and on fragment type "expression".
 • Personalization expressions go inside the template/fragment content strings.
   Do NOT use guessed XDM paths. Use list_xdm_field_groups / get_xdm_union_schema to find
-  real attribute paths for this sandbox before inserting {{ }} expressions.`;
+  real attribute PATHS for this sandbox, and call get_personalization_syntax for the AJO-native
+  expression/function SYNTAX, before inserting {{ }} / {%= %} expressions. Use only real AJO
+  constructs — never JavaScript/Liquid/Jinja or invented function names.`;
 
 export const VISUAL_DESIGNER_REQUIREMENTS_TEXT = `AJO Visual Email Designer — HTML Authoring Requirements
 =========================================================

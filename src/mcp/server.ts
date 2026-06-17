@@ -58,6 +58,7 @@ import {
 // Server context — read-only; reports who/what this server is operating as
 import { getServerContextDefinition, handleGetServerContext, setToolCatalog } from '../tools/context.js';
 import { getVisualDesignerRequirementsDefinition, handleGetVisualDesignerRequirements } from '../tools/visual-designer.js';
+import { getPersonalizationSyntaxDefinition, handleGetPersonalizationSyntax } from '../tools/personalization.js';
 import { buildToolCatalog, formatToolCatalog } from './tool-catalog.js';
 
 const ALL_TOOLS = [
@@ -86,7 +87,9 @@ const ALL_TOOLS = [
   // Server context — read-only
   getServerContextDefinition,
   // Visual Email Designer HTML spec — read-only reference
-  getVisualDesignerRequirementsDefinition
+  getVisualDesignerRequirementsDefinition,
+  // AJO personalization syntax library — read-only reference
+  getPersonalizationSyntaxDefinition
 ];
 
 // Catalog derived from the live tool list (so it never drifts). Registered into
@@ -216,7 +219,9 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   // Server context — read-only
   get_server_context: handleGetServerContext,
   // Visual Email Designer HTML spec — read-only reference
-  get_visual_designer_requirements: handleGetVisualDesignerRequirements
+  get_visual_designer_requirements: handleGetVisualDesignerRequirements,
+  // AJO personalization syntax library — read-only reference
+  get_personalization_syntax: handleGetPersonalizationSyntax
 };
 
 export function createMcpServer(transport: TransportKind = 'http'): Server {
