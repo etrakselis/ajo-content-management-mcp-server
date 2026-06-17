@@ -91,7 +91,7 @@ content
 Example:
 
 ```handlebars
-{%#if profile.loyalty.tier == "Gold"%}
+{%#if profile.loyalty.tier = "Gold"%}
 Exclusive Gold Offer
 {%/if%}
 ```
@@ -111,7 +111,7 @@ alternate content
 Example:
 
 ```handlebars
-{%#if profile.loyalty.tier == "Gold"%}
+{%#if profile.loyalty.tier = "Gold"%}
 Exclusive Gold Offer
 {%else%}
 Browse our latest offers
@@ -217,10 +217,29 @@ Example:
 
 # Fallback Strategy
 
-Always provide fallback behavior when user data may be missing.
+Always provide fallback behavior when user data may be missing. Use the appropriate guard based on the type of field being checked:
+
+| Field Type | Guard to Use | Typical Examples |
+|-----------|-------------|-----------------|
+| **Object reference** — a nested object that may not exist at all | `isNotNull` | `profile.loyalty`, `profile.homeAddress`, `profile.subscription` |
+| **String field** — a scalar string that may be present but empty | `isNotEmpty` | `profile.person.name.firstName`, `profile.mobilePhone.number` |
+
+Do not use a bare truthiness check (`{%#if field%}`) — it is ambiguous and does not distinguish between a null object and an empty string.
+
+**Object guard example:**
 
 ```handlebars
-{%#if profile.person.name.firstName%}
+{%#if isNotNull(profile.loyalty)%}
+Your loyalty tier is {{profile.loyalty.tier}}.
+{%else%}
+Join our loyalty program today.
+{%/if%}
+```
+
+**String field guard example:**
+
+```handlebars
+{%#if isNotEmpty(profile.person.name.firstName)%}
 Hello {{profile.person.name.firstName}},
 {%else%}
 Hello Valued Customer,
@@ -281,7 +300,7 @@ Show Gold members a premium offer and everyone else a standard offer.
 ### Generate
 
 ```handlebars
-{%#if profile.loyalty.tier == "Gold"%}
+{%#if profile.loyalty.tier = "Gold"%}
 Premium Offer
 {%else%}
 Standard Offer
@@ -724,17 +743,16 @@ Check if string contains text.
 
 ---
 
-# Boolean Functions
+# Boolean Operators
+
+Use `and` and `or` as infix keywords between conditions. To negate a condition, use `!=` rather than a `not()` function.
 
 ---
 
 ## and
 
 ```handlebars
-{%#if and(
-    profile.loyalty.active,
-    profile.loyalty.points > 100
-)%}
+{%#if profile.loyalty.active and profile.loyalty.points > 100%}
 ```
 
 ---
@@ -742,18 +760,17 @@ Check if string contains text.
 ## or
 
 ```handlebars
-{%#if or(
-    profile.country == "US",
-    profile.country == "CA"
-)%}
+{%#if profile.country = "US" or profile.country = "CA"%}
 ```
 
 ---
 
-## not
+## Negation
+
+Use `!=` to negate equality conditions.
 
 ```handlebars
-{%#if not(profile.subscription.active)%}
+{%#if profile.subscription.active != true%}
 ```
 
 ---
@@ -1391,6 +1408,11 @@ When generating AJO personalization:
 5. Always provide fallback content when object data may be unavailable.
 6. Never assume optional profile objects exist.
 7. Do not invent additional object helper functions.
+
+**`isNull` / `isNotNull` vs. `isEmpty` / `isNotEmpty`:**
+
+- Use `isNull` and `isNotNull` when checking whether an **object reference** exists before accessing its child properties (e.g., `profile.loyalty`, `profile.homeAddress`, `profile.subscription`). These functions test for a null object, not an empty string.
+- Use `isEmpty` and `isNotEmpty` (String Functions) when checking whether a **string field** contains a value (e.g., `profile.person.name.firstName`, `profile.mobilePhone.number`). These functions test for an empty string, not a null object.
 
 ---
 
@@ -2117,7 +2139,7 @@ When generating AJO personalization:
 
 1. Use `concat` for string assembly.
 2. Use `equalsIgnoreCase` when user-entered text is involved.
-3. Use `isEmpty` and `isNotEmpty` before rendering optional values.
+3. Use `isEmpty` and `isNotEmpty` before rendering optional **string field** values (e.g., `profile.person.name.firstName`, `profile.mobilePhone.number`). For optional **object references** (e.g., `profile.loyalty`, `profile.homeAddress`), use `isNull` and `isNotNull` from the Object Functions library instead.
 4. Use `formatCurrency` for monetary values.
 5. Use `extractEmailDomain` for domain segmentation.
 6. Use `mask` when displaying sensitive identifiers.
@@ -2767,7 +2789,7 @@ Output:
 Check if age is divisible by 5:
 
 ```handlebars
-{%#if person.age % 5 == 0%}
+{%#if person.age % 5 = 0%}
 Eligible
 {%/if%}
 ```
@@ -2824,7 +2846,7 @@ profile.loyalty.currentPoints %}
 ## Even/Odd Customer Segmentation
 
 ```handlebars
-{%#if profile.customerId % 2 == 0%}
+{%#if profile.customerId % 2 = 0%}
 Segment A
 {%else%}
 Segment B
