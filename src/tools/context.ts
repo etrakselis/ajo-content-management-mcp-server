@@ -32,7 +32,7 @@ export const getServerContextDefinition = {
         authorEmail: { type: ['string', 'null'], description: 'Self-declared author email (not verified); null if unset.' },
         sandbox: { type: ['string', 'null'], description: 'Configured AJO sandbox name.' },
         tenantNamespace: { type: ['string', 'null'], description: 'Tenant namespace (e.g. _acme); null if unknown.' },
-        orgName: { type: ['string', 'null'], description: 'Adobe org name.' },
+        orgName: { type: 'string', description: 'Adobe org name (optional). Omitted entirely when not configured — absence means no org name was set, not an error.' },
         writeAccess: { type: 'boolean', description: 'Whether write operations are currently enabled.' },
         configured: { type: 'boolean', description: 'Whether credentials and sandbox are configured.' },
         tools: {
@@ -92,13 +92,18 @@ export async function handleGetServerContext(_args?: unknown) {
   if (!isClientConfigured()) return notConfiguredError();
   return withTelemetry('get_server_context', async () => {
     const tenantId = getConfiguredTenantId();
+    // orgName is an optional landing-page field that is usually left blank. When
+    // it's unset (or empty) omit the key entirely rather than surfacing a null —
+    // a missing key reads cleanly to the LLM, whereas a null invites it to mention
+    // a non-existent org.
+    const orgName = getConfiguredOrgName()?.trim();
     return {
       success: true,
       data: {
         authorEmail: getConfiguredAuthorEmail(),
         sandbox: getConfiguredSandboxName(),
         tenantNamespace: tenantId ? `_${tenantId}` : null,
-        orgName: getConfiguredOrgName(),
+        ...(orgName ? { orgName } : {}),
         writeAccess: getWritesAllowed(),
         configured: true,
         tools: toolCatalog,

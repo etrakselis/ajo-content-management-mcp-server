@@ -40,7 +40,14 @@ export function configureAdobeClient(config: AdobeClientConfig): void {
 
   httpClient = axios.create({
     baseURL: config.baseUrl || 'https://platform.adobe.io/ajo/content',
-    timeout: 30000
+    timeout: 30000,
+    // Serialize array query params as repeated keys (?property=a&property=b) rather
+    // than axios's default bracketed form (?property[]=a). The AJO Content API's FIQL
+    // `property` filter is a repeatable parameter; with brackets it does not recognize
+    // the caller's filter and silently falls back to its own default, so the caller's
+    // filter is dropped and an unrelated, unfiltered list comes back. indexes:null
+    // gives the repeated-key form AJO actually honors.
+    paramsSerializer: { indexes: null }
   });
 
   // Retry on network errors and 5xx
@@ -129,6 +136,51 @@ function getClient(): AxiosInstance {
   return httpClient;
 }
 
+// Fields from Adobe API error bodies that are internal service-routing detail —
+// noise to an LLM and potentially exposing infrastructure surface. Strip them
+// before the error reaches the model; keep everything else for actionability.
+const INTERNAL_ERROR_FIELDS = new Set(['error-chain', 'invokingServiceId']);
+
+function sanitizeErrorData(data: unknown): unknown {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data ?? {};
+  return Object.fromEntries(
+    Object.entries(data as Record<string, unknown>).filter(([k]) => !INTERNAL_ERROR_FIELDS.has(k))
+  );
+}
+
+// AJO error bodies bury the most specific, human-readable reason at varying
+// depths (e.g. a rejected JSON-Patch path explains itself only in
+// report.additionalContext.detailedMessage, while the top-level title is the
+// generic "Bad Request. Validation failed."). Probe the known locations in
+// most-specific-first order and return the best sentence found, so the model can
+// recover from error.message alone without digging through error.details.
+function extractDeepMessage(data: unknown): string | null {
+  if (!data || typeof data !== 'object') {
+    return typeof data === 'string' && data.trim() ? data : null;
+  }
+  const d = data as Record<string, unknown>;
+  const report = d.report as Record<string, unknown> | undefined;
+  const additional = report?.additionalContext as Record<string, unknown> | undefined;
+  const candidates: unknown[] = [
+    additional?.detailedMessage,
+    report?.detailedMessage,
+    report?.message,
+    // AJO sometimes returns a list of field-level violations.
+    Array.isArray(d.errors) && d.errors.length
+      ? (d.errors as Array<Record<string, unknown>>)
+          .map(e => e?.message ?? e?.detail).filter(Boolean).join('; ')
+      : undefined,
+    d.detail,
+    d.detailedMessage,
+    d.title,
+    d.message
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+  }
+  return null;
+}
+
 function buildError(err: unknown): { code: string; message: string; details: unknown } {
   if (axios.isAxiosError(err)) {
     const status = err.response?.status;
@@ -140,10 +192,19 @@ function buildError(err: unknown): { code: string; message: string; details: unk
       404: 'NOT_FOUND',
       409: 'CONFLICT'
     };
+    // Promote the deepest specific reason; never let the top-level message be
+    // less informative than something sitting in a nested field.
+    let message = extractDeepMessage(data) || err.message;
+    // 409 is phrased for a UI ("Refresh to load the latest version"); translate it
+    // into the tool call an agent must actually make to recover.
+    if (status === 409) {
+      message += ' (Stale etag: the resource changed since you fetched it. Re-fetch it with ' +
+        'get_content_template / get_content_fragment to obtain the current etag, then re-submit your change.)';
+    }
     return {
       code: (status && codes[status]) || 'API_ERROR',
-      message: data?.title || data?.message || err.message,
-      details: data || {}
+      message,
+      details: sanitizeErrorData(data)
     };
   }
   const msg = err instanceof Error ? err.message : String(err);

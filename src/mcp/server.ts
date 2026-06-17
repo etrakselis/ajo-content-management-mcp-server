@@ -21,6 +21,7 @@ import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
 import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_TEMPLATE_DESCRIPTORS, parseFragmentUri, parseTemplateUri, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT, VISUAL_DESIGNER_REQUIREMENTS_TEXT } from './resources.js';
 import { logger } from '../telemetry/index.js';
 import { recordAudit } from '../telemetry/audit.js';
+import { UI_BASE_URL } from '../tools/utils.js';
 
 // Template tools
 import {
@@ -60,6 +61,12 @@ import { getServerContextDefinition, handleGetServerContext, setToolCatalog } fr
 import { getVisualDesignerRequirementsDefinition, handleGetVisualDesignerRequirements } from '../tools/visual-designer.js';
 import { getPersonalizationSyntaxDefinition, handleGetPersonalizationSyntax } from '../tools/personalization.js';
 import { buildToolCatalog, formatToolCatalog } from './tool-catalog.js';
+import {
+  CreateTemplateSchema, UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema,
+  CreateFragmentSchema, UpdateFragmentSchema, PatchFragmentSchema,
+  PublishFragmentSchema, ArchiveFragmentSchema
+} from '../validation/schemas.js';
+import type { ZodTypeAny } from 'zod';
 
 const ALL_TOOLS = [
   listContentTemplatesDefinition,
@@ -109,6 +116,22 @@ const WRITE_TOOLS = new Set<string>([
 ]);
 
 const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
+
+// Zod schemas for every write tool, used to pre-validate args BEFORE the
+// write-confirmation gate. This way a malformed payload is rejected on the
+// first call — before the user is ever asked to confirm — rather than after
+// the user has already confirmed and the handler finally sees the args.
+const WRITE_TOOL_SCHEMAS: Record<string, ZodTypeAny> = {
+  create_content_template: CreateTemplateSchema,
+  update_content_template: UpdateTemplateSchema,
+  patch_content_template: PatchTemplateSchema,
+  delete_content_template: DeleteTemplateSchema,
+  create_content_fragment: CreateFragmentSchema,
+  update_content_fragment: UpdateFragmentSchema,
+  patch_content_fragment: PatchFragmentSchema,
+  publish_content_fragment: PublishFragmentSchema,
+  archive_content_fragment: ArchiveFragmentSchema
+};
 
 // Page cap for the ajo://fragments / ajo://templates directory reads. At 100
 // items/page this bounds a directory read to 5,000 objects so a very large
@@ -189,9 +212,29 @@ function withAnnotationTitle<T extends { title?: string; annotations?: Record<st
 function toToolResult(result: unknown, textPrefix = '') {
   const obj = (result ?? {}) as { success?: boolean };
   const isError = obj.success === false;
+  // Serialize defensively. The low-level SDK validates whatever we return against
+  // CallToolResultSchema *after* this function — if structuredContent can't be
+  // serialized (a circular ref or BigInt slipping in from a passthrough payload),
+  // an unguarded JSON.stringify here would throw and the SDK would reject the whole
+  // result with a bare "Invalid tools/call result" error. For a write that already
+  // committed at AJO that is a false negative, which an agent answers by retrying
+  // (duplicates on create). So never let serialization throw: fall back to a
+  // minimal, always-valid structured result that preserves the success signal.
+  let text: string;
+  let structured: Record<string, unknown>;
+  try {
+    structured = JSON.parse(JSON.stringify(result ?? {}));
+    text = textPrefix + JSON.stringify(result, null, 2);
+  } catch {
+    structured = {
+      success: obj.success !== false,
+      note: 'The result could not be fully serialized; the operation status above is authoritative.'
+    };
+    text = textPrefix + JSON.stringify(structured, null, 2);
+  }
   return {
-    content: [{ type: 'text' as const, text: textPrefix + JSON.stringify(result, null, 2) }],
-    structuredContent: (result ?? {}) as Record<string, unknown>,
+    content: [{ type: 'text' as const, text }],
+    structuredContent: structured,
     ...(isError ? { isError: true } : {})
   };
 }
@@ -200,7 +243,7 @@ function toToolResult(result: unknown, textPrefix = '') {
 // the server's runtime write-access setting (rather than always available).
 const WRITE_TOOL_NOTE =
   '\n\n[Write operation] Requires write access. If the server is in read-only mode this call is ' +
-  'rejected with a READ_ONLY_MODE error; the user can enable write access at http://localhost:3000.';
+  `rejected with a READ_ONLY_MODE error; the user can enable write access at ${UI_BASE_URL}.`;
 
 const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   list_content_templates: handleListContentTemplates,
@@ -256,7 +299,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   // CallTool are the authoritative signals — instructions only carry the pattern.
   const dynamicNote = ` Write access is toggled at runtime; always attempt the operation the user ` +
     `asks for; if a write is rejected with READ_ONLY_MODE, tell the user they can enable write access ` +
-    `at http://localhost:3000 and then retry — do not abandon the request.`;
+    `at ${UI_BASE_URL} and then retry — do not abandon the request.`;
 
   const personalizationNote = ` When inserting personalization fields into a template or fragment, do NOT assume ` +
     `default XDM paths like {{profile.person.firstName}}. Most customers define custom field groups under their ` +
@@ -488,7 +531,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
         success: false,
         error: {
           code: 'READ_ONLY_MODE',
-          message: `Write operations are disabled. The server is in read-only mode, so "${name}" is not permitted. Ask the user to enable write access on the setup page (http://localhost:3000) if this is intended.`,
+          message: `Write operations are disabled. The server is in read-only mode, so "${name}" is not permitted. Ask the user to enable write access on the setup page (${UI_BASE_URL}) if this is intended.`,
           details: {}
         }
       });
@@ -504,6 +547,30 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
           details: {}
         }
       });
+    }
+
+    // Pre-validate write-tool args BEFORE the write-confirmation gate. This
+    // surfaces schema errors on the first call so the user is never asked to
+    // confirm a write that would fail validation anyway. Strip the synthetic
+    // confirmWrite flag first — it's not part of any payload schema.
+    if (isWriteTool(name)) {
+      const schema = WRITE_TOOL_SCHEMAS[name];
+      if (schema) {
+        const parsed = schema.safeParse(stripConfirmFlag(args));
+        if (!parsed.success) {
+          emitLog('debug', `✗ ${name}: pre-validation failed`, sessionId);
+          return toToolResult({
+            success: false,
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Invalid input parameters',
+              details: parsed.error.errors.map((e: { path: Array<string | number>; message: string }) => ({
+                path: e.path.join('.'), message: e.message
+              }))
+            }
+          });
+        }
+      }
     }
 
     // Confirm the write target with the user before performing it (elicitation).
@@ -598,7 +665,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     if (fragmentId !== null || templateId !== null) {
       if (!isClientConfigured()) {
         throw new McpError(ErrorCode.InvalidRequest,
-          'NOT_CONFIGURED: the server has no sandbox configured yet. Ask the user to complete setup at http://localhost:3000.');
+          `NOT_CONFIGURED: the server has no sandbox configured yet. Ask the user to complete setup at ${UI_BASE_URL}.`);
       }
       try {
         const result = fragmentId !== null
@@ -660,7 +727,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     if (uri === RESOURCE_URIS.fragments || uri === RESOURCE_URIS.templates) {
       if (!isClientConfigured()) {
         throw new McpError(ErrorCode.InvalidRequest,
-          'NOT_CONFIGURED: the server has no sandbox configured yet. Ask the user to complete setup at http://localhost:3000.');
+          `NOT_CONFIGURED: the server has no sandbox configured yet. Ask the user to complete setup at ${UI_BASE_URL}.`);
       }
       const isFragments = uri === RESOURCE_URIS.fragments;
       const lister = isFragments ? listFragments : listTemplates;

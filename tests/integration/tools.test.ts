@@ -90,6 +90,20 @@ describe('get_server_context', () => {
     expect(visual?.access).toContain('get_visual_designer_requirements');
   });
 
+  test('omits orgName entirely when it is not configured', async () => {
+    mockClient.isClientConfigured.mockReturnValue(true);
+    mockClient.getConfiguredOrgName.mockReturnValue(null);
+    const result = await handleGetServerContext({}) as { data: Record<string, unknown> };
+    expect(result.data).not.toHaveProperty('orgName');
+  });
+
+  test('includes orgName (trimmed) when it is configured', async () => {
+    mockClient.isClientConfigured.mockReturnValue(true);
+    mockClient.getConfiguredOrgName.mockReturnValue('  Acme Corp  ');
+    const result = await handleGetServerContext({}) as { data: Record<string, unknown> };
+    expect(result.data.orgName).toBe('Acme Corp');
+  });
+
   test('returns NOT_CONFIGURED when the server is not set up', async () => {
     mockClient.isClientConfigured.mockReturnValue(false);
     const result = await handleGetServerContext({}) as { success: boolean; error: { code: string } };
@@ -170,7 +184,7 @@ describe('Template Tools Integration', () => {
   test('create_content_template surfaces API errors', async () => {
     mockClient.createTemplate.mockRejectedValue(new Error('server error'));
     const result = await handleCreateContentTemplate({
-      name: 'T', templateType: 'html', channels: ['email']
+      name: 'T', templateType: 'html', channels: ['email'], template: { html: '<html/>' }
     }) as { success: boolean };
     expect(result.success).toBe(false);
   });
@@ -272,7 +286,7 @@ describe('Template Tools Integration', () => {
   test('update_content_template surfaces API errors', async () => {
     mockClient.updateTemplate.mockRejectedValue(new Error('conflict'));
     const result = await handleUpdateContentTemplate({
-      templateId: VALID_UUID, etag: '"v1"', name: 'T', templateType: 'html', channels: ['email']
+      templateId: VALID_UUID, etag: '"v1"', name: 'T', templateType: 'html', channels: ['email'], template: { html: '<html/>' }
     }) as { success: boolean };
     expect(result.success).toBe(false);
   });
@@ -283,6 +297,87 @@ describe('Template Tools Integration', () => {
       templateId: VALID_UUID, etag: '"v1"', patches: [{ op: 'replace', path: '/name', value: 'x' }]
     }) as { success: boolean };
     expect(result.success).toBe(false);
+  });
+
+  // P1-1: per-(channel, templateType) content-shape enforcement, pre-write.
+
+  test('create_content_template rejects email "content" with template.html as a STRING (P1-1)', async () => {
+    const result = await handleCreateContentTemplate({
+      name: 'Welcome', templateType: 'content', channels: ['email'],
+      template: { subject: 'Hi', html: '<html>oops a string</html>' }
+    }) as { success: boolean; error: { code: string; details: Array<{ path: string; message: string }> } };
+    expect(result.success).toBe(false);
+    expect(result.error.code).toBe('VALIDATION_ERROR');
+    const htmlIssue = result.error.details.find(d => d.path === 'template.html');
+    expect(htmlIssue?.message).toMatch(/object \{ body: string \}/);
+    expect(mockClient.createTemplate).not.toHaveBeenCalled();
+  });
+
+  test('create_content_template accepts the correct email "content" shape (P1-1)', async () => {
+    mockClient.createTemplate.mockResolvedValue({ id: 'c1', location: '/templates/c1', etag: '"v1"' });
+    const result = await handleCreateContentTemplate({
+      name: 'Welcome', templateType: 'content', channels: ['email'],
+      template: { subject: 'Hi', html: { body: '<html>ok</html>' } }
+    }) as { success: boolean };
+    expect(result.success).toBe(true);
+    expect(mockClient.createTemplate).toHaveBeenCalled();
+  });
+
+  test('create_content_template rejects sms without template.text (P1-1)', async () => {
+    const result = await handleCreateContentTemplate({
+      name: 'SMS', templateType: 'content', channels: ['sms'], template: { body: 'wrong field' }
+    }) as { success: boolean; error: { code: string; details: Array<{ path: string; message: string }> } };
+    expect(result.success).toBe(false);
+    expect(result.error.details.some(d => d.path === 'template.text')).toBe(true);
+  });
+
+  test('create_content_template keeps code/shared free-form (P1-1)', async () => {
+    mockClient.createTemplate.mockResolvedValue({ id: 'c2', location: '/templates/c2', etag: '"v1"' });
+    const result = await handleCreateContentTemplate({
+      name: 'Code', templateType: 'content', channels: ['code'], subType: 'JSON',
+      template: { anything: { goes: true } }
+    }) as { success: boolean };
+    expect(result.success).toBe(true);
+  });
+
+  // P1-3: native-format Compatibility-mode warning on email writes.
+
+  test('create_content_template warns when email HTML is not in AJO native format (P1-3)', async () => {
+    mockClient.createTemplate.mockResolvedValue({ id: 'c3', location: '/templates/c3', etag: '"v1"' });
+    const result = await handleCreateContentTemplate({
+      name: 'Plain', templateType: 'content', channels: ['email'],
+      template: { subject: 'Hi', html: { body: '<html><body>plain</body></html>' } }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings?.[0]).toMatch(/Compatibility mode/);
+  });
+
+  test('create_content_template does not warn for native AJO email HTML (P1-3)', async () => {
+    mockClient.createTemplate.mockResolvedValue({ id: 'c4', location: '/templates/c4', etag: '"v1"' });
+    const nativeHtml = '<html><head><meta name="content-version" content="1"></head>' +
+      '<body><div class="acr-structure"></div></body></html>';
+    const result = await handleCreateContentTemplate({
+      name: 'Native', templateType: 'content', channels: ['email'],
+      template: { subject: 'Hi', html: { body: nativeHtml } }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings).toBeUndefined();
+  });
+
+  // P0-2: content-list filter validation.
+
+  test('list_content_templates forwards a valid property filter to the API (P0-2)', async () => {
+    mockClient.listTemplates.mockResolvedValue({ _page: { count: 0 }, items: [] });
+    const result = await handleListContentTemplates({ property: ['name~^Welcome'] }) as { success: boolean };
+    expect(result.success).toBe(true);
+    expect(mockClient.listTemplates).toHaveBeenCalledWith({ property: ['name~^Welcome'] });
+  });
+
+  test('list_content_templates rejects a filter with no FIQL operator (P0-2)', async () => {
+    const result = await handleListContentTemplates({ property: ['justAName'] }) as { success: boolean; error: { code: string } };
+    expect(result.success).toBe(false);
+    expect(result.error.code).toBe('VALIDATION_ERROR');
+    expect(mockClient.listTemplates).not.toHaveBeenCalled();
   });
 });
 
@@ -350,6 +445,15 @@ describe('Fragment Tools Integration', () => {
     }) as { success: boolean; error: { code: string } };
     expect(result.success).toBe(false);
     expect(result.error.code).toBe('NOT_CONFIGURED');
+  });
+
+  test('create_content_fragment warns when email HTML is not in AJO native format (P1-3)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-9', location: '/fragments/f-9', etag: '"v1"' });
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'], fragment: { content: '<div>plain</div>' }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings?.[0]).toMatch(/Compatibility mode/);
   });
 
   // get

@@ -9,7 +9,7 @@ import {
   UpdateFragmentSchema, PatchFragmentSchema, PublishFragmentSchema,
   GetLiveFragmentSchema, GetPublicationStatusSchema, ArchiveFragmentSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
 
 // ─── Shared input-schema fragments ──────────────────────────────────────────
 // The content payload is a discriminated union on `type`: html fragments carry
@@ -108,7 +108,9 @@ export const createContentFragmentDefinition = {
   title: 'Create Content Fragment',
   outputSchema: buildOutputSchema({
     id: { type: 'string', description: 'UUID of the newly created fragment.' },
-    location: { type: 'string', description: 'Relative path of the new fragment, e.g. /fragments/<uuid>.' }
+    location: { type: 'string', description: 'Relative path of the new fragment, e.g. /fragments/<uuid>.' },
+    etag: ETAG_FIELD,
+    warnings: WARNINGS_FIELD
   }),
   description: `Create a new content fragment in Adobe Journey Optimizer.
 Fragments are reusable content blocks that can be embedded in campaigns and journeys.
@@ -122,29 +124,31 @@ Fragments are reusable content blocks that can be embedded in campaigns and jour
   constructing any HTML for this fragment type (it returns the exact
   structure/component catalog and required <head> you must reproduce).
 
-Example usage (HTML fragment):
+Example usage (HTML fragment — standard XDM field):
 {
   "name": "Header Banner",
   "type": "html",
   "channels": ["email"],
   "fragment": {
-    "content": "<div>Hi {{_yourtenant.person.firstName}}, great deals await!</div>"
+    "content": "<div>Hi {{profile.person.name.firstName}}, great deals await!</div>"
   }
 }
 
-Example usage (Expression fragment):
+Example usage (Expression fragment — tenant-custom field):
 {
-  "name": "Greeting Expression",
+  "name": "Loyalty Tier Expression",
   "type": "expression",
   "channels": ["shared"],
   "fragment": {
-    "expression": "Hi {{_yourtenant.person.firstName}}!"
+    "expression": "Your tier: {{profile._acssandboxustwo.loyaltyTier}}"
   },
   "subType": "TEXT"
 }
-Note: _yourtenant is a placeholder — use the 'discover-personalization-paths' prompt for a guided lookup, or call list_xdm_field_groups directly, to find the real attribute PATHS. For the AJO-native expression/function SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Do both before inserting any personalization, and use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
 
-Returns: { success: true, id: "<uuid>", location: "/fragments/<uuid>" }`,
+Personalization path rooting: standard XDM profile attributes use the "profile." prefix (e.g. {{profile.person.name.firstName}}); tenant-custom attributes sit under "profile._tenantId." (e.g. {{profile._acssandboxustwo.loyaltyTier}}). Do NOT root standard XDM fields (person, homeAddress, etc.) under the tenant namespace — only attributes your org added in a custom field group belong there. Use the 'discover-personalization-paths' prompt, or call list_xdm_union_schemas → get_xdm_union_schema (full=false) → get_xdm_field_group on each ref, to confirm real attribute paths. For the AJO-native expression SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
+
+Returns: { success: true, id: "<uuid>", location: "/fragments/<uuid>", etag: "<etag>", warnings?: [...] }
+The returned etag is immediately reusable for a follow-up update_content_fragment / patch_content_fragment — no need to re-fetch right after creating. A "warnings" entry (email html fragments) means the HTML is not in AJO native format and will open in Compatibility mode.`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
@@ -172,7 +176,8 @@ export async function handleCreateContentFragment(args: unknown) {
     try {
       const payload = { ...parsed.data, source: parsed.data.source ?? { origin: 'ajo' as const } };
       const result = await createFragment(payload);
-      return { success: true, ...result };
+      const warning = parsed.data.type === 'html' ? compatibilityModeWarning(parsed.data.fragment?.content) : null;
+      return { success: true, ...result, ...(warning ? { warnings: [warning] } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -222,7 +227,7 @@ export async function handleGetContentFragment(args: unknown) {
 export const updateContentFragmentDefinition = {
   name: 'update_content_fragment',
   title: 'Update Content Fragment (Replace)',
-  outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
+  outputSchema: buildOutputSchema({ etag: ETAG_FIELD, warnings: WARNINGS_FIELD }),
   description: `Replace a content fragment entirely (PUT). Use this when changing fragment content, type, or channels. To rename or move a fragment without touching its content, patch_content_fragment is lighter-weight.
 
 ⚠ VISUAL EMAIL DESIGNER REQUIREMENT (type "html", channel "email"):
@@ -243,8 +248,9 @@ PERSONALIZATION: if you are adding or changing {{ }} / {%= %} expressions, call 
   resend the ENTIRE fragment. The only safe way to do that without losing data is to fetch-then-mutate:
 
 MANDATORY WORKFLOW (do NOT skip step 1, and NEVER rebuild content from memory):
-1. Call get_content_fragment FIRST to get the complete current fragment + etag. This is required every time, even for a
-   tiny change — it is the source of truth for all the fields you are NOT changing.
+1. Call get_content_fragment FIRST to get the complete current fragment + etag. This is required every time you edit an
+   EXISTING fragment, even for a tiny change — it is the source of truth for all the fields you are NOT changing. (Exception:
+   immediately after create_content_fragment you already hold the full object and a valid etag, so you may update without re-fetching.)
 2. Take that returned object and modify ONLY the field(s) the user asked to change. Leave the existing content/expression
    and every other field EXACTLY as returned — copy them through verbatim.
 3. Call update_content_fragment with the full object (changed field + all untouched fields) + the etag.
@@ -264,7 +270,7 @@ Example usage:
   "fragment": { "content": "<div>Updated content</div>" }
 }
 
-Returns: { success: true }`,
+Returns: { success: true, etag?: "<new-etag>", warnings?: [...] }  (a "warnings" entry means the email html is not in AJO native format and will open in Compatibility mode)`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
@@ -273,7 +279,7 @@ Returns: { success: true }`,
     allOf: EXPRESSION_REQUIRES_SUBTYPE,
     properties: {
       fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to update' },
-      etag: { type: 'string', description: 'ETag from get_content_fragment' },
+      etag: { type: 'string', description: 'ETag from get_content_fragment (or the etag returned by create_content_fragment). Pass it back exactly as received, including its surrounding double-quote characters — do not strip them.' },
       name: { type: 'string', description: 'Fragment name' },
       description: { type: 'string', description: 'Optional description' },
       type: { type: 'string', enum: ['html', 'expression'], description: 'Fragment type: html → email channel; expression → shared channel' },
@@ -295,7 +301,8 @@ export async function handleUpdateContentFragment(args: unknown) {
     const payload = { ...rest, source: rest.source ?? { origin: 'ajo' as const } };
     try {
       const result = await updateFragment(fragmentId, payload, etag);
-      return { ...result, success: true };
+      const warning = parsed.data.type === 'html' ? compatibilityModeWarning(parsed.data.fragment?.content) : null;
+      return { ...result, success: true, ...(warning ? { warnings: [warning] } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -327,7 +334,7 @@ Returns: { success: true }`,
     required: ['fragmentId', 'etag', 'patches'],
     properties: {
       fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to patch' },
-      etag: { type: 'string', description: 'ETag from get_content_fragment' },
+      etag: { type: 'string', description: 'ETag from get_content_fragment (or the etag returned by create_content_fragment). Pass it back exactly as received, including its surrounding double-quote characters — do not strip them.' },
       patches: {
         type: 'array',
         items: {

@@ -7,6 +7,8 @@
 // ajo://server/status body (it reads live auth/config), so only its descriptor
 // lives here, not its text.
 
+import { UI_BASE_URL } from '../tools/utils.js';
+
 export const RESOURCE_URIS = {
   serverStatus: 'ajo://server/status',
   channelReference: 'ajo://sandbox/channel-reference',
@@ -498,12 +500,12 @@ export const ERROR_CODES_TEXT = `AJO Content MCP — Error Code Reference
 
 NOT_CONFIGURED
   Cause:    Server has no credentials or sandbox configured yet.
-  Recovery: Ask the user to open http://localhost:3000, upload their credentials JSON,
+  Recovery: Ask the user to open ${UI_BASE_URL}, upload their credentials JSON,
             and enter the sandbox name. Do not retry the tool until they confirm setup is done.
 
 READ_ONLY_MODE
   Cause:    A write operation was attempted while the server is in read-only mode.
-  Recovery: Tell the user they can enable write access at http://localhost:3000, then
+  Recovery: Tell the user they can enable write access at ${UI_BASE_URL}, then
             retry the exact same operation once they confirm it is enabled. Do not abandon
             the request — just wait for the user to flip the toggle.
 
@@ -525,7 +527,7 @@ VALIDATION_ERROR
 UNAUTHORIZED  (HTTP 401)
   Cause:    The IMS access token is missing, expired, or was rejected by the API.
   Recovery: The server auto-refreshes tokens; if this error persists, the stored
-            credentials may be invalid. Ask the user to reconfigure at http://localhost:3000.
+            credentials may be invalid. Ask the user to reconfigure at ${UI_BASE_URL}.
 
 FORBIDDEN  (HTTP 403)
   Cause:    The API key or service account does not have permission for this operation

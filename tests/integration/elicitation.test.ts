@@ -280,6 +280,44 @@ describe('write-confirmation via elicitation', () => {
   });
 });
 
+describe('write result safety (P0-1 / P2-3)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setWritesAllowed(true);
+  });
+
+  test('a committed write whose result cannot be serialized is not reported as a failure (P0-1)', async () => {
+    // A BigInt slipping into the passthrough payload makes JSON.stringify throw;
+    // an unguarded result would be rejected by the SDK as an invalid tool result —
+    // a false negative for a write that already committed. toToolResult must fall
+    // back to a valid, success-preserving structured result instead.
+    (createFragment as jest.Mock).mockResolvedValueOnce({ id: 'frag-new', location: '/fragments/frag-new', weird: 10n });
+    const { client } = await connectClient({ elicitation: false });
+
+    const res = await client.callTool({
+      name: 'create_content_fragment',
+      arguments: { name: 'Banner', type: 'html', channels: ['email'], fragment: { content: '<div/>' }, confirmWrite: true }
+    }) as { isError?: boolean; structuredContent?: { success?: boolean } };
+
+    expect(createFragment).toHaveBeenCalledTimes(1);
+    expect(res.isError).toBeUndefined();
+    expect(res.structuredContent?.success).toBe(true);
+  });
+
+  test('confirmWrite:true preset on the first call does not bypass payload validation (P2-3)', async () => {
+    const { client } = await connectClient({ elicitation: false });
+
+    const res = await client.callTool({
+      name: 'create_content_fragment',
+      // Invalid: html fragment with no fragment.content.
+      arguments: { name: 'Bad', type: 'html', channels: ['email'], fragment: {}, confirmWrite: true }
+    }) as { isError?: boolean; structuredContent?: { error?: { code?: string } } };
+
+    expect(res.structuredContent?.error?.code).toBe('VALIDATION_ERROR');
+    expect(createFragment).not.toHaveBeenCalled();
+  });
+});
+
 describe('tool display titles', () => {
   test('annotations.title is synthesized from the top-level title for every tool', async () => {
     const { client } = await connectClient({ elicitation: false });

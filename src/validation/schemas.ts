@@ -5,11 +5,28 @@ import { z } from 'zod';
 export const UuidSchema = z.string().uuid('Must be a valid UUID');
 export const EtagSchema = z.string().min(1, 'ETag is required');
 
+// Supported FIQL operators for the content-list `property` filter, longest-first
+// so "~^" is recognized before "~". A filter expression that uses none of these
+// is silently ignored by the AJO API (it returns an unfiltered list), so we
+// reject it here loudly instead of letting the model reason over the wrong rows.
+const FIQL_OPERATORS = ['=ge=', '=le=', '=gt=', '=lt=', '==', '!=', '~^', '~'];
+
+const FiqlExpressionSchema = z.string().refine(
+  (s) => FIQL_OPERATORS.some((op) => {
+    const i = s.indexOf(op);
+    return i > 0 && i + op.length < s.length; // non-empty field and value around the operator
+  }),
+  (s) => ({
+    message: `Filter "${s}" is not a valid FIQL expression. Use field<operator>value with one of: ` +
+      `== (equals), != (not equals), ~^ (starts with), ~ (contains). E.g. "name~^Welcome" or "status==PUBLISHED".`
+  })
+);
+
 export const PaginationSchema = z.object({
   limit: z.number().int().min(1).max(1000).optional(),
   start: z.string().optional(),
   orderBy: z.string().optional(),
-  property: z.array(z.string()).optional()
+  property: z.array(FiqlExpressionSchema).optional()
 });
 
 export const PatchOpSchema = z.object({
@@ -39,6 +56,74 @@ function checkTemplateSubType(
   }
 }
 
+// Enforce the per-(channel, templateType) `template` content shape server-side,
+// pre-write, with a field-level message naming the expected type — so the common
+// mistakes (e.g. email "content" with template.html as a STRING instead of
+// { body }) are caught here instead of bouncing off AJO with an opaque
+// "template body is not valid" 400. code/shared stay free-form (provider-defined),
+// matching the permissive JSON-Schema for those channels.
+function checkTemplateContentShape(
+  data: { channels: string[]; templateType: string; template?: Record<string, unknown> },
+  ctx: z.RefinementCtx
+): void {
+  const channel = data.channels?.[0];
+  const tt = data.templateType;
+  const t = data.template;
+  if (!channel || channel === 'code' || channel === 'shared') return;
+
+  const issue = (path: (string | number)[], message: string) =>
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path, message });
+  const isObj = (v: unknown): v is Record<string, unknown> =>
+    v !== null && typeof v === 'object' && !Array.isArray(v);
+
+  if (t === undefined || t === null) {
+    issue(['template'], `template content is required for the "${channel}" channel.`);
+    return;
+  }
+
+  switch (channel) {
+    case 'email':
+      if (tt === 'content') {
+        if (typeof t.subject !== 'string' || !t.subject) {
+          issue(['template', 'subject'], 'email "content" templates require template.subject (a string).');
+        }
+        if (!isObj(t.html) || typeof t.html.body !== 'string') {
+          issue(['template', 'html'], 'email "content" templates require template.html to be an object { body: string }, not a string. (The bare-string form is templateType "html".)');
+        }
+      } else if (tt === 'html') {
+        if (typeof t.html !== 'string') {
+          issue(['template', 'html'], 'email "html" templates require template.html to be a string. (The { body } object form is templateType "content".)');
+        }
+      }
+      break;
+    case 'landingpage':
+      if (typeof t.html !== 'string') {
+        issue(['template', 'html'], 'landingpage templates require template.html to be a string.');
+      }
+      break;
+    case 'sms':
+      if (typeof t.text !== 'string' || !t.text) {
+        issue(['template', 'text'], 'sms templates require template.text (a string). Note the body field is "text", not "body".');
+      }
+      break;
+    case 'inapp':
+      if (!isObj(t.body) || typeof t.body.html !== 'string') {
+        issue(['template', 'body'], 'inapp templates require template.body to be an object { html: string }.');
+      }
+      break;
+    case 'directMail':
+      if (typeof t.fileName !== 'string' || !t.fileName) {
+        issue(['template', 'fileName'], 'directMail templates require template.fileName (a string).');
+      }
+      break;
+    case 'push':
+      if (typeof t.title !== 'string' && typeof t.message !== 'string') {
+        issue(['template'], 'push templates require at least template.title or template.message (a string).');
+      }
+      break;
+  }
+}
+
 export const CreateTemplateSchema = z.object({
   name: z.string().min(1, 'Template name is required').max(255),
   description: z.string().optional(),
@@ -51,7 +136,7 @@ export const CreateTemplateSchema = z.object({
   subType: TemplateSubTypeEnum.optional(),
   parentFolderId: z.string().uuid().nullable().optional(),
   template: z.record(z.unknown()).optional()
-}).superRefine(checkTemplateSubType);
+}).superRefine(checkTemplateSubType).superRefine(checkTemplateContentShape);
 
 export const GetTemplateSchema = z.object({
   templateId: UuidSchema
@@ -71,7 +156,7 @@ export const UpdateTemplateSchema = z.object({
   subType: TemplateSubTypeEnum.optional(),
   parentFolderId: z.string().uuid().nullable().optional(),
   template: z.record(z.unknown()).optional()
-}).superRefine(checkTemplateSubType);
+}).superRefine(checkTemplateSubType).superRefine(checkTemplateContentShape);
 
 export const PatchTemplateSchema = z.object({
   templateId: UuidSchema,
@@ -189,8 +274,13 @@ export const CredentialsFileSchema = z.object({
 const SrContainerSchema = z.enum(['tenant', 'global']).optional().default('tenant');
 const SrListBase = {
   limit: z.number().int().min(1).max(1000).optional(),
-  property: z.string().optional(),
-  orderby: z.string().optional()
+  // Accept the same array-of-strings shape the content list tools use, so a model
+  // that learned `property` there can reuse it here without a type error; a bare
+  // string is still accepted. (The Schema Registry uses its own filter grammar,
+  // not AJO FIQL, so the content FIQL-operator check is not applied here.)
+  property: z.union([z.string(), z.array(z.string())]).optional(),
+  orderBy: z.string().optional(),
+  start: z.union([z.string(), z.number()]).optional()
 };
 
 export const ListXdmSchemasSchema = z.object({ container: SrContainerSchema, ...SrListBase });
@@ -209,5 +299,9 @@ export const GetXdmFieldGroupSchema = z.object({
 });
 export const GetXdmUnionSchemaSchema = z.object({
   unionId: z.string().min(1, 'unionId is required'),
-  full: z.boolean().optional().default(true)
+  // Default false: the fully-resolved Profile union routinely exceeds the 1 MB
+  // tool-result cap on real sandboxes, returning a hard error instead of data.
+  // Start with full=false to get the field-group $ref list, then resolve each
+  // group you need via get_xdm_field_group.
+  full: z.boolean().optional().default(false)
 });

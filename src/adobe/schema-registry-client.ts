@@ -27,8 +27,27 @@ export type Container = 'tenant' | 'global';
 
 interface ListParams {
   limit?: number;
-  property?: string; // filter, e.g. "title~Loyalty"
-  orderby?: string;
+  property?: string | string[]; // filter(s), e.g. "title~Loyalty" or ["title~Loyalty"]
+  orderBy?: string;
+  start?: string | number;
+}
+
+export interface SrListResponse {
+  results?: unknown[];
+  items?: unknown[];
+  _page?: unknown;
+  _links?: unknown;
+  [key: string]: unknown;
+}
+
+// Schema Registry returns "results" while AJO Content returns "items". Normalize
+// to "items" so both list families have a consistent envelope.
+function normalizeListResponse(resp: SrListResponse): SrListResponse {
+  if (Array.isArray(resp.results) && !resp.items) {
+    const { results, ...rest } = resp;
+    return { ...rest, items: results };
+  }
+  return resp;
 }
 
 async function srGet<T = unknown>(path: string, accept: string, params?: Record<string, unknown>): Promise<T> {
@@ -42,37 +61,43 @@ async function srGet<T = unknown>(path: string, accept: string, params?: Record<
       Accept: accept
     },
     params,
+    // Repeated-key form (?property=a&property=b) for array filters, matching the
+    // content client — the Registry honors repeated `property` params (AND).
+    paramsSerializer: { indexes: null },
     timeout: 30000
   });
   return resp.data;
 }
 
+// Schema Registry API uses lowercase "orderby"; tool input accepts "orderBy" (capital B)
+// to match the content list tools — lowercase it here before hitting the wire.
 const listParams = (p: ListParams) => ({
-  ...(p.limit ? { limit: p.limit } : {}),
+  ...(p.limit !== undefined ? { limit: p.limit } : {}),
   ...(p.property ? { property: p.property } : {}),
-  ...(p.orderby ? { orderby: p.orderby } : {})
+  ...(p.orderBy ? { orderby: p.orderBy } : {}),
+  ...(p.start !== undefined ? { start: p.start } : {})
 });
 
 const accept = (full: boolean) => (full ? ACCEPT_FULL : ACCEPT_DEF);
 const enc = encodeURIComponent;
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
-export const listSchemas = (container: Container, p: ListParams = {}) =>
-  srGet(`/${container}/schemas`, ACCEPT_LIST, listParams(p));
+export const listSchemas = async (container: Container, p: ListParams = {}) =>
+  normalizeListResponse(await srGet<SrListResponse>(`/${container}/schemas`, ACCEPT_LIST, listParams(p)));
 
 export const getSchema = (container: Container, schemaId: string, full = true) =>
   srGet(`/${container}/schemas/${enc(schemaId)}`, accept(full));
 
 // ── Field groups ──────────────────────────────────────────────────────────────
-export const listFieldGroups = (container: Container, p: ListParams = {}) =>
-  srGet(`/${container}/fieldgroups`, ACCEPT_LIST, listParams(p));
+export const listFieldGroups = async (container: Container, p: ListParams = {}) =>
+  normalizeListResponse(await srGet<SrListResponse>(`/${container}/fieldgroups`, ACCEPT_LIST, listParams(p)));
 
 export const getFieldGroup = (container: Container, fieldGroupId: string, full = true) =>
   srGet(`/${container}/fieldgroups/${enc(fieldGroupId)}`, accept(full));
 
 // ── Union schemas (tenant container only) ─────────────────────────────────────
-export const listUnionSchemas = (p: ListParams = {}) =>
-  srGet(`/tenant/unions`, ACCEPT_LIST, listParams(p));
+export const listUnionSchemas = async (p: ListParams = {}) =>
+  normalizeListResponse(await srGet<SrListResponse>(`/tenant/unions`, ACCEPT_LIST, listParams(p)));
 
 export const getUnionSchema = (unionId: string, full = true) =>
   srGet(`/tenant/unions/${enc(unionId)}`, accept(full));

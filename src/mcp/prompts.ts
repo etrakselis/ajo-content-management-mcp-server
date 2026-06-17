@@ -5,6 +5,7 @@ import {
   ERROR_CODES_TEXT,
   VISUAL_DESIGNER_REQUIREMENTS_TEXT
 } from './resources.js';
+import { UI_BASE_URL } from '../tools/utils.js';
 
 export interface PromptDefinition {
   name: string;
@@ -310,7 +311,7 @@ Step 3 — Confirm the complete payload with the user:
 Step 4 — Create the content:
   Once the user confirms, call ${createTool} with:
     { "name": ${nameHint}, ${typeAndShapeHint} }
-  Write access must be enabled. If you receive READ_ONLY_MODE, tell the user to enable write access at http://localhost:3000, then retry.
+  Write access must be enabled. If you receive READ_ONLY_MODE, tell the user to enable write access at ${UI_BASE_URL}, then retry.
 
 Step 5 — Report outcome:
   On success, tell the user the new ${isFragment ? 'fragment' : 'template'} ID and confirm it was created.${isFragment ? '\n  Remind the user that a fragment must be published before it can be used in campaigns — use the "publish-fragment" prompt for the full async publication workflow.' : ''}`

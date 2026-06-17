@@ -2,13 +2,16 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { toolCallCounter, toolCallDuration, createRequestLogger } from '../telemetry/index.js';
 
+// Base URL for the server's config UI. Override with MCP_UI_BASE_URL in hosted
+// deployments where the UI is not at localhost (e.g. a container with a proxy).
+export const UI_BASE_URL = process.env.MCP_UI_BASE_URL ?? `http://localhost:${process.env.PORT ?? '3000'}`;
+
 export function notConfiguredError() {
-  const port = process.env.PORT || '3000';
   return {
     success: false,
     error: {
       code: 'NOT_CONFIGURED',
-      message: `MCP server is not configured. Open http://localhost:${port} in your browser, upload your credentials JSON file, and enter your sandbox name to get started.`,
+      message: `MCP server is not configured. Open ${UI_BASE_URL} in your browser, upload your credentials JSON file, and enter your sandbox name to get started.`,
       details: {}
     }
   };
@@ -63,14 +66,40 @@ export function buildOutputSchema(successProps: Record<string, unknown> = {}) {
 
 // Reusable success-field fragments.
 export const DATA_OBJECT = { type: 'object' as const, description: 'Operation result payload (passthrough of the AJO API response).' };
-export const ETAG_FIELD = { type: 'string' as const, description: 'Current ETag — pass to a subsequent update/patch for optimistic locking.' };
+export const ETAG_FIELD = { type: 'string' as const, description: 'Current ETag — pass it back verbatim (including its surrounding double quotes) to a subsequent update/patch for optimistic locking.' };
+export const WARNINGS_FIELD = {
+  type: 'array' as const,
+  items: { type: 'string' as const },
+  description: 'Non-fatal advisories about a write that still succeeded — e.g. the email HTML is not in AJO native format and will open in Compatibility mode (drag-and-drop editing lost). Present only when there is something to flag.'
+};
+
+// Detect whether submitted email HTML uses AJO's native Visual Email Designer
+// serialization. Generic HTML is legal but silently drops the user into
+// Compatibility mode (no drag-and-drop) — a degradation the API never signals.
+// We can't block the write (per spec), but we surface a warning so the model can
+// recover. Markers: the required content-version <meta> tag and the acr-* class
+// namespace the designer emits. Returns null when the HTML looks native (or there
+// is no HTML to check).
+export function compatibilityModeWarning(html: unknown): string | null {
+  if (typeof html !== 'string' || !html.trim()) return null;
+  const hasContentVersion = /content-version/i.test(html);
+  const hasAcrClass = /\bacr-/.test(html);
+  if (hasContentVersion && hasAcrClass) return null;
+  const missing = [
+    !hasContentVersion ? 'the content-version <meta> tag' : null,
+    !hasAcrClass ? 'acr-* component classes' : null
+  ].filter(Boolean).join(' and ');
+  return `The email HTML is not in AJO's native Visual Email Designer format (missing ${missing}). ` +
+    `It saved and will render, but the template opens in Compatibility mode and the user loses drag-and-drop editing. ` +
+    `Call get_visual_designer_requirements for the required structure and reproduce it to keep the design editable.`;
+}
 
 // Standard pagination envelope, shared by every list result.
 const PAGE_PROPS = {
   type: 'object' as const,
   // count/next come straight from the API; tolerate null (some endpoints
   // express "no next page" as next: null rather than by omission).
-  properties: { count: { type: ['number', 'null'] }, next: { type: ['string', 'null'], description: 'Cursor for the next page; pass as `start`. Null or absent on the last page.' } }
+  properties: { count: { type: ['number', 'null'] }, next: { type: ['string', 'number', 'null'], description: 'Cursor for the next page; pass as `start`. Content APIs return a base64 string; XDM/Schema Registry returns a number. Null or absent on the last page.' } }
 };
 
 // Generic list result — used by the XDM/Schema-Registry tools whose item shapes

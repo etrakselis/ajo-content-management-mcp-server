@@ -7,7 +7,22 @@ import {
   ListTemplatesSchema, CreateTemplateSchema, GetTemplateSchema,
   UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
+
+// Pull the email HTML out of a template payload for the native-format check. The
+// "content" shape carries it at template.html.body (an object); the legacy "html"
+// shape carries it at template.html (a string). Returns null for non-email or
+// other shapes, so the warning only fires where Compatibility mode is a risk.
+function emailHtmlOf(data: { channels?: string[]; templateType?: string; template?: Record<string, unknown> }): unknown {
+  if (data.channels?.[0] !== 'email') return null;
+  const t = data.template;
+  if (!t) return null;
+  if (data.templateType === 'content') {
+    const html = t.html as Record<string, unknown> | undefined;
+    return html?.body;
+  }
+  return t.html;
+}
 
 // ─── Shared input-schema fragments ──────────────────────────────────────────
 // Unlike fragments (an exhaustive 2-shape union), a template's content shape
@@ -77,6 +92,35 @@ const CODE_CHANNEL_REQUIRES_SUBTYPE = [
   { if: { properties: { channels: { contains: { const: 'code' } } }, required: ['channels'] }, then: { required: ['subType'] } }
 ];
 
+// Schema-level enforcement of the two email shapes that get confused most often
+// (the evidenced bug: templateType "content" with template.html as a STRING). A
+// schema-aware client catches this before the call; the Zod superRefine in
+// validation/schemas.ts is the authoritative server-side check that always fires.
+const EMAIL_TEMPLATE_SHAPE_RULES = [
+  {
+    if: {
+      required: ['channels', 'templateType'],
+      properties: { channels: { contains: { const: 'email' } }, templateType: { const: 'content' } }
+    },
+    then: {
+      properties: {
+        template: { required: ['subject', 'html'], properties: { html: { type: 'object', required: ['body'] } } }
+      }
+    }
+  },
+  {
+    if: {
+      required: ['channels', 'templateType'],
+      properties: { channels: { contains: { const: 'email' } }, templateType: { const: 'html' } }
+    },
+    then: {
+      properties: { template: { required: ['html'], properties: { html: { type: 'string' } } } }
+    }
+  }
+];
+
+const TEMPLATE_CONDITIONAL_RULES = [...CODE_CHANNEL_REQUIRES_SUBTYPE, ...EMAIL_TEMPLATE_SHAPE_RULES];
+
 // ─── list_content_templates ───────────────────────────────────────────────────
 
 export const listContentTemplatesDefinition = {
@@ -127,7 +171,9 @@ export const createContentTemplateDefinition = {
   title: 'Create Content Template',
   outputSchema: buildOutputSchema({
     id: { type: 'string', description: 'UUID of the newly created template.' },
-    location: { type: 'string', description: 'Relative path of the new template, e.g. /templates/<uuid>.' }
+    location: { type: 'string', description: 'Relative path of the new template, e.g. /templates/<uuid>.' },
+    etag: ETAG_FIELD,
+    warnings: WARNINGS_FIELD
   }),
   description: `Create a new content template in Adobe Journey Optimizer.
 
@@ -177,7 +223,7 @@ Example usage (email template — DEFAULT, with subject line):
   "name": "Welcome Email",
   "templateType": "content",
   "channels": ["email"],
-  "template": { "subject": "Welcome to Adobe!", "html": { "body": "<html>Hello {{_yourtenant.person.firstName}}</html>" } }
+  "template": { "subject": "Welcome, {{profile.person.name.firstName}}!", "html": { "body": "<html>Hello {{profile.person.name.firstName}}</html>" } }
 }
 
 Example usage (legacy "html" email design template — no subject; use only when editing an existing one):
@@ -185,9 +231,10 @@ Example usage (legacy "html" email design template — no subject; use only when
   "name": "Welcome Email",
   "templateType": "html",
   "channels": ["email"],
-  "template": { "html": "<html>Hello {{_yourtenant.person.firstName}}</html>" }
+  "template": { "html": "<html>Hello {{profile.person.name.firstName}}</html>" }
 }
-Note: _yourtenant is a placeholder — use the 'discover-personalization-paths' prompt for a guided lookup, or call list_xdm_field_groups directly, to find the real attribute PATHS. For the AJO-native expression/function SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Do both before inserting any personalization, and use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
+
+Personalization path rooting: standard XDM profile attributes use the "profile." prefix (e.g. {{profile.person.name.firstName}}); tenant-custom attributes sit under "profile._tenantId." (e.g. {{profile._acssandboxustwo.loyaltyTier}}). Do NOT root standard XDM fields (person, homeAddress, etc.) under the tenant namespace — only attributes your org added in a custom field group belong there. Use the 'discover-personalization-paths' prompt, or call list_xdm_union_schemas → get_xdm_union_schema (full=false) → get_xdm_field_group on each ref, to confirm real attribute paths. For the AJO-native expression SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
 
 Example usage (push notification template):
 {
@@ -197,13 +244,14 @@ Example usage (push notification template):
   "template": { "title": "Big Sale!", "message": "50% off today only" }
 }
 
-Returns: { success: true, id: "<uuid>", location: "/templates/<uuid>" }`,
+Returns: { success: true, id: "<uuid>", location: "/templates/<uuid>", etag: "<etag>", warnings?: [...] }
+The returned etag is immediately reusable for a follow-up update_content_template / patch_content_template — no need to re-fetch right after creating. A "warnings" entry (email templates) means the HTML is not in AJO native format and will open in Compatibility mode.`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
     required: ['name', 'templateType', 'channels'],
-    allOf: CODE_CHANNEL_REQUIRES_SUBTYPE,
+    allOf: TEMPLATE_CONDITIONAL_RULES,
     properties: {
       name: { type: 'string', description: 'Template name (required)' },
       description: { type: 'string', description: 'Optional description' },
@@ -224,7 +272,8 @@ export async function handleCreateContentTemplate(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const result = await createTemplate(parsed.data);
-      return { success: true, ...result };
+      const warning = compatibilityModeWarning(emailHtmlOf(parsed.data));
+      return { success: true, ...result, ...(warning ? { warnings: [warning] } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -273,7 +322,7 @@ export async function handleGetContentTemplate(args: unknown) {
 export const updateContentTemplateDefinition = {
   name: 'update_content_template',
   title: 'Update Content Template (Replace)',
-  outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
+  outputSchema: buildOutputSchema({ etag: ETAG_FIELD, warnings: WARNINGS_FIELD }),
   description: `Replace a content template entirely (PUT). Use this when changing template content, type, or channels. To rename or move a template without touching its content, patch_content_template is lighter-weight.
 
 CHOOSING templateType — "html" vs "content" (they select entirely different content shapes, not two flavors of the same thing):
@@ -317,8 +366,9 @@ PERSONALIZATION: if you are adding or changing {{ }} / {%= %} expressions, call 
   resend the ENTIRE template. The only safe way to do that without losing data is to fetch-then-mutate:
 
 MANDATORY WORKFLOW (do NOT skip step 1, and NEVER rebuild content from memory):
-1. Call get_content_template FIRST to get the complete current template + etag. This is required every time, even for a
-   tiny change — it is the source of truth for all the fields you are NOT changing.
+1. Call get_content_template FIRST to get the complete current template + etag. This is required every time you edit an
+   EXISTING template, even for a tiny change — it is the source of truth for all the fields you are NOT changing. (Exception:
+   immediately after create_content_template you already hold the full object and a valid etag, so you may update without re-fetching.)
 2. Take that returned object and modify ONLY the field(s) the user asked to change (e.g. just template.subject). Leave the
    existing html/body and every other field EXACTLY as returned — copy them through verbatim.
 3. Call update_content_template with the full object (changed field + all untouched fields) + the etag.
@@ -339,16 +389,16 @@ Example usage (email template — preserve the fetched templateType; "content" s
 }
 (If the fetched template is templateType "html", keep it "html" and send template { "html": "<html>..." } — that shape has no subject.)
 
-Returns: { success: true }`,
+Returns: { success: true, etag?: "<new-etag>", warnings?: [...] }  (a "warnings" entry means the email html is not in AJO native format and will open in Compatibility mode)`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
     required: ['templateId', 'etag', 'name', 'templateType', 'channels'],
-    allOf: CODE_CHANNEL_REQUIRES_SUBTYPE,
+    allOf: TEMPLATE_CONDITIONAL_RULES,
     properties: {
       templateId: { type: 'string', format: 'uuid', description: 'UUID of the template to update' },
-      etag: { type: 'string', description: 'ETag from get_content_template (required for optimistic locking)' },
+      etag: { type: 'string', description: 'ETag from get_content_template (or the etag returned by create_content_template), required for optimistic locking. Pass it back exactly as received, including its surrounding double-quote characters — do not strip them.' },
       name: { type: 'string', description: 'Template name' },
       description: { type: 'string', description: 'Optional description' },
       templateType: { type: 'string', enum: ['html', 'html_primary_page', 'html_sub_page', 'content'], description: 'Template type — must match the channel (email→html, push/sms/inapp/code→content, landingpage→html_primary_page or html_sub_page)' },
@@ -369,7 +419,8 @@ export async function handleUpdateContentTemplate(args: unknown) {
     const { templateId, etag, ...payload } = parsed.data;
     try {
       const result = await updateTemplate(templateId, payload, etag);
-      return { ...result, success: true };
+      const warning = compatibilityModeWarning(emailHtmlOf(parsed.data));
+      return { ...result, success: true, ...(warning ? { warnings: [warning] } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -404,7 +455,7 @@ Returns: { success: true, data: { updated template }, etag: "new-etag" }`,
     required: ['templateId', 'etag', 'patches'],
     properties: {
       templateId: { type: 'string', format: 'uuid', description: 'UUID of the template to patch' },
-      etag: { type: 'string', description: 'ETag from get_content_template' },
+      etag: { type: 'string', description: 'ETag from get_content_template (or the etag returned by create_content_template). Pass it back exactly as received, including its surrounding double-quote characters — do not strip them.' },
       patches: {
         type: 'array',
         description: 'Array of JSON Patch operations',

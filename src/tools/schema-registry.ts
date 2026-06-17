@@ -14,8 +14,13 @@ import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, 
 
 const PERSONALIZATION_HINT =
   `Use these to find the REAL personalization attribute paths configured in this sandbox instead of ` +
-  `guessing default XDM fields. Custom attributes live under the tenant namespace key (e.g. "_yourtenant") ` +
-  `in the schema's "properties" tree; that nesting path is what you reference in personalization expressions. ` +
+  `guessing. Personalization path rooting rule: ` +
+  `(1) Standard XDM profile attributes (person, homeAddress, etc.) → "profile.<field>.<subfield>", e.g. profile.person.name.firstName. ` +
+  `(2) Tenant-custom field group attributes → "profile._tenantId.<customField>", e.g. profile._acssandboxustwo.loyaltyTier. ` +
+  `Do NOT root standard XDM fields under the tenant namespace — only fields your org added in a custom field group belong there. ` +
+  `Recommended discovery workflow: call list_xdm_union_schemas to find the Profile union, get_xdm_union_schema with full=false ` +
+  `to get the list of field-group $refs, then get_xdm_field_group (full=true, the default) on each group you need — that returns ` +
+  `the full attribute tree for just that group without hitting the 1 MB response cap. ` +
   `Requires the AEP Schema Registry API to be enabled on the credential's Developer Console project (else 403).`;
 
 // ─── list_xdm_schemas ─────────────────────────────────────────────────────────
@@ -38,8 +43,9 @@ Example usage:
     properties: {
       container: { type: 'string', enum: ['tenant', 'global'], description: 'tenant = customer-defined (default); global = standard XDM' },
       limit: { type: 'number', description: 'Max items to return (1-1000)' },
-      property: { type: 'string', description: 'Filter expression, e.g. "title~Loyalty"' },
-      orderby: { type: 'string', description: 'Sort field, e.g. "title" or "-meta:created"' }
+      start: { type: ['string', 'number'], description: 'Pagination cursor from the previous _page.next (the Schema Registry returns a numeric/opaque cursor; pass it back as-is). Note: the content list tools use an opaque base64 string cursor instead.' },
+      property: { type: ['string', 'array'], items: { type: 'string' }, description: 'Filter expression(s): a string or an array of strings (same shape as the content list tools), e.g. "title~Loyalty" or ["title~Loyalty"]. Uses the Schema Registry filter grammar.' },
+      orderBy: { type: 'string', description: 'Sort field, e.g. "title" or "-meta:created"' }
     }
   }
 };
@@ -112,8 +118,9 @@ Example usage:
     properties: {
       container: { type: 'string', enum: ['tenant', 'global'], description: 'tenant = customer-defined (default); global = standard XDM' },
       limit: { type: 'number', description: 'Max items to return (1-1000)' },
-      property: { type: 'string', description: 'Filter expression, e.g. "title~Loyalty"' },
-      orderby: { type: 'string', description: 'Sort field' }
+      start: { type: ['string', 'number'], description: 'Pagination cursor from the previous _page.next (the Schema Registry returns a numeric/opaque cursor; pass it back as-is). Note: the content list tools use an opaque base64 string cursor instead.' },
+      property: { type: ['string', 'array'], items: { type: 'string' }, description: 'Filter expression(s): a string or an array of strings (same shape as the content list tools), e.g. "title~Loyalty" or ["title~Loyalty"]. Uses the Schema Registry filter grammar.' },
+      orderBy: { type: 'string', description: 'Sort field' }
     }
   }
 };
@@ -181,8 +188,9 @@ export const listXdmUnionSchemasDefinition = {
     additionalProperties: false,
     properties: {
       limit: { type: 'number', description: 'Max items to return (1-1000)' },
-      property: { type: 'string', description: 'Filter expression' },
-      orderby: { type: 'string', description: 'Sort field' }
+      start: { type: ['string', 'number'], description: 'Pagination cursor from the previous _page.next (the Schema Registry returns a numeric/opaque cursor; pass it back as-is). Note: the content list tools use an opaque base64 string cursor instead.' },
+      property: { type: ['string', 'array'], items: { type: 'string' }, description: 'Filter expression(s): a string or an array of strings (same shape as the content list tools). Uses the Schema Registry filter grammar.' },
+      orderBy: { type: 'string', description: 'Sort field' }
     }
   }
 };
@@ -206,7 +214,7 @@ export const getXdmUnionSchemaDefinition = {
   name: 'get_xdm_union_schema',
   title: 'Get XDM Union Schema',
   outputSchema: buildOutputSchema({ data: DATA_OBJECT }),
-  description: `Retrieve a single XDM union schema by ID, fully resolved by default (full=true). The resolved Profile union is the complete attribute set available for personalization in this sandbox — read its "properties" tree to find real attribute paths (custom ones nested under the tenant namespace key). ${PERSONALIZATION_HINT}
+  description: `Retrieve a single XDM union schema by ID. Defaults to full=false (the unresolved form with field-group $refs) because fully-resolved Profile unions routinely exceed the 1 MB tool-result cap on real sandboxes and return a hard error instead of data. Use full=false first to get the list of field-group $refs, then call get_xdm_field_group (full=true) on each group you actually need — that returns the complete attribute tree for one group at a time, within the size limit. Only pass full=true if you know the specific union is small. ${PERSONALIZATION_HINT}
 
 Pass the union's $id or meta:altId (from list_xdm_union_schemas) as unionId.`,
   annotations: { readOnlyHint: true, openWorldHint: true },
