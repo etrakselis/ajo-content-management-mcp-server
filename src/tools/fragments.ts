@@ -234,10 +234,21 @@ export const updateContentFragmentDefinition = {
   constructing any HTML for this fragment type (it returns the exact
   structure/component catalog and required <head> you must reproduce).
 
-Workflow:
-1. Call get_content_fragment to get current data + etag
-2. Modify the data
-3. Call update_content_fragment with all fields + etag
+⚠ THIS IS A FULL REPLACE — THERE IS NO FIELD-LEVEL UPDATE. The AJO API has no way to patch a single content field
+  (content, expression, …); PATCH only supports /name, /description, /parentFolderId. To change even ONE field you must
+  resend the ENTIRE fragment. The only safe way to do that without losing data is to fetch-then-mutate:
+
+MANDATORY WORKFLOW (do NOT skip step 1, and NEVER rebuild content from memory):
+1. Call get_content_fragment FIRST to get the complete current fragment + etag. This is required every time, even for a
+   tiny change — it is the source of truth for all the fields you are NOT changing.
+2. Take that returned object and modify ONLY the field(s) the user asked to change. Leave the existing content/expression
+   and every other field EXACTLY as returned — copy them through verbatim.
+3. Call update_content_fragment with the full object (changed field + all untouched fields) + the etag.
+
+❌ DO NOT regenerate, re-author, or reconstruct the HTML/content/expression from scratch when the user only asked to change
+   one field. Re-generated content will differ from the original — losing the user's design, personalization, and Visual
+   Email Designer serialization. ALWAYS round-trip the exact content you received in step 1.
+   If you do not have the current fragment content in hand, you MUST call get_content_fragment before updating.
 
 Example usage:
 {

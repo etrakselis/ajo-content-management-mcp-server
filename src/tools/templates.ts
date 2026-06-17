@@ -308,10 +308,21 @@ Channel → templateType → template shape (channels must have exactly 1 value)
   template type (it returns the exact structure/component catalog and required
   <head> you must reproduce).
 
-Workflow:
-1. Call get_content_template to get current data + etag
-2. Modify the data
-3. Call update_content_template with all fields + etag
+⚠ THIS IS A FULL REPLACE — THERE IS NO FIELD-LEVEL UPDATE. The AJO API has no way to patch a single content field
+  (subject, html, body, …); PATCH only supports /name, /description, /parentFolderId. To change even ONE field you must
+  resend the ENTIRE template. The only safe way to do that without losing data is to fetch-then-mutate:
+
+MANDATORY WORKFLOW (do NOT skip step 1, and NEVER rebuild content from memory):
+1. Call get_content_template FIRST to get the complete current template + etag. This is required every time, even for a
+   tiny change — it is the source of truth for all the fields you are NOT changing.
+2. Take that returned object and modify ONLY the field(s) the user asked to change (e.g. just template.subject). Leave the
+   existing html/body and every other field EXACTLY as returned — copy them through verbatim.
+3. Call update_content_template with the full object (changed field + all untouched fields) + the etag.
+
+❌ DO NOT regenerate, re-author, or reconstruct the HTML/body from scratch when the user only asked to change the subject
+   (or any other single field). Re-generated HTML will differ from the original — losing the user's design, personalization,
+   and Visual Email Designer serialization. ALWAYS round-trip the exact content you received in step 1.
+   If you do not have the current template content in hand, you MUST call get_content_template before updating.
 
 Example usage (email template — preserve the fetched templateType; "content" shown here):
 {
