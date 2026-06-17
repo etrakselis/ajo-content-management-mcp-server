@@ -505,12 +505,12 @@ Inverse membership test.
 
 ---
 
-## firstItem
+## head
 
 Returns first element.
 
 ```handlebars
-{%= firstItem(profile.orders) %}
+{%= head(profile.orders) %}
 ```
 
 ---
@@ -752,7 +752,7 @@ Use `and` and `or` as infix keywords between conditions. To negate a condition, 
 ## and
 
 ```handlebars
-{%#if profile.loyalty.active and profile.loyalty.points > 100%}
+{%#if profile.loyalty.active = true and profile.loyalty.points > 100%}
 ```
 
 ---
@@ -928,7 +928,7 @@ When generating AJO code:
 2. Use `formatDate` for all user-facing dates.
 3. Use `dateDiff` for countdowns.
 4. Use `concat` instead of manual string construction.
-5. Use `isNull` and `isNotNull` before rendering optional values.
+5. Use `isNull` and `isNotNull` before rendering optional object references (e.g., `profile.loyalty`); use `isEmpty` and `isNotEmpty` for optional string fields (e.g., `profile.person.name.firstName`). Do not use a bare `{%#if field%}` truthiness check.
 6. Use `datasetLookup` when profile data is unavailable.
 7. Use `encrypt` whenever PII is passed in URLs.
 8. Use `url` helper for trackable links.
@@ -958,7 +958,7 @@ Your points expire in {{daysLeft}} days.
 ## Personalized Greeting
 
 ```handlebars
-{%#if profile.person.name.firstName%}
+{%#if isNotEmpty(profile.person.name.firstName)%}
 Hello {{profile.person.name.firstName}},
 {%else%}
 Hello Valued Customer,
@@ -1319,8 +1319,10 @@ true
 
 ### Safe Rendering
 
+`firstName` is a string field, so guard it with `isNotEmpty` (String Functions), not `isNotNull`. Reserve `isNotNull` for object references like `profile.loyalty` below.
+
 ```handlebars
-{%#if isNotNull(profile.person.name.firstName)%}
+{%#if isNotEmpty(profile.person.name.firstName)%}
 Hello {{profile.person.name.firstName}}
 {%/if%}
 ```
@@ -1347,10 +1349,10 @@ Receive SMS notifications
 
 AJO personalization should avoid rendering values from objects that may not exist.
 
-Preferred pattern:
+Preferred pattern (string field — use `isNotEmpty`):
 
 ```handlebars
-{%#if isNotNull(profile.person.name.firstName)%}
+{%#if isNotEmpty(profile.person.name.firstName)%}
 Hello {{profile.person.name.firstName}},
 {%else%}
 Hello Valued Customer,
@@ -4839,10 +4841,10 @@ Example:
 ```handlebars
 {{#each products as |product|}}
 
-{{#if product.price > 100}}
+{%#if product.price > 100%}
 Premium Product:
 {{product.name}}
-{{/if}}
+{%/if%}
 
 {{/each}}
 ```
@@ -5009,7 +5011,17 @@ When generating AJO personalization:
 {{#each productList}}
 ```
 
-without specifying the full context path.
+Two problems: the array is missing its full context path, and the loop has no named iterator. Always use the full path and bind a named iterator with `as |item|`.
+
+---
+
+## Correct
+
+```handlebars
+{{#each context.journey.events.cartEvent.productListItems as |item|}}
+{{item.name}}
+{{/each}}
+```
 
 ---
 
@@ -5433,7 +5445,7 @@ Example:
     required=false
 }}
 
-{%#if product.name%}
+{%#if isNotNull(product)%}
 {{product.name}}
 {%else%}
 Featured Product
@@ -5585,7 +5597,7 @@ id="SKU123"
     required=false
 }}
 
-{%#if product.name%}
+{%#if isNotNull(product)%}
 {{product.name}}
 {%else%}
 Featured Product
