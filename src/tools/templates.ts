@@ -24,6 +24,35 @@ function emailHtmlOf(data: { channels?: string[]; templateType?: string; templat
   return t.html;
 }
 
+// Inline fragment embeds use markup like data-fragment="ajo:<uuid>" in the body.
+// AJO's own `referencedFragments` array does NOT capture these inline embeds, so a
+// caller checking it is misled into thinking nothing is referenced. Derive the real
+// set by scanning the serialized template for the attribute. We scan the JSON form
+// (so the quote characters are escaped as \") to avoid having to know which per-
+// channel field holds the HTML. UUIDs are de-duplicated; the source prefix is kept.
+const DATA_FRAGMENT_RE = /data-fragment=\\?"(ajo|aem|external):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\?"/g;
+
+function extractEmbeddedFragments(data: unknown): Array<{ reference: string; source: string; id: string }> {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(data);
+  } catch {
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: Array<{ reference: string; source: string; id: string }> = [];
+  let m: RegExpExecArray | null;
+  DATA_FRAGMENT_RE.lastIndex = 0;
+  while ((m = DATA_FRAGMENT_RE.exec(serialized)) !== null) {
+    const reference = `${m[1]}:${m[2]}`;
+    if (!seen.has(reference)) {
+      seen.add(reference);
+      out.push({ reference, source: m[1], id: m[2] });
+    }
+  }
+  return out;
+}
+
 // ─── Shared input-schema fragments ──────────────────────────────────────────
 // Unlike fragments (an exhaustive 2-shape union), a template's content shape
 // varies across 8 channels and several are free-form (code/directMail/shared),
@@ -145,7 +174,7 @@ Returns: { _page: { count, next }, items: [{ id, name, templateType, channels, .
       limit: { type: 'number', description: 'Max items to return (1-1000, default 20)' },
       start: { type: 'string', description: 'Pagination cursor from previous response _page.next' },
       orderBy: { type: 'string', description: 'Sort field. Prefix with + (asc) or - (desc). E.g. "-modifiedAt"' },
-      property: { type: 'array', items: { type: 'string' }, description: 'FIQL filter expressions. Operators: == (equals), != (not equals), ~^ (starts with), ~ (contains). E.g. ["name~^Test", "channels==email", "templateType==html"]' }
+      property: { type: 'array', items: { type: 'string' }, description: 'FIQL filter expressions. Operators: == (equals), != (not equals), ~^ (starts with, case-insensitive), ~ (contains, case-insensitive). E.g. ["name~^Test", "channels==email", "templateType==html"]' }
     }
   }
 };
@@ -285,13 +314,29 @@ export async function handleCreateContentTemplate(args: unknown) {
 export const getContentTemplateDefinition = {
   name: 'get_content_template',
   title: 'Get Content Template',
-  outputSchema: buildOutputSchema({ data: TEMPLATE_OBJECT, etag: ETAG_FIELD }),
+  outputSchema: buildOutputSchema({
+    data: TEMPLATE_OBJECT,
+    etag: ETAG_FIELD,
+    embeddedFragments: {
+      type: 'array',
+      description: 'Fragments embedded inline in the template body via data-fragment="(ajo|aem|external):<uuid>", derived by the server. This reflects inline embeds that the upstream data.referencedFragments array does NOT capture — use this to confirm what a template references. Empty when none are embedded.',
+      items: {
+        type: 'object',
+        properties: {
+          reference: { type: 'string', description: 'Full reference, e.g. "ajo:b6d70a45-...".' },
+          source: { type: 'string', description: 'Reference source: ajo | aem | external.' },
+          id: { type: 'string', description: 'Fragment UUID.' }
+        }
+      }
+    }
+  }),
   description: `Fetch a single content template by ID from Adobe Journey Optimizer.
 
 Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
-Returns: { success: true, data: { id, name, templateType, channels, template, createdAt, modifiedAt, ... }, etag: "..." }
-The etag is required for update (PUT/PATCH) operations.`,
+Returns: { success: true, data: { id, name, templateType, channels, template, createdAt, modifiedAt, ... }, etag: "...", embeddedFragments: [{ reference, source, id }] }
+The etag is required for update (PUT/PATCH) operations.
+NOTE on fragment references: the upstream data.referencedFragments only lists formally-registered references and is empty for inline data-fragment="(ajo|aem|external):<uuid>" embeds. The server-derived embeddedFragments array DOES capture those inline embeds — use it (not referencedFragments) to confirm what a template embeds.`,
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
@@ -310,7 +355,8 @@ export async function handleGetContentTemplate(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const result = await getTemplate(parsed.data.templateId);
-      return { success: true, ...result };
+      const embeddedFragments = extractEmbeddedFragments(result.data);
+      return { success: true, ...result, embeddedFragments };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -432,7 +478,7 @@ export async function handleUpdateContentTemplate(args: unknown) {
 export const patchContentTemplateDefinition = {
   name: 'patch_content_template',
   title: 'Rename or Move Content Template',
-  outputSchema: buildOutputSchema({ data: TEMPLATE_OBJECT, etag: ETAG_FIELD }),
+  outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
   description: `Rename or redescribe a content template — use this when changing only metadata (name, description, or parent folder), NOT content. For content, type, or channel changes, use update_content_template instead.
 
 Only these paths are supported: /name, /description, /parentFolderId.
@@ -447,7 +493,8 @@ Example usage:
   ]
 }
 
-Returns: { success: true, data: { updated template }, etag: "new-etag" }`,
+Returns: { success: true, etag?: "<new-etag>" }
+(The new etag is returned when AJO provides it; reuse it directly for a follow-up write. To read back the full updated template, call get_content_template.)`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
@@ -480,8 +527,8 @@ export async function handlePatchContentTemplate(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     const { templateId, etag, patches } = parsed.data;
     try {
-      const result = await patchTemplate(templateId, patches, etag);
-      return { success: true, ...result };
+      // patchTemplate already returns the { success: true, etag? } envelope.
+      return await patchTemplate(templateId, patches, etag);
     } catch (err) {
       return { success: false, error: buildError(err) };
     }

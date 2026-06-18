@@ -24,6 +24,11 @@ export interface PaginationParams {
 let clientConfig: AdobeClientConfig | null = null;
 let httpClient: AxiosInstance | null = null;
 
+// Bounded per-request timeout for upstream AJO calls. A stalled upstream should
+// fail fast with a structured TIMEOUT error (see buildError) rather than hang the
+// MCP client until its own (much longer) cap. Override with AJO_HTTP_TIMEOUT_MS.
+export const HTTP_TIMEOUT_MS = Number(process.env.AJO_HTTP_TIMEOUT_MS) || 30000;
+
 // Collapse interpolated identifiers (UUIDs, numeric ids) in a request path to a
 // fixed ":id" placeholder before using it as a Prometheus label. The raw paths
 // embed per-object UUIDs (e.g. /templates/<uuid>), which would otherwise create
@@ -40,7 +45,7 @@ export function configureAdobeClient(config: AdobeClientConfig): void {
 
   httpClient = axios.create({
     baseURL: config.baseUrl || 'https://platform.adobe.io/ajo/content',
-    timeout: 30000,
+    timeout: HTTP_TIMEOUT_MS,
     // Serialize array query params as repeated keys (?property=a&property=b) rather
     // than axios's default bracketed form (?property[]=a). The AJO Content API's FIQL
     // `property` filter is a repeatable parameter; with brackets it does not recognize
@@ -55,6 +60,10 @@ export function configureAdobeClient(config: AdobeClientConfig): void {
     retries: 3,
     retryDelay: axiosRetry.exponentialDelay,
     retryCondition: (error: AxiosError) => {
+      // Don't retry a response timeout — retrying multiplies the wait by the retry
+      // count (the 4-minute hang seen in testing). Fail fast and let buildError map
+      // it to a structured TIMEOUT. Still retry genuine network drops and 5xx.
+      if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return false;
       return axiosRetry.isNetworkOrIdempotentRequestError(error) ||
         (error.response?.status !== undefined && error.response.status >= 500);
     },
@@ -183,6 +192,16 @@ function extractDeepMessage(data: unknown): string | null {
 
 function buildError(err: unknown): { code: string; message: string; details: unknown } {
   if (axios.isAxiosError(err)) {
+    // A timed-out / aborted request has no response. Surface it as a distinct,
+    // retryable TIMEOUT rather than a generic API_ERROR, so the model knows the
+    // write/read may simply need to be retried (it was not rejected on its merits).
+    if (!err.response && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || /timeout/i.test(err.message))) {
+      return {
+        code: 'TIMEOUT',
+        message: 'The upstream Adobe API did not respond in time (request timed out). This is usually transient — wait a few seconds and retry.',
+        details: {}
+      };
+    }
     const status = err.response?.status;
     const data = err.response?.data;
     const codes: Record<number, string> = {
@@ -209,6 +228,21 @@ function buildError(err: unknown): { code: string; message: string; details: unk
   }
   const msg = err instanceof Error ? err.message : String(err);
   return { code: 'INTERNAL_ERROR', message: msg, details: {} };
+}
+
+// Resolve the post-write etag: prefer the value the PUT returned in its header;
+// if absent, do ONE best-effort read to fetch it. Any failure here is swallowed —
+// the write already committed, so we must never turn this enrichment into an error.
+async function resolveNewEtag(
+  headerEtag: string | undefined,
+  read: () => Promise<{ etag?: string }>
+): Promise<string | undefined> {
+  if (headerEtag) return headerEtag;
+  try {
+    return (await read()).etag;
+  } catch {
+    return undefined;
+  }
 }
 
 // ─── Templates ───────────────────────────────────────────────────────────────
@@ -250,13 +284,17 @@ export async function getTemplate(templateId: string) {
 
 export async function updateTemplate(templateId: string, payload: unknown, etag: string) {
   const client = getClient();
-  await client.put(`/templates/${templateId}`, payload, {
+  const response = await client.put(`/templates/${templateId}`, payload, {
     headers: {
       'Content-Type': 'application/vnd.adobe.ajo.template.v1+json',
       'If-Match': etag
     }
   });
-  return { success: true };
+  // The PUT has committed. Returning the new etag lets the caller chain a follow-up
+  // write without a 409 + extra get_. Enrichment is best-effort: prefer the response
+  // header, fall back to a single read, and NEVER throw after the commit.
+  const newEtag = await resolveNewEtag(response.headers?.['etag'], () => getTemplate(templateId));
+  return { success: true, ...(newEtag ? { etag: newEtag } : {}) };
 }
 
 export async function patchTemplate(templateId: string, patchOps: unknown[], etag: string) {
@@ -267,7 +305,11 @@ export async function patchTemplate(templateId: string, patchOps: unknown[], eta
       'If-Match': etag
     }
   });
-  return { data: response.data, etag: response.headers['etag'] };
+  // Mirror patch_content_fragment: return only the new etag (best-effort). The PATCH
+  // has committed; tolerate a 204/empty body and a missing ETag header rather than
+  // throwing — a post-commit throw would be a false negative the caller retries.
+  const newEtag = response.headers?.['etag'];
+  return { success: true, ...(newEtag ? { etag: newEtag } : {}) };
 }
 
 export async function deleteTemplate(templateId: string) {
@@ -315,13 +357,14 @@ export async function getFragment(fragmentId: string) {
 
 export async function updateFragment(fragmentId: string, payload: unknown, etag: string) {
   const client = getClient();
-  await client.put(`/fragments/${fragmentId}`, payload, {
+  const response = await client.put(`/fragments/${fragmentId}`, payload, {
     headers: {
       'Content-Type': 'application/vnd.adobe.ajo.fragment.v1.0+json',
       'If-Match': etag
     }
   });
-  return { success: true };
+  const newEtag = await resolveNewEtag(response.headers?.['etag'], () => getFragment(fragmentId));
+  return { success: true, ...(newEtag ? { etag: newEtag } : {}) };
 }
 
 export async function patchFragment(fragmentId: string, patchOps: unknown[], etag: string) {
@@ -342,14 +385,18 @@ export async function publishFragment(fragmentId: string) {
     { headers: { 'Content-Type': 'application/vnd.adobe.ajo.fragment.publication.request.v1.0+json' } }
   );
   const retryAfterHeader = response.headers['retry-after'];
+  const raw = retryAfterHeader !== undefined ? Number(retryAfterHeader) : NaN;
+  // Normalize to SECONDS to match the documented contract and the HTTP Retry-After
+  // convention. AJO returns this in milliseconds (e.g. 1000 = 1s); a client that
+  // waited that many *seconds* would stall for ~16 minutes. Treat a large value as
+  // ms and convert; a small value is already seconds. Omit if absent/unparseable.
+  const retryAfter = Number.isNaN(raw)
+    ? undefined
+    : raw > 60 ? Math.max(1, Math.round(raw / 1000)) : raw;
   return {
     accepted: true,
     location: response.headers['location'],
-    // Retry-After arrives as a string header; coerce to a number to match the
-    // tool's declared outputSchema (retryAfter: number). Omit if absent/unparseable.
-    retryAfter: retryAfterHeader !== undefined && !Number.isNaN(Number(retryAfterHeader))
-      ? Number(retryAfterHeader)
-      : undefined
+    retryAfter
   };
 }
 

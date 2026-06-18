@@ -93,19 +93,37 @@ describe('template HTTP wrappers', () => {
     expect(res).toEqual({ data: { id: 'id1' }, etag: '"v1"' });
   });
 
-  test('updateTemplate sends If-Match and returns success', async () => {
-    mockInstance.put.mockResolvedValue({});
+  test('updateTemplate sends If-Match and returns the new etag (P1)', async () => {
+    mockInstance.put.mockResolvedValue({ headers: { etag: '"v2"' } });
     const res = await client.updateTemplate('id1', { name: 'T' }, '"v1"');
-    expect(res).toEqual({ success: true });
+    expect(res).toEqual({ success: true, etag: '"v2"' });
     expect(mockInstance.put).toHaveBeenCalledWith('/templates/id1', { name: 'T' }, expect.objectContaining({
       headers: expect.objectContaining({ 'If-Match': '"v1"' })
     }));
   });
 
-  test('patchTemplate returns data + new etag', async () => {
+  test('updateTemplate falls back to a read when PUT returns no etag header (P1)', async () => {
+    mockInstance.put.mockResolvedValue({ headers: {} });
+    mockInstance.get.mockResolvedValue({ data: {}, headers: { etag: '"vGET"' } });
+    expect(await client.updateTemplate('id1', { name: 'T' }, '"v1"')).toEqual({ success: true, etag: '"vGET"' });
+  });
+
+  test('updateTemplate never throws after the PUT commits even if the fallback read fails (P0)', async () => {
+    mockInstance.put.mockResolvedValue({ headers: {} });
+    mockInstance.get.mockRejectedValue(new Error('read failed'));
+    expect(await client.updateTemplate('id1', { name: 'T' }, '"v1"')).toEqual({ success: true });
+  });
+
+  test('patchTemplate returns the new etag, no data (P0 parity with fragment sibling)', async () => {
     mockInstance.patch.mockResolvedValue({ data: { id: 'id1' }, headers: { etag: '"v2"' } });
-    const res = await client.patchTemplate('id1', [{ op: 'replace', path: '/name', value: 'x' }], '"v1"');
-    expect(res).toEqual({ data: { id: 'id1' }, etag: '"v2"' });
+    expect(await client.patchTemplate('id1', [{ op: 'replace', path: '/name', value: 'x' }], '"v1"'))
+      .toEqual({ success: true, etag: '"v2"' });
+  });
+
+  test('patchTemplate tolerates a 204/empty body with no etag header (P0)', async () => {
+    mockInstance.patch.mockResolvedValue({ data: '', headers: {} });
+    expect(await client.patchTemplate('id1', [{ op: 'replace', path: '/name', value: 'x' }], '"v1"'))
+      .toEqual({ success: true });
   });
 
   test('deleteTemplate resolves success', async () => {
@@ -133,17 +151,22 @@ describe('fragment HTTP wrappers', () => {
     expect(await client.getFragment('f1')).toEqual({ data: { id: 'f1' }, etag: '"v1"' });
   });
 
-  test('updateFragment / patchFragment resolve success', async () => {
-    mockInstance.put.mockResolvedValue({});
+  test('updateFragment returns the new etag; patchFragment resolves success (P1/P0)', async () => {
+    mockInstance.put.mockResolvedValue({ headers: { etag: '"v2"' } });
     mockInstance.patch.mockResolvedValue({});
-    expect(await client.updateFragment('f1', { name: 'F' }, '"v1"')).toEqual({ success: true });
+    expect(await client.updateFragment('f1', { name: 'F' }, '"v1"')).toEqual({ success: true, etag: '"v2"' });
     expect(await client.patchFragment('f1', [{ op: 'replace', path: '/name', value: 'x' }], '"v1"')).toEqual({ success: true });
   });
 
-  test('publishFragment coerces Retry-After to a number', async () => {
+  test('publishFragment keeps a small Retry-After as seconds (P3)', async () => {
     mockInstance.post.mockResolvedValue({ headers: { location: '/fragments/f1/publishStatus', 'retry-after': '5' } });
     const res = await client.publishFragment('f1');
     expect(res).toEqual({ accepted: true, location: '/fragments/f1/publishStatus', retryAfter: 5 });
+  });
+
+  test('publishFragment normalizes a millisecond Retry-After to seconds (P3)', async () => {
+    mockInstance.post.mockResolvedValue({ headers: { location: '/x', 'retry-after': '1000' } });
+    expect((await client.publishFragment('f1')).retryAfter).toBe(1);
   });
 
   test('publishFragment omits retryAfter when the header is absent', async () => {
@@ -199,6 +222,15 @@ describe('buildError — actionable message surfacing (P1-2)', () => {
     const e = client.buildError(axiosError(500, { title: 'oops', 'error-chain': ['x'], invokingServiceId: 'svc' }));
     expect(e.details).not.toHaveProperty('error-chain');
     expect(e.details).not.toHaveProperty('invokingServiceId');
+  });
+});
+
+describe('buildError — upstream timeout mapping (C1b)', () => {
+  test('a timed-out request maps to a retryable TIMEOUT error', () => {
+    const timeoutErr = new realAxios.AxiosError('timeout of 30000ms exceeded', 'ECONNABORTED');
+    const e = client.buildError(timeoutErr);
+    expect(e.code).toBe('TIMEOUT');
+    expect(e.message).toMatch(/retry/i);
   });
 });
 

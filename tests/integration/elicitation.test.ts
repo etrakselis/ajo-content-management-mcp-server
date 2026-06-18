@@ -48,7 +48,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createMcpServer } from '../../src/mcp/server';
 import { setWritesAllowed } from '../../src/mcp/access-policy';
-import { archiveFragment, createFragment, publishFragment } from '../../src/adobe/client';
+import { archiveFragment, createFragment, publishFragment, listFragments } from '../../src/adobe/client';
 
 const UUID = 'b6d70a45-a149-453b-85ba-809a5d40066d';
 
@@ -315,6 +315,19 @@ describe('write result safety (P0-1 / P2-3)', () => {
 
     expect(res.structuredContent?.error?.code).toBe('VALIDATION_ERROR');
     expect(createFragment).not.toHaveBeenCalled();
+  });
+});
+
+describe('structured errors (C1a)', () => {
+  test('an unexpected handler error surfaces as a structured error, never a bare opaque string', async () => {
+    (listFragments as jest.Mock).mockRejectedValueOnce(new Error('kaboom'));
+    const { client } = await connectClient({ elicitation: false });
+    const res = await client.callTool({ name: 'list_content_fragments', arguments: {} }) as {
+      isError?: boolean; structuredContent?: { success?: boolean; error?: { code?: string } };
+    };
+    expect(res.structuredContent?.success).toBe(false);
+    expect(typeof res.structuredContent?.error?.code).toBe('string');
+    expect((res.structuredContent?.error?.code ?? '').length).toBeGreaterThan(0);
   });
 });
 

@@ -200,9 +200,32 @@ describe('Template Tools Integration', () => {
   test('get_content_template returns data with etag', async () => {
     const mockTemplateData = { id: VALID_UUID, name: 'Test' };
     mockClient.getTemplate.mockResolvedValue({ data: mockTemplateData, etag: '"abc"' });
-    const result = await handleGetContentTemplate({ templateId: VALID_UUID }) as { success: boolean; data: unknown; etag: string };
+    const result = await handleGetContentTemplate({ templateId: VALID_UUID }) as { success: boolean; data: unknown; etag: string; embeddedFragments: unknown[] };
     expect(result.success).toBe(true);
     expect(result.etag).toBe('"abc"');
+    expect(result.embeddedFragments).toEqual([]);
+  });
+
+  test('get_content_template derives embeddedFragments from inline data-fragment embeds (P2)', async () => {
+    const uuid1 = 'b6d70a45-a149-453b-85ba-809a5d40066d';
+    const uuid2 = 'c7e81b56-b25a-564c-96cb-91ab6e51177e';
+    mockClient.getTemplate.mockResolvedValue({
+      data: {
+        id: VALID_UUID,
+        templateType: 'content',
+        template: { html: { body: `<div data-fragment="ajo:${uuid1}"></div><span data-fragment="aem:${uuid2}"></span><p data-fragment="ajo:${uuid1}"></p>` } },
+        referencedFragments: []
+      },
+      etag: '"abc"'
+    });
+    const result = await handleGetContentTemplate({ templateId: VALID_UUID }) as {
+      embeddedFragments: Array<{ reference: string; source: string; id: string }>;
+    };
+    // Deduped, source preserved, even though referencedFragments is empty upstream.
+    expect(result.embeddedFragments).toEqual([
+      { reference: `ajo:${uuid1}`, source: 'ajo', id: uuid1 },
+      { reference: `aem:${uuid2}`, source: 'aem', id: uuid2 }
+    ]);
   });
 
   // update (PUT)
@@ -238,14 +261,16 @@ describe('Template Tools Integration', () => {
 
   // patch
 
-  test('patch_content_template succeeds', async () => {
-    mockClient.patchTemplate.mockResolvedValue({ data: {}, etag: '"v2"' });
+  test('patch_content_template succeeds and returns the etag (no data) (P0)', async () => {
+    mockClient.patchTemplate.mockResolvedValue({ success: true, etag: '"v2"' });
     const result = await handlePatchContentTemplate({
       templateId: VALID_UUID,
       etag: '"v1"',
       patches: [{ op: 'replace', path: '/name', value: 'New Name' }]
-    }) as { success: boolean };
+    }) as { success: boolean; etag?: string; data?: unknown };
     expect(result.success).toBe(true);
+    expect(result.etag).toBe('"v2"');
+    expect(result).not.toHaveProperty('data');
     expect(mockClient.patchTemplate).toHaveBeenCalledWith(
       VALID_UUID,
       [{ op: 'replace', path: '/name', value: 'New Name' }],
@@ -403,6 +428,51 @@ describe('Fragment Tools Integration', () => {
     const result = await handleListContentFragments({}) as { success: boolean; error: { code: string } };
     expect(result.success).toBe(false);
     expect(result.error.code).toBe('NOT_CONFIGURED');
+  });
+
+  // P1: status is filtered in-process (AJO rejects it as a property field).
+
+  test('list_content_fragments filters by status client-side and strips it from the upstream query', async () => {
+    mockClient.listFragments.mockResolvedValue({
+      _page: { count: 3 },
+      items: [
+        { id: 'a', status: 'PUBLISHED' },
+        { id: 'b', status: 'DRAFT' },
+        { id: 'c', status: 'PUBLISHED' }
+      ]
+    });
+    const result = await handleListContentFragments({ property: ['status==PUBLISHED'] }) as {
+      success: boolean; data: { items: Array<{ id: string }> };
+    };
+    expect(result.success).toBe(true);
+    expect(result.data.items.map(i => i.id)).toEqual(['a', 'c']);
+    // status must NOT be sent upstream (AJO 400s on it); no property at all here.
+    const sentProperty = mockClient.listFragments.mock.calls[0][0]?.property;
+    expect(sentProperty).toBeUndefined();
+  });
+
+  test('list_content_fragments keeps non-status predicates upstream while filtering status locally', async () => {
+    mockClient.listFragments.mockResolvedValue({
+      _page: {}, items: [{ id: 'a', status: 'PUBLISHED' }, { id: 'b', status: 'ARCHIVED' }]
+    });
+    const result = await handleListContentFragments({ property: ['type==html', 'status!=ARCHIVED'] }) as {
+      success: boolean; data: { items: Array<{ id: string }> };
+    };
+    expect(result.data.items.map(i => i.id)).toEqual(['a']);
+    expect(mockClient.listFragments.mock.calls[0][0]?.property).toEqual(['type==html']);
+  });
+
+  test('list_content_fragments pages upstream to collect status matches up to limit', async () => {
+    mockClient.listFragments
+      .mockResolvedValueOnce({ _page: { next: 'cur1' }, items: [{ id: 'a', status: 'PUBLISHED' }, { id: 'b', status: 'DRAFT' }] })
+      .mockResolvedValueOnce({ _page: {}, items: [{ id: 'c', status: 'PUBLISHED' }] });
+    const result = await handleListContentFragments({ property: ['status==PUBLISHED'] }) as {
+      success: boolean; data: { items: Array<{ id: string }>; _page: { next: unknown } };
+    };
+    expect(result.data.items.map(i => i.id)).toEqual(['a', 'c']);
+    // status-filtered results are not cursor-paginated.
+    expect(result.data._page.next).toBeNull();
+    expect(mockClient.listFragments).toHaveBeenCalledTimes(2);
   });
 
   // create — source defaulting (regression for the source bug fix)

@@ -64,37 +64,120 @@ const EXPRESSION_REQUIRES_SUBTYPE = [
 export const listContentFragmentsDefinition = {
   name: 'list_content_fragments',
   title: 'List Content Fragments',
-  outputSchema: buildOutputSchema({ data: FRAGMENT_LIST }),
+  outputSchema: buildOutputSchema({
+    data: FRAGMENT_LIST,
+    truncated: { type: 'boolean', description: 'Present and true only for a status-filtered query whose bounded scan hit its page cap before exhausting the library — there may be more matches. Raise limit or narrow other filters.' }
+  }),
   description: `Browse or list existing content fragments in the configured Adobe Journey Optimizer sandbox.
-Returns a paginated list, with optional filtering by status or type and sorting by date.
+Returns a paginated list, with optional filtering and sorting by date.
+
+FILTERING (property, FIQL):
+- Server-filterable fields (passed to AJO): id, name, type, channels, createdAt, createdBy.
+  Operators: == (equals), != (not equals), ~^ (starts with), ~ (contains). NOTE: ~^ and ~ are CASE-INSENSITIVE.
+- status (e.g. DRAFT, PUBLISHED) is NOT server-filterable — but the server applies it for you: it scans fragments
+  and returns up to "limit" matches. A status-filtered result is NOT cursor-paginated (no resumable next): raise
+  "limit" to get more matches. For very large libraries the scan is bounded; "truncated": true flags that the cap
+  was hit before the library was exhausted.
 
 Example usage:
 - List all fragments: {}
-- Filter by status: { property: ["status==PUBLISHED"] }
+- Filter by status (handled server-side): { property: ["status==PUBLISHED"] }
 - Filter by type: { property: ["type==html"] }
+- Combine: { property: ["type==html", "status==PUBLISHED"] }
 
-Returns: { _page: { count, next }, items: [{ id, name, type, status, channels, ... }] }`,
+Returns: { _page: { count, next }, items: [{ id, name, type, status, channels, ... }] }  (plus top-level truncated? for capped status scans)`,
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
     properties: {
-      limit: { type: 'number', description: 'Max items to return (1-1000, default 20)' },
-      start: { type: 'string', description: 'Pagination cursor from previous _page.next' },
+      limit: { type: 'number', description: 'Max items to return (1-1000, default 20). For a status filter this is the max number of matches returned from the scan.' },
+      start: { type: 'string', description: 'Pagination cursor from previous _page.next. Ignored for status-filtered queries (those scan from the beginning and are not cursor-paginated).' },
       orderBy: { type: 'string', description: 'Sort field with +/- prefix. E.g. "-modifiedAt"' },
-      property: { type: 'array', items: { type: 'string' }, description: 'FIQL filter expressions. Operators: == (equals), != (not equals), ~^ (starts with), ~ (contains). E.g. ["status==PUBLISHED", "type==html"]' }
+      property: { type: 'array', items: { type: 'string' }, description: 'FIQL filter expressions. Server fields: id, name, type, channels, createdAt, createdBy. Operators: == (equals), != (not equals), ~^ (starts with, case-insensitive), ~ (contains, case-insensitive). status==/!=/~^/~ is supported too but applied client-side (see description). E.g. ["type==html", "status==PUBLISHED"]' }
     }
   }
 };
+
+// status is not an AJO-filterable field, but it is present on every returned item,
+// so the handler filters by it in-process. Bound the scan so a very large library
+// can't make one call unbounded; 100/page → up to 5,000 fragments scanned.
+const MAX_STATUS_SCAN_PAGES = 50;
+
+type StatusPredicate = { op: string; value: string };
+const STATUS_PRED_RE = /^\s*status\s*(==|!=|~\^|~)\s*(.+?)\s*$/i;
+
+function parseStatusPredicate(expr: string): StatusPredicate | null {
+  const m = STATUS_PRED_RE.exec(expr);
+  return m ? { op: m[1], value: m[2] } : null;
+}
+
+// Match a fragment's status against one predicate. ~^/~ are case-insensitive to
+// mirror the upstream FIQL operators; ==/!= are compared case-insensitively too
+// since AJO status values are a fixed uppercase set.
+function matchStatus(status: unknown, { op, value }: StatusPredicate): boolean {
+  const s = String(status ?? '').toUpperCase();
+  const v = value.toUpperCase();
+  switch (op) {
+    case '==': return s === v;
+    case '!=': return s !== v;
+    case '~^': return s.startsWith(v);
+    case '~': return s.includes(v);
+    default: return false;
+  }
+}
 
 export async function handleListContentFragments(args: unknown) {
   if (!isClientConfigured()) return notConfiguredError();
   return withTelemetry('list_content_fragments', async () => {
     const parsed = ListFragmentsSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
+
+    // Split out status predicates (AJO rejects `status` in the property filter with
+    // CJMMAS-1052-400) from the predicates AJO can handle.
+    const statusPreds: StatusPredicate[] = [];
+    const upstreamProps: string[] = [];
+    for (const expr of parsed.data.property ?? []) {
+      const sp = parseStatusPredicate(expr);
+      if (sp) statusPreds.push(sp); else upstreamProps.push(expr);
+    }
+
     try {
-      const data = await listFragments(parsed.data);
-      return { success: true, data };
+      if (statusPreds.length === 0) {
+        const data = await listFragments(parsed.data);
+        return { success: true, data };
+      }
+
+      // Status filter present: scan upstream (without the status predicate) and
+      // filter by item.status in-process, collecting up to `limit` matches from a
+      // bounded scan. Not cursor-paginated — see the tool description.
+      const limit = parsed.data.limit ?? 20;
+      const items: Array<Record<string, unknown>> = [];
+      let cursor: string | undefined;
+      let truncated = false;
+      for (let page = 0; page < MAX_STATUS_SCAN_PAGES; page++) {
+        const data = await listFragments({
+          ...parsed.data,
+          property: upstreamProps.length ? upstreamProps : undefined,
+          limit: 100,
+          start: cursor
+        }) as { _page?: { next?: string | null }; items?: Array<Record<string, unknown>> };
+        for (const it of data.items ?? []) {
+          if (statusPreds.every(sp => matchStatus(it.status, sp))) {
+            items.push(it);
+            if (items.length >= limit) break;
+          }
+        }
+        if (items.length >= limit) break;
+        cursor = data._page?.next ?? undefined;
+        if (!cursor) break;
+        if (page === MAX_STATUS_SCAN_PAGES - 1) truncated = true;
+      }
+      return {
+        success: true,
+        data: { _page: { count: items.length, next: null }, items },
+        ...(truncated ? { truncated: true } : {})
+      };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -192,6 +275,8 @@ export const getContentFragmentDefinition = {
   outputSchema: buildOutputSchema({ data: FRAGMENT_OBJECT, etag: ETAG_FIELD }),
   description: `Fetch a single content fragment by ID from Adobe Journey Optimizer.
 This returns the current/editable fragment (including unpublished draft changes) and its etag. For the frozen version actually live in campaigns, use get_live_fragment instead.
+
+CONTENT SHAPE: for html fragments this returns the FULL document (<!DOCTYPE>/<html>/<head>/<body> shell). get_live_fragment returns only the INNER content (no shell) — so do not diff the two and conclude content was lost; the shell difference is expected (draft full-document vs published inner-content).
 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
@@ -419,6 +504,8 @@ export const getLiveFragmentDefinition = {
   outputSchema: buildOutputSchema({ data: FRAGMENT_OBJECT }),
   description: `Fetch the content of a fragment's last successful publication.
 Use this to retrieve the frozen/published version of a fragment that is live in campaigns. This is NOT the current editable fragment — for that (including unpublished draft changes) and its etag, use get_content_fragment instead.
+
+CONTENT SHAPE: this returns only the INNER content — no <!DOCTYPE>/<html>/<head>/<body> shell — whereas get_content_fragment returns the full document. That difference is expected (published inner-content vs draft full-document); it does not mean content was dropped.
 
 Example usage: { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
