@@ -52,18 +52,31 @@ describe('Validation Schemas', () => {
       expect(result.success).toBe(false);
     });
 
-    test('accepts code template with subType', () => {
+    test('accepts code template with subType and a valid body key (html/expression/condition)', () => {
       const result = CreateTemplateSchema.safeParse({
         name: 'Code Block', templateType: 'content', channels: ['code'],
-        subType: 'JSON', template: { foo: 'bar' }
+        subType: 'JSON', template: { expression: '{"k":"v"}' }
       });
       expect(result.success).toBe(true);
+    });
+
+    test('rejects code template whose body uses "content" instead of html/expression/condition', () => {
+      const result = CreateTemplateSchema.safeParse({
+        name: 'Code Block', templateType: 'content', channels: ['code'],
+        subType: 'HTML', template: { content: '<html/>' }
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const msg = result.error.errors.find(e => e.path.join('.') === 'template')?.message ?? '';
+        expect(msg).toMatch(/html.*expression.*condition/);
+        expect(msg).toMatch(/"content" is not a valid key/);
+      }
     });
 
     test('rejects code template missing subType (AJO mandates it)', () => {
       const result = CreateTemplateSchema.safeParse({
         name: 'Code Block', templateType: 'content', channels: ['code'],
-        template: { foo: 'bar' }
+        template: { html: '<html/>' }
       });
       expect(result.success).toBe(false);
     });

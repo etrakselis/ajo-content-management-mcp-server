@@ -60,8 +60,8 @@ function checkTemplateSubType(
 // pre-write, with a field-level message naming the expected type — so the common
 // mistakes (e.g. email "content" with template.html as a STRING instead of
 // { body }) are caught here instead of bouncing off AJO with an opaque
-// "template body is not valid" 400. code/shared stay free-form (provider-defined),
-// matching the permissive JSON-Schema for those channels.
+// "template body is not valid" 400. Only `shared` stays free-form (provider-
+// defined); `code` is validated against the keys AJO actually accepts.
 function checkTemplateContentShape(
   data: { channels: string[]; templateType: string; template?: Record<string, unknown> },
   ctx: z.RefinementCtx
@@ -69,7 +69,7 @@ function checkTemplateContentShape(
   const channel = data.channels?.[0];
   const tt = data.templateType;
   const t = data.template;
-  if (!channel || channel === 'code' || channel === 'shared') return;
+  if (!channel || channel === 'shared') return;
 
   const issue = (path: (string | number)[], message: string) =>
     ctx.addIssue({ code: z.ZodIssueCode.custom, path, message });
@@ -119,6 +119,17 @@ function checkTemplateContentShape(
     case 'push':
       if (typeof t.title !== 'string' && typeof t.message !== 'string') {
         issue(['template'], 'push templates require at least template.title or template.message (a string).');
+      }
+      break;
+    case 'code':
+      // AJO's code-channel body accepts one of html / expression / condition
+      // (NOT "content"). Mirror that so the caller gets a precise client-side
+      // message instead of an opaque JOMAL-1000 / CJMMAS-1079 after the round trip.
+      if (!['html', 'expression', 'condition'].some(k => t[k] !== undefined)) {
+        const hint = t.content !== undefined
+          ? ' "content" is not a valid key for code templates.'
+          : '';
+        issue(['template'], `code templates require one of template.html, template.expression, or template.condition (per subType).${hint}`);
       }
       break;
   }

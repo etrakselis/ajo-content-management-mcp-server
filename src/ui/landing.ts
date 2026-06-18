@@ -192,8 +192,16 @@ export const landingPageHtml = `<!DOCTYPE html>
       outline: none;
       transition: border-color 0.15s;
       width: 100%;
+      background: rgba(38, 142, 108, 0.06);
     }
     input[type="text"]:focus, input[type="email"]:focus { border-color: var(--adobe-red); }
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus {
+      -webkit-box-shadow: 0 0 0px 1000px rgba(38, 142, 108, 0.06) inset;
+      box-shadow: 0 0 0px 1000px rgba(38, 142, 108, 0.06) inset;
+      -webkit-text-fill-color: var(--adobe-dark);
+    }
     .required-mark { color: var(--adobe-red); }
     select {
       height: 40px;
@@ -205,7 +213,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       outline: none;
       transition: border-color 0.15s;
       width: 100%;
-      background: white;
+      background: rgba(38, 142, 108, 0.06);
       cursor: pointer;
     }
     select:focus { border-color: var(--adobe-red); }
@@ -374,6 +382,57 @@ export const landingPageHtml = `<!DOCTYPE html>
     .client-name { font-size: 14px; font-weight: 600; color: var(--adobe-dark); }
     .client-meta { margin-left: auto; font-size: 12px; color: var(--adobe-mid); font-family: 'SF Mono', 'Fira Code', monospace; }
     .clients-hint { font-size: 12px; color: var(--adobe-mid); margin-top: 14px; line-height: 1.5; }
+    .naming-section { padding-bottom: 20px; border-bottom: 1px solid var(--adobe-border); margin-bottom: 20px; }
+    .naming-section:last-child { padding-bottom: 0; border-bottom: none; margin-bottom: 0; }
+    .naming-editor-wrap { margin-top: 12px; }
+    .md-dropzone-wrap { position: relative; }
+    .md-editor {
+      width: 100%;
+      min-height: 200px;
+      border: 1px solid var(--adobe-border);
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 13px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      line-height: 1.6;
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.15s;
+      background: rgba(38, 142, 108, 0.06);
+      color: var(--adobe-dark);
+      display: block;
+    }
+    .md-editor:focus { border-color: var(--adobe-red); }
+    .md-dropzone-wrap.drag-over .md-editor { border-color: var(--adobe-red); background: rgba(250,15,0,0.02); }
+    .md-drop-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(250,15,0,0.06);
+      border: 2px dashed var(--adobe-red);
+      border-radius: 6px;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--adobe-red);
+      pointer-events: none;
+      z-index: 1;
+    }
+    .md-dropzone-wrap.drag-over .md-drop-overlay { display: flex; }
+    .md-editor-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+    .upload-md-btn {
+      padding: 4px 10px;
+      border: 1px solid var(--adobe-border);
+      background: white;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: inherit;
+      color: var(--adobe-mid);
+      flex-shrink: 0;
+    }
+    .upload-md-btn:hover { background: var(--adobe-light); }
   </style>
 </head>
 <body>
@@ -396,7 +455,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     </div>
 
     <!-- Step 1: Credentials -->
-    <section class="step" id="step1">
+    <section class="step" id="step1" data-step-name="Credentials">
     <div class="step-label">Step 1 — Credentials</div>
     <div class="card">
       <h2>Upload environment file</h2>
@@ -437,7 +496,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     </div>
 
     <!-- Step 2: Sandbox -->
-    <section class="step hidden" id="step2">
+    <section class="step hidden" id="step2" data-step-name="Sandbox">
     <div class="step-label">Step 2 — Sandbox</div>
     <div class="card">
       <h2>Select sandbox</h2>
@@ -469,9 +528,21 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     </section>
 
-    <!-- Step 3: Access mode -->
-    <section class="step hidden" id="step3">
-    <div class="step-label">Step 3 — Access mode</div>
+    <!-- Step 3: Author -->
+    <section class="step hidden" id="step3" data-step-name="Author">
+    <div class="step-label">Step 3 — Author</div>
+    <div class="card">
+      <div class="field-group">
+        <label for="authorEmailInput">Your email <span class="required-mark">*</span></label>
+        <input type="email" id="authorEmailInput" placeholder="you@company.com" autocomplete="email" />
+        <span class="hint">Recorded with every content change made while the server runs, so create/update/delete actions can be attributed to you. This is <strong>not verified</strong> — please enter your real address. The next step will appear once a valid email format is detected.</span>
+      </div>
+    </div>
+    </section>
+
+    <!-- Step 4: Access mode -->
+    <section class="step hidden" id="step4" data-step-name="Access mode (optional)">
+    <div class="step-label">Step 4 — Access mode</div>
     <div class="card">
       <h2>Write access</h2>
       <p>Control what connected LLM clients are allowed to do. The server defaults to <strong>read-only</strong> — turn this on only if you want clients to create, update, delete, publish, or archive content.</p>
@@ -489,15 +560,57 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     </section>
 
-    <!-- Step 4: Start -->
-    <section class="step hidden" id="step4">
-    <div class="step-label">Step 4 — Launch</div>
+    <!-- Step 5: Naming Convention — only shown when write access is on -->
+    <section class="step hidden" id="step5" data-step-name="Naming Convention (optional)">
+    <div class="step-label">Step 5 — Naming Convention</div>
     <div class="card">
-      <div class="field-group" style="margin-bottom: 18px;">
-        <label for="authorEmailInput">Your email <span class="required-mark">*</span></label>
-        <input type="email" id="authorEmailInput" placeholder="you@company.com" autocomplete="email" />
-        <span class="hint">Required. Recorded with every content change made while the server runs, so create/update/delete actions can be attributed to you. This is <strong>not verified</strong> — please enter your real address.</span>
+      <h2>Content naming convention</h2>
+      <p>Optionally define naming rules for content templates and fragments. When enforcement is on, the connected LLM will follow these rules automatically whenever it creates or names content — for both templates and fragments. Write your convention in markdown — the LLM reads it directly.</p>
+      <label class="toggle-row" for="namingConventionToggle" style="cursor:pointer;margin-bottom:0">
+        <span class="toggle-text">
+          <span class="toggle-title">Enforce naming convention</span>
+          <span class="hint">When on, the LLM must follow the rules below when naming new content templates and fragments.</span>
+        </span>
+        <span class="switch">
+          <input type="checkbox" id="namingConventionToggle" />
+          <span class="slider"></span>
+        </span>
+      </label>
+      <div id="namingConventionEditor" class="naming-editor-wrap" style="display:none">
+        <div class="md-dropzone-wrap" id="namingMdDropzone">
+          <textarea id="namingConventionMarkdown" class="md-editor" placeholder="# Content Naming Convention
+
+Define your naming rules here in markdown. The LLM will read and apply these rules to both templates and fragments.
+
+## Format
+Use the pattern: [channel/type]-[use-case]-[descriptor]
+
+## Template examples
+- email-promo-welcome
+- push-lifecycle-onboarding
+
+## Fragment examples
+- html-hero-header
+- expr-promo-discount-code
+
+## Rules
+- Use lowercase letters, numbers, and hyphens only
+- Be descriptive but concise"></textarea>
+          <div class="md-drop-overlay">Drop .md file here</div>
+          <input type="file" id="namingMdFileInput" accept=".md,text/markdown,text/plain" style="display:none" />
+        </div>
+        <div class="md-editor-footer">
+          <span class="hint">Type markdown directly, or drag and drop / upload a <code>.md</code> file to populate.</span>
+          <button class="upload-md-btn" type="button" id="namingMdUploadBtn">Upload .md file</button>
+        </div>
       </div>
+    </div>
+    </section>
+
+    <!-- Step 6: Launch -->
+    <section class="step hidden" id="step6" data-step-name="Launch">
+    <div class="step-label">Step 6 — Launch</div>
+    <div class="card">
       <div class="error-msg" id="errorMsg"></div>
       <button class="btn-primary" id="startBtn" disabled>
         Start MCP Server
@@ -694,6 +807,9 @@ export const landingPageHtml = `<!DOCTYPE html>
       dropzone.style.display = '';
       document.getElementById('writeToggle').checked = false;
       document.getElementById('authorEmailInput').value = '';
+      document.getElementById('namingConventionToggle').checked = false;
+      document.getElementById('namingConventionEditor').style.display = 'none';
+      document.getElementById('namingConventionMarkdown').value = '';
       document.getElementById('resetNotice').classList.add('show');
       checkReady();
     }
@@ -857,9 +973,23 @@ export const landingPageHtml = `<!DOCTYPE html>
     function syncSteps() {
       const hasCreds = !!credentials;
       const hasSandbox = !!getSandboxName();
+      const hasEmail = isAuthorEmailValid();
+      const writeOn = document.getElementById('writeToggle').checked;
       document.getElementById('step2').classList.toggle('hidden', !hasCreds);
       document.getElementById('step3').classList.toggle('hidden', !(hasCreds && hasSandbox));
-      document.getElementById('step4').classList.toggle('hidden', !(hasCreds && hasSandbox));
+      document.getElementById('step4').classList.toggle('hidden', !(hasCreds && hasSandbox && hasEmail));
+      document.getElementById('step5').classList.toggle('hidden', !(hasCreds && hasSandbox && hasEmail && writeOn));
+      document.getElementById('step6').classList.toggle('hidden', !(hasCreds && hasSandbox && hasEmail));
+      // Renumber labels sequentially based on which steps are currently visible,
+      // so the user always sees 1, 2, 3… with no gaps regardless of toggle state.
+      let n = 0;
+      document.querySelectorAll('.step').forEach(function(section) {
+        if (!section.classList.contains('hidden')) {
+          n++;
+          const label = section.querySelector('.step-label');
+          if (label) label.textContent = 'Step ' + n + ' — ' + section.dataset.stepName;
+        }
+      });
     }
 
     // Self-declared author email — required before launch. Validated only for
@@ -871,12 +1001,17 @@ export const landingPageHtml = `<!DOCTYPE html>
       return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(getAuthorEmail());
     }
 
+    let emailSyncTimer = null;
     document.getElementById('authorEmailInput').addEventListener('input', () => {
-      // Editing the author after activation invalidates it — it was sent at launch.
       if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) {
         resetActivationUI();
       }
-      checkReady();
+      // Update button state immediately so it reflects the current validity without delay.
+      startBtn.disabled = !credentials || !getSandboxName() || !isAuthorEmailValid();
+      // Debounce step reveal: wait until the user pauses typing before showing/hiding
+      // downstream steps so they don't flash in and out mid-word.
+      clearTimeout(emailSyncTimer);
+      emailSyncTimer = setTimeout(syncSteps, 600);
     });
 
     function checkReady() {
@@ -954,7 +1089,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       const allowWrites = document.getElementById('writeToggle').checked;
       let data;
       try {
-        data = await postJson('/api/configure', { credentials, sandboxName: sandbox, orgName: org || undefined, allowWrites, authorEmail: getAuthorEmail() });
+        data = await postJson('/api/configure', { credentials, sandboxName: sandbox, orgName: org || undefined, allowWrites, authorEmail: getAuthorEmail(), namingConvention: getNamingConvention() });
       } catch (err) {
         clearInterval(stepTimer);
         return failStart('Network error: ' + err.message);
@@ -1000,9 +1135,71 @@ export const landingPageHtml = `<!DOCTYPE html>
       }
     }
 
-    // Flip the access mode live once the server is active; before launch the
-    // toggle's value is simply applied when Start is clicked.
+    // ─── Naming convention ─────────────────────────────────────────────────────
+
+    function getNamingConvention() {
+      return {
+        enabled: document.getElementById('namingConventionToggle').checked,
+        markdown: document.getElementById('namingConventionMarkdown').value.trim()
+      };
+    }
+
+    (function setupNamingConvention() {
+      const dropzone = document.getElementById('namingMdDropzone');
+      const fileInput = document.getElementById('namingMdFileInput');
+      const uploadBtn = document.getElementById('namingMdUploadBtn');
+
+      uploadBtn.addEventListener('click', () => fileInput.click());
+
+      ['dragenter', 'dragover'].forEach(ev => {
+        dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+      });
+      ['dragleave', 'drop'].forEach(ev => {
+        dropzone.addEventListener(ev, () => dropzone.classList.remove('drag-over'));
+      });
+      dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          document.getElementById('namingConventionMarkdown').value = ev.target.result;
+          if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) resetActivationUI();
+        };
+        reader.readAsText(file);
+      });
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          document.getElementById('namingConventionMarkdown').value = ev.target.result;
+          if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) resetActivationUI();
+        };
+        reader.readAsText(file);
+        fileInput.value = '';
+      });
+
+      document.getElementById('namingConventionToggle').addEventListener('change', (e) => {
+        document.getElementById('namingConventionEditor').style.display = e.target.checked ? '' : 'none';
+        if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) resetActivationUI();
+      });
+
+      document.getElementById('namingConventionMarkdown').addEventListener('input', () => {
+        if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) resetActivationUI();
+      });
+    })();
+
+    // The write toggle drives step visibility (naming convention only appears when
+    // writes are on) and, once the server is active, flips the access mode live.
     document.getElementById('writeToggle').addEventListener('change', async (e) => {
+      // Turning writes off makes naming convention irrelevant — clear it so the
+      // user doesn't accidentally activate a convention they can't use.
+      if (!e.target.checked) {
+        document.getElementById('namingConventionToggle').checked = false;
+        document.getElementById('namingConventionEditor').style.display = 'none';
+      }
+      syncSteps();
       if (!document.getElementById('statusPanel').classList.contains('show')) return;
       try {
         const data = await postJson('/api/access-mode', { allowWrites: e.target.checked });

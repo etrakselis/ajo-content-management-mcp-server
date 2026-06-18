@@ -14,7 +14,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js';
 import { tokenManager } from '../auth/token-manager.js';
-import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, getConfiguredAuthorEmail, listFragments, listTemplates, getFragment, getTemplate, buildError } from '../adobe/client.js';
+import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, getConfiguredAuthorEmail, getConfiguredNamingConvention, listFragments, listTemplates, getFragment, getTemplate, buildError } from '../adobe/client.js';
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
@@ -171,25 +171,38 @@ const stripConfirmFlag = (args: unknown): unknown => {
 // validate arguments against the schema and drop any property that isn't there,
 // so an undeclared flag never reaches the server and the gate can't be cleared.
 // Injected into write tools in ListTools (below) so it lives in one place.
-const CONFIRM_PROP = {
-  type: 'boolean' as const,
-  description: 'Confirmation gate for clients without MCP elicitation support. Leave this unset on the ' +
-    'first call — the server will hold the write and return a WRITE_CONFIRMATION_REQUIRED message naming ' +
-    'the target (org, tenant, sandbox). Only after the user has explicitly confirmed that target, re-invoke ' +
-    'the same tool with the same arguments plus confirmWrite: true. Never set this without the user’s confirmation.'
-};
+// The confirmWrite description is tool-specific so it accurately predicts that
+// tool's first-call behavior (see confirmWriteTarget): destructive/irreversible
+// writes re-confirm on EVERY call; ordinary writes are held only the first time a
+// target is written to in a session, then proceed without a hold.
+function confirmPropFor(toolName: string) {
+  const always = isDestructiveTool(toolName) || isIrreversibleTool(toolName);
+  const description = always
+    ? 'Confirmation gate for clients without MCP elicitation support. This operation is ' +
+      'destructive/irreversible, so it is re-confirmed on EVERY call. Leave this unset on the first call — ' +
+      'the server holds the write and returns a WRITE_CONFIRMATION_REQUIRED message naming the target ' +
+      '(org, tenant, sandbox). Only after the user has explicitly confirmed, re-invoke the same tool with the ' +
+      'same arguments plus confirmWrite: true. Never set this without the user’s confirmation.'
+    : 'Confirmation gate for clients without MCP elicitation support. The FIRST write to a given target ' +
+      '(sandbox) in a session is held: leave this unset and the server returns a WRITE_CONFIRMATION_REQUIRED ' +
+      'message naming the target (org, tenant, sandbox); after the user confirms, re-invoke the same tool with ' +
+      'the same arguments plus confirmWrite: true. Once that target has been confirmed in the session, later ' +
+      'non-destructive writes proceed immediately (no hold, no confirmWrite needed). Never set this without the ' +
+      'user’s confirmation.';
+  return { type: 'boolean' as const, description };
+}
 
 // Append the runtime-gate note to a write tool's description and declare the
 // confirmWrite flag on its input schema. Returns a shallow copy so the shared
 // ALL_TOOLS definitions are never mutated.
-function augmentWriteTool<T extends { description: string; inputSchema: unknown }>(tool: T): T {
+function augmentWriteTool<T extends { name: string; description: string; inputSchema: unknown }>(tool: T): T {
   const schema = (tool.inputSchema ?? {}) as { properties?: Record<string, unknown> };
   return {
     ...tool,
     description: tool.description + WRITE_TOOL_NOTE,
     inputSchema: {
       ...schema,
-      properties: { ...(schema.properties ?? {}), [CONFIRM_ARG]: CONFIRM_PROP }
+      properties: { ...(schema.properties ?? {}), [CONFIRM_ARG]: confirmPropFor(tool.name) }
     }
   };
 }
@@ -334,6 +347,14 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       `(create, update, delete, publish, archive) made through this server.`
     : '';
 
+  // Naming convention rules set by the administrator on the config page. When a
+  // convention is enabled the LLM MUST follow it when creating or renaming content.
+  // Surfaced here (in instructions) so it's applied automatically for every call.
+  const namingConvention = getConfiguredNamingConvention();
+  const namingConventionNote = (namingConvention?.enabled && namingConvention.markdown.trim())
+    ? ` NAMING CONVENTIONS: The administrator has defined naming rules that you MUST follow when creating or naming both content templates AND content fragments. Do not deviate from these rules even if the user asks for a different name — explain the convention and suggest a compliant name instead. Rules:\n${namingConvention.markdown.trim()}`
+    : '';
+
   const instructions = (tenantDesc
     ? `You are connected to Adobe Journey Optimizer for ${tenantDesc}. ` +
       `Always display the tenant namespace and sandbox name when discussing content operations. ` +
@@ -341,7 +362,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       `sandbox "${sandbox}"${tenantNamespace ? ` (tenant: ${tenantNamespace})` : ''} is the intended target.`
     : `You are connected to an AJO Content MCP server. ` +
       `No sandbox has been configured yet — ask the user to open http://localhost:3000 and complete setup before making any content changes.`)
-    + authorNote + dynamicNote + personalizationNote + resourceNote + promptNote + toolIndexNote;
+    + authorNote + dynamicNote + namingConventionNote + personalizationNote + resourceNote + promptNote + toolIndexNote;
 
   const server = new Server(
     {

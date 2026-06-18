@@ -94,6 +94,67 @@ export function compatibilityModeWarning(html: unknown): string | null {
     `Call get_visual_designer_requirements for the required structure and reproduce it to keep the design editable.`;
 }
 
+// Estimate the on-the-wire byte size of the MCP tool result for a `{ success, ... }`
+// envelope, modeling toToolResult (in mcp/server.ts): a pretty-printed text content
+// block PLUS a compact structuredContent copy. The ~1 MB transport cap applies to
+// THIS encoded result, not the raw resolved object — and when the whole result is
+// JSON-encoded for transport, the pretty JSON inside the text block has its quotes
+// and newlines escaped again, inflating it substantially. A size guard must compare
+// against this number (and report it) so the cited size and the cited limit agree.
+export function encodedToolResultSize(envelope: unknown): number {
+  const toolResult = {
+    content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }],
+    structuredContent: envelope
+  };
+  return Buffer.byteLength(JSON.stringify(toolResult), 'utf8');
+}
+
+// Scan a serialized content payload for data-fragment="..." references and split
+// them into well-formed embeds (a required ajo:/aem:/external: prefix + UUID) and
+// malformed ones (e.g. a bare UUID with no prefix). AJO accepts a malformed embed
+// at write time but it fails later at render ("Forbidden: fragment URI syntax is
+// incorrect"), so the server flags it. Scanning the JSON form (quotes escaped as
+// \") avoids having to know which per-channel field holds the HTML. De-duplicated;
+// the source prefix is preserved.
+const FRAGMENT_UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
+const DATA_FRAGMENT_VALUE_RE = /data-fragment=\\?"([^"\\]+)\\?"/g;
+const VALID_FRAGMENT_REF_RE = new RegExp(`^(ajo|aem|external):(${FRAGMENT_UUID})$`);
+
+export interface FragmentRef { reference: string; source: string; id: string; }
+
+export function scanDataFragments(data: unknown): { embedded: FragmentRef[]; malformed: string[] } {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(data) ?? '';
+  } catch {
+    return { embedded: [], malformed: [] };
+  }
+  const embedded: FragmentRef[] = [];
+  const malformed: string[] = [];
+  const seenEmbed = new Set<string>();
+  const seenBad = new Set<string>();
+  let m: RegExpExecArray | null;
+  DATA_FRAGMENT_VALUE_RE.lastIndex = 0;
+  while ((m = DATA_FRAGMENT_VALUE_RE.exec(serialized)) !== null) {
+    const value = m[1];
+    const valid = VALID_FRAGMENT_REF_RE.exec(value);
+    if (valid) {
+      if (!seenEmbed.has(value)) { seenEmbed.add(value); embedded.push({ reference: value, source: valid[1], id: valid[2] }); }
+    } else if (!seenBad.has(value)) {
+      seenBad.add(value);
+      malformed.push(value);
+    }
+  }
+  return { embedded, malformed };
+}
+
+// Build warnings[] entries for any malformed (prefix-less) data-fragment embeds.
+export function malformedFragmentWarnings(data: unknown): string[] {
+  return scanDataFragments(data).malformed.map(v =>
+    `data-fragment value "${v}" is missing a required ajo:/aem:/external: prefix; this embed will fail at render ` +
+    `(Forbidden: fragment URI syntax is incorrect). See get_visual_designer_requirements.`);
+}
+
 // Standard pagination envelope, shared by every list result.
 const PAGE_PROPS = {
   type: 'object' as const,

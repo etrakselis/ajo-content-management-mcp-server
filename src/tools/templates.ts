@@ -7,7 +7,7 @@ import {
   ListTemplatesSchema, CreateTemplateSchema, GetTemplateSchema,
   UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, scanDataFragments, malformedFragmentWarnings, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
 
 // Pull the email HTML out of a template payload for the native-format check. The
 // "content" shape carries it at template.html.body (an object); the legacy "html"
@@ -24,33 +24,14 @@ function emailHtmlOf(data: { channels?: string[]; templateType?: string; templat
   return t.html;
 }
 
-// Inline fragment embeds use markup like data-fragment="ajo:<uuid>" in the body.
-// AJO's own `referencedFragments` array does NOT capture these inline embeds, so a
-// caller checking it is misled into thinking nothing is referenced. Derive the real
-// set by scanning the serialized template for the attribute. We scan the JSON form
-// (so the quote characters are escaped as \") to avoid having to know which per-
-// channel field holds the HTML. UUIDs are de-duplicated; the source prefix is kept.
-const DATA_FRAGMENT_RE = /data-fragment=\\?"(ajo|aem|external):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\?"/g;
-
-function extractEmbeddedFragments(data: unknown): Array<{ reference: string; source: string; id: string }> {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(data);
-  } catch {
-    return [];
-  }
-  const seen = new Set<string>();
-  const out: Array<{ reference: string; source: string; id: string }> = [];
-  let m: RegExpExecArray | null;
-  DATA_FRAGMENT_RE.lastIndex = 0;
-  while ((m = DATA_FRAGMENT_RE.exec(serialized)) !== null) {
-    const reference = `${m[1]}:${m[2]}`;
-    if (!seen.has(reference)) {
-      seen.add(reference);
-      out.push({ reference, source: m[1], id: m[2] });
-    }
-  }
-  return out;
+// Non-fatal advisories for a template write that still succeeds: Compatibility-mode
+// HTML (email) plus any prefix-less data-fragment embeds anywhere in the body.
+function templateWarnings(data: { channels?: string[]; templateType?: string; template?: Record<string, unknown> }): string[] {
+  const warnings: string[] = [];
+  const compat = compatibilityModeWarning(emailHtmlOf(data));
+  if (compat) warnings.push(compat);
+  warnings.push(...malformedFragmentWarnings(data.template));
+  return warnings;
 }
 
 // ─── Shared input-schema fragments ──────────────────────────────────────────
@@ -73,7 +54,8 @@ const TEMPLATE_CONTENT_SCHEMA = {
     '• sms → { text (required), messageType?: "sms"|"mms", title?: "mms subject", mediaUri? }  (the body field is "text", NOT "body")\n' +
     '• inapp → { body: { html: "<html>..." } (required, an OBJECT), mobileParameters?, editorContext? }\n' +
     '• directMail → { fileName (required), appendTimeStamp?, notes?, notesPosition?: "header"|"footer", sortBy?, attributes?: [{ label, data }] }\n' +
-    '• code / shared → free-form (provider-defined).',
+    '• code → { html: "<string>" } | { expression: "<string>" } | { condition: "<string>" }  (exactly one; pick per subType — HTML→html, JSON→expression/condition. NOTE: the key is one of html/expression/condition, NOT "content")\n' +
+    '• shared → free-form (provider-defined).',
   properties: {
     // email (templateType "content" → email-variant-detail)
     subject: { type: 'string', description: 'Email subject line. REQUIRED for email content templates (templateType "content", channel "email") — the recommended default for new email templates. Not used by the legacy templateType "html".' },
@@ -228,7 +210,7 @@ Channel → templateType → template shape (channels must have exactly 1 value)
   "push"        → "content"            → { "title": "...", "message": "...", "pushType"?: "message"|"silent", "ios"?: {...}, "android"?: {...} }  (deep links go in ios/android interaction.uri)
   "sms"         → "content"            → { "text": "..." }  (field is "text", not "body"; optional: messageType, title, mediaUri)
   "inapp"       → "content"            → { "body": { "html": "<html>..." } }  (body is an OBJECT; optional: mobileParameters, editorContext)
-  "code"        → "content" + subType  → { ... }  subType: "HTML" or "JSON"
+  "code"        → "content" + subType  → { "html": "<string>" } OR { "expression": "<string>" } OR { "condition": "<string>" }  (subType "HTML" or "JSON"; the body key is html/expression/condition, NOT "content")
   "directMail"  → "content"            → { "fileName": "...", ... }  (fileName REQUIRED; optional: appendTimeStamp, notes, notesPosition, sortBy, attributes)
   "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page" for confirmation pages)
   "shared"      → "content"            → { ... }  (provider-defined)
@@ -301,8 +283,8 @@ export async function handleCreateContentTemplate(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const result = await createTemplate(parsed.data);
-      const warning = compatibilityModeWarning(emailHtmlOf(parsed.data));
-      return { success: true, ...result, ...(warning ? { warnings: [warning] } : {}) };
+      const warnings = templateWarnings(parsed.data);
+      return { success: true, ...result, ...(warnings.length ? { warnings } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -328,15 +310,20 @@ export const getContentTemplateDefinition = {
           id: { type: 'string', description: 'Fragment UUID.' }
         }
       }
+    },
+    invalidFragmentReferences: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Present only when the body contains data-fragment values missing a required ajo:/aem:/external: prefix (e.g. a bare UUID). These are broken embeds that will fail at render — fix them by adding the prefix. Absent when all embeds are well-formed.'
     }
   }),
   description: `Fetch a single content template by ID from Adobe Journey Optimizer.
 
 Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
-Returns: { success: true, data: { id, name, templateType, channels, template, createdAt, modifiedAt, ... }, etag: "...", embeddedFragments: [{ reference, source, id }] }
+Returns: { success: true, data: { id, name, templateType, channels, template, createdAt, modifiedAt, ... }, etag: "...", embeddedFragments: [{ reference, source, id }], invalidFragmentReferences?: ["<bad value>"] }
 The etag is required for update (PUT/PATCH) operations.
-NOTE on fragment references: the upstream data.referencedFragments only lists formally-registered references and is empty for inline data-fragment="(ajo|aem|external):<uuid>" embeds. The server-derived embeddedFragments array DOES capture those inline embeds — use it (not referencedFragments) to confirm what a template embeds.`,
+NOTE on fragment references: the upstream data.referencedFragments only lists formally-registered references and is empty for inline data-fragment="(ajo|aem|external):<uuid>" embeds. The server-derived embeddedFragments array DOES capture those inline embeds — use it (not referencedFragments) to confirm what a template embeds. If invalidFragmentReferences is present, the body has data-fragment values missing the required ajo:/aem:/external: prefix; those embeds are broken and will fail at render.`,
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
@@ -355,8 +342,13 @@ export async function handleGetContentTemplate(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const result = await getTemplate(parsed.data.templateId);
-      const embeddedFragments = extractEmbeddedFragments(result.data);
-      return { success: true, ...result, embeddedFragments };
+      const { embedded, malformed } = scanDataFragments(result.data);
+      return {
+        success: true,
+        ...result,
+        embeddedFragments: embedded,
+        ...(malformed.length ? { invalidFragmentReferences: malformed } : {})
+      };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -389,7 +381,7 @@ Channel → templateType → template shape (channels must have exactly 1 value)
   "push"        → "content"            → { "title": "...", "message": "...", "pushType"?: "message"|"silent", "ios"?: {...}, "android"?: {...} }
   "sms"         → "content"            → { "text": "..." }  (field is "text", not "body"; optional: messageType, title, mediaUri)
   "inapp"       → "content"            → { "body": { "html": "<html>..." } }  (body is an OBJECT)
-  "code"        → "content" + subType  → { ... }  subType: "HTML" or "JSON"
+  "code"        → "content" + subType  → { "html": "<string>" } OR { "expression": "<string>" } OR { "condition": "<string>" }  (subType "HTML" or "JSON"; the body key is html/expression/condition, NOT "content")
   "directMail"  → "content"            → { "fileName": "...", ... }  (fileName REQUIRED)
   "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page")
   "shared"      → "content"            → { ... }
@@ -465,8 +457,8 @@ export async function handleUpdateContentTemplate(args: unknown) {
     const { templateId, etag, ...payload } = parsed.data;
     try {
       const result = await updateTemplate(templateId, payload, etag);
-      const warning = compatibilityModeWarning(emailHtmlOf(parsed.data));
-      return { ...result, success: true, ...(warning ? { warnings: [warning] } : {}) };
+      const warnings = templateWarnings(parsed.data);
+      return { ...result, success: true, ...(warnings.length ? { warnings } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }

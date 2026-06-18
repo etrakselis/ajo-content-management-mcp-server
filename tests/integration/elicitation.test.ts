@@ -31,6 +31,7 @@ jest.mock('../../src/adobe/client', () => ({
   getConfiguredOrgName: jest.fn().mockReturnValue('Acme'),
   getConfiguredTenantId: jest.fn().mockReturnValue('acme'),
   getConfiguredAuthorEmail: jest.fn().mockReturnValue('author@example.com'),
+  getConfiguredNamingConvention: jest.fn().mockReturnValue(undefined),
   listFragments: jest.fn().mockResolvedValue({ items: [] }),
   archiveFragment: jest.fn().mockResolvedValue({ id: 'frag-1', etag: '"v2"' }),
   createFragment: jest.fn().mockResolvedValue({ id: 'frag-new', location: '/fragments/frag-new' }),
@@ -247,6 +248,26 @@ describe('write-confirmation via elicitation', () => {
 
     const read = tools.find(t => t.name === 'list_content_fragments')!;
     expect((read.inputSchema.properties as Record<string, unknown> | undefined)?.confirmWrite).toBeUndefined();
+  });
+
+  test('confirmWrite description matches each tool\'s actual first-call behavior (A′)', async () => {
+    const { client } = await connectClient({ elicitation: false });
+    const { tools } = await client.listTools();
+    const confirmDesc = (name: string) => {
+      const t = tools.find(x => x.name === name)!;
+      return ((t.inputSchema.properties as Record<string, { description?: string }>).confirmWrite?.description) ?? '';
+    };
+
+    // Non-destructive: held once per target per session, then proceeds.
+    const create = confirmDesc('create_content_fragment');
+    expect(create).toMatch(/FIRST write to a given target/);
+    expect(create).toMatch(/later non-destructive writes proceed/i);
+    expect(create).not.toMatch(/EVERY call/);
+
+    // Destructive / irreversible: re-confirmed on every call.
+    for (const name of ['archive_content_fragment', 'delete_content_template', 'publish_content_fragment']) {
+      expect(confirmDesc(name)).toMatch(/EVERY call/);
+    }
   });
 
   test('reads are never gated by confirmation', async () => {

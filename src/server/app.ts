@@ -5,7 +5,7 @@ import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
 import { tokenManager, AdobeCredentials } from '../auth/token-manager.js';
 import axios from 'axios';
-import { configureAdobeClient, resetAdobeClient, listTemplates } from '../adobe/client.js';
+import { configureAdobeClient, resetAdobeClient, listTemplates, type NamingConventionConfig } from '../adobe/client.js';
 
 import { CredentialsFileSchema } from '../validation/schemas.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -100,6 +100,22 @@ function parseConfigRequest(body: Record<string, unknown>): ParsedConfigRequest 
     creds: extracted.creds,
     sandboxName,
     orgName: typeof orgName === 'string' && orgName.trim() ? orgName.trim() : undefined
+  };
+}
+
+// Parse and sanitize naming convention config from the configure request body.
+// Caps markdown length to prevent oversized payloads from bloating MCP instructions.
+const MAX_CONVENTION_MARKDOWN_LEN = 10_000;
+
+function parseNamingConvention(raw: unknown): NamingConventionConfig | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.enabled !== 'boolean') return undefined;
+  return {
+    enabled: obj.enabled,
+    markdown: typeof obj.markdown === 'string'
+      ? obj.markdown.slice(0, MAX_CONVENTION_MARKDOWN_LEN)
+      : ''
   };
 }
 
@@ -583,6 +599,9 @@ export function createExpressApp(): express.Application {
     // Access mode — read-only by default; writes only when explicitly enabled.
     setWritesAllowed(req.body?.allowWrites === true);
 
+    // Optional naming convention — parsed and sanitized before storage.
+    const namingConvention = parseNamingConvention((req.body as Record<string, unknown>)?.namingConvention);
+
     // Apply credentials so the token manager can acquire an IMS token
     tokenManager.setCredentials(creds);
 
@@ -612,7 +631,8 @@ export function createExpressApp(): express.Application {
       apiKey: creds.API_KEY!,
       orgName,
       tenantId: detectedTenantId,
-      authorEmail
+      authorEmail,
+      ...(namingConvention ? { namingConvention } : {})
     });
 
     // ── Step 3: validate sandbox via lightweight read call ────────────────────

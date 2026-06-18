@@ -4,6 +4,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { tokenManager } from '../auth/token-manager.js';
 import { logger, adobeApiErrorCounter } from '../telemetry/index.js';
 
+export interface NamingConventionConfig {
+  enabled: boolean;
+  markdown: string;
+}
+
 export interface AdobeClientConfig {
   sandboxName: string;
   imsOrg: string;
@@ -12,6 +17,7 @@ export interface AdobeClientConfig {
   tenantId?: string;     // auto-detected AEP namespace, e.g. "etrakselis"
   authorEmail?: string;  // self-declared author email, recorded with content changes
   baseUrl?: string;
+  namingConvention?: NamingConventionConfig;
 }
 
 export interface PaginationParams {
@@ -133,6 +139,10 @@ export function getConfiguredApiKey(): string | null {
 
 export function getConfiguredImsOrg(): string | null {
   return clientConfig?.imsOrg ?? null;
+}
+
+export function getConfiguredNamingConvention(): NamingConventionConfig | undefined {
+  return clientConfig?.namingConvention;
 }
 
 export function resetAdobeClient(): void {

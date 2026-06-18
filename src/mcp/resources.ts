@@ -559,6 +559,31 @@ API_ERROR  (any other HTTP error)
             For 5xx: the AJO service may be temporarily unavailable; retry once, then
             tell the user if it persists.
 
+TIMEOUT
+  Cause:    The upstream Adobe API did not respond within the request timeout. No result
+            was returned (the call was neither accepted nor rejected on its merits).
+  Recovery: Usually transient. Wait a few seconds and retry the same call.
+
+RESPONSE_TOO_LARGE
+  Cause:    A fully-resolved schema (get_xdm_union_schema / get_xdm_schema /
+            get_xdm_field_group with full=true) exceeds the ~1 MB tool-result limit.
+  Recovery: Re-run with full=false to get the field-group $refs, then call
+            get_xdm_field_group (full=true) on each ref to retrieve attributes one
+            group at a time.
+
+CJMMAS-1079  (appears as VALIDATION_ERROR / HTTP 400 from the AJO API)
+  Cause:    "The template body is not valid." The template's content payload does not
+            match the shape AJO expects for the given channel + templateType. Most
+            commonly seen on the "code" channel: the body key is validated client-side
+            (must be html / expression / condition, not "content"), but AJO additionally
+            requires a specific body STRUCTURE that a bare HTML/JSON string does not
+            satisfy — so a doc-compliant "code" call can still be rejected here.
+  Recovery: Re-check the channel→templateType→shape mapping in the create_/update_
+            content_template tool description. For "code" specifically, a working body
+            shape could not be determined from the public API spec; author code-channel
+            templates in the AJO UI if this persists. CJMMAS is the Message Authoring
+            Service prefix — the "message"/"details" carry AJO's own description.
+
 INTERNAL_ERROR
   Cause:    An unexpected exception occurred inside the MCP server itself (not an API
             error). The "message" field has the raw exception message.

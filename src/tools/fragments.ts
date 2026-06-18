@@ -9,7 +9,17 @@ import {
   UpdateFragmentSchema, PatchFragmentSchema, PublishFragmentSchema,
   GetLiveFragmentSchema, GetPublicationStatusSchema, ArchiveFragmentSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, malformedFragmentWarnings, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
+
+// Non-fatal advisories for a fragment write that still succeeds: Compatibility-mode
+// HTML (email html fragments) plus any prefix-less data-fragment embeds in the body.
+function fragmentWarnings(data: { type?: string; fragment?: Record<string, unknown> }): string[] {
+  const warnings: string[] = [];
+  const compat = data.type === 'html' ? compatibilityModeWarning(data.fragment?.content) : null;
+  if (compat) warnings.push(compat);
+  warnings.push(...malformedFragmentWarnings(data.fragment));
+  return warnings;
+}
 
 // ─── Shared input-schema fragments ──────────────────────────────────────────
 // The content payload is a discriminated union on `type`: html fragments carry
@@ -259,8 +269,8 @@ export async function handleCreateContentFragment(args: unknown) {
     try {
       const payload = { ...parsed.data, source: parsed.data.source ?? { origin: 'ajo' as const } };
       const result = await createFragment(payload);
-      const warning = parsed.data.type === 'html' ? compatibilityModeWarning(parsed.data.fragment?.content) : null;
-      return { success: true, ...result, ...(warning ? { warnings: [warning] } : {}) };
+      const warnings = fragmentWarnings(parsed.data);
+      return { success: true, ...result, ...(warnings.length ? { warnings } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -386,8 +396,8 @@ export async function handleUpdateContentFragment(args: unknown) {
     const payload = { ...rest, source: rest.source ?? { origin: 'ajo' as const } };
     try {
       const result = await updateFragment(fragmentId, payload, etag);
-      const warning = parsed.data.type === 'html' ? compatibilityModeWarning(parsed.data.fragment?.content) : null;
-      return { ...result, success: true, ...(warning ? { warnings: [warning] } : {}) };
+      const warnings = fragmentWarnings(parsed.data);
+      return { ...result, success: true, ...(warnings.length ? { warnings } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }

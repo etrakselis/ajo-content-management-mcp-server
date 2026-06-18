@@ -1,6 +1,6 @@
 import {
   isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName,
-  getConfiguredTenantId, getConfiguredAuthorEmail
+  getConfiguredTenantId, getConfiguredAuthorEmail, getConfiguredNamingConvention
 } from '../adobe/client.js';
 import { getWritesAllowed } from '../mcp/access-policy.js';
 import type { ToolCatalogGroup } from '../mcp/tool-catalog.js';
@@ -97,6 +97,7 @@ export async function handleGetServerContext(_args?: unknown) {
     // a missing key reads cleanly to the LLM, whereas a null invites it to mention
     // a non-existent org.
     const orgName = getConfiguredOrgName()?.trim();
+    const namingConvention = getConfiguredNamingConvention();
     return {
       success: true,
       data: {
@@ -106,6 +107,7 @@ export async function handleGetServerContext(_args?: unknown) {
         ...(orgName ? { orgName } : {}),
         writeAccess: getWritesAllowed(),
         configured: true,
+        ...(namingConvention ? { namingConvention } : {}),
         tools: toolCatalog,
         resources: RESOURCE_ACCESS_CATALOG
       }

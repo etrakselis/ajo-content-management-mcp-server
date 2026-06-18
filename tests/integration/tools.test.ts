@@ -18,6 +18,7 @@ jest.mock('../../src/adobe/client', () => ({
   getConfiguredOrgName: jest.fn().mockReturnValue(null),
   getConfiguredTenantId: jest.fn().mockReturnValue('mytenant'),
   getConfiguredAuthorEmail: jest.fn().mockReturnValue('author@example.com'),
+  getConfiguredNamingConvention: jest.fn().mockReturnValue(undefined),
   listTemplates: jest.fn(),
   createTemplate: jest.fn(),
   getTemplate: jest.fn(),
@@ -228,6 +229,32 @@ describe('Template Tools Integration', () => {
     ]);
   });
 
+  test('get_content_template surfaces prefix-less data-fragment values as invalidFragmentReferences (#3)', async () => {
+    const bareUuid = '301c64ce-4085-4e86-8afc-254854d3c34c';
+    mockClient.getTemplate.mockResolvedValue({
+      data: { id: VALID_UUID, templateType: 'content', template: { html: { body: `<div data-fragment="${bareUuid}"></div>` } } },
+      etag: '"abc"'
+    });
+    const result = await handleGetContentTemplate({ templateId: VALID_UUID }) as {
+      embeddedFragments: unknown[]; invalidFragmentReferences?: string[];
+    };
+    expect(result.embeddedFragments).toEqual([]);
+    expect(result.invalidFragmentReferences).toEqual([bareUuid]);
+  });
+
+  test('create_content_template warns when a data-fragment value lacks an ajo:/aem:/external: prefix (#3)', async () => {
+    mockClient.createTemplate.mockResolvedValue({ id: 'df1', location: '/templates/df1', etag: '"v1"' });
+    const bareUuid = '301c64ce-4085-4e86-8afc-254854d3c34c';
+    const nativeHtml = `<html><head><meta name="content-version" content="1"></head><body><div class="acr-structure" data-fragment="${bareUuid}"></div></body></html>`;
+    const result = await handleCreateContentTemplate({
+      name: 'Embed', templateType: 'content', channels: ['email'],
+      template: { subject: 'Hi', html: { body: nativeHtml } }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    // native HTML → no compat warning; but the bare-UUID embed → a malformed-ref warning.
+    expect(result.warnings?.some(w => w.includes('missing a required ajo:/aem:/external: prefix'))).toBe(true);
+  });
+
   // update (PUT)
 
   test('update_content_template succeeds', async () => {
@@ -356,10 +383,28 @@ describe('Template Tools Integration', () => {
     expect(result.error.details.some(d => d.path === 'template.text')).toBe(true);
   });
 
-  test('create_content_template keeps code/shared free-form (P1-1)', async () => {
+  test('create_content_template validates code body keys (html/expression/condition), rejects content (#2)', async () => {
+    const bad = await handleCreateContentTemplate({
+      name: 'Code', templateType: 'content', channels: ['code'], subType: 'HTML',
+      template: { content: '<html/>' }
+    }) as { success: boolean; error: { code: string; details: Array<{ path: string; message: string }> } };
+    expect(bad.success).toBe(false);
+    expect(bad.error.code).toBe('VALIDATION_ERROR');
+    expect(bad.error.details.some(d => d.path === 'template' && /html.*expression.*condition/.test(d.message))).toBe(true);
+    expect(mockClient.createTemplate).not.toHaveBeenCalled();
+
     mockClient.createTemplate.mockResolvedValue({ id: 'c2', location: '/templates/c2', etag: '"v1"' });
+    const ok = await handleCreateContentTemplate({
+      name: 'Code', templateType: 'content', channels: ['code'], subType: 'HTML',
+      template: { html: '<div>x</div>' }
+    }) as { success: boolean };
+    expect(ok.success).toBe(true);
+  });
+
+  test('create_content_template keeps shared channel free-form', async () => {
+    mockClient.createTemplate.mockResolvedValue({ id: 'sh1', location: '/templates/sh1', etag: '"v1"' });
     const result = await handleCreateContentTemplate({
-      name: 'Code', templateType: 'content', channels: ['code'], subType: 'JSON',
+      name: 'Shared', templateType: 'content', channels: ['shared'],
       template: { anything: { goes: true } }
     }) as { success: boolean };
     expect(result.success).toBe(true);
@@ -524,6 +569,17 @@ describe('Fragment Tools Integration', () => {
     }) as { success: boolean; warnings?: string[] };
     expect(result.success).toBe(true);
     expect(result.warnings?.[0]).toMatch(/Compatibility mode/);
+  });
+
+  test('create_content_fragment warns on a prefix-less data-fragment embed (#3)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-10', location: '/fragments/f-10', etag: '"v1"' });
+    const bareUuid = '301c64ce-4085-4e86-8afc-254854d3c34c';
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content: `<div data-fragment="${bareUuid}"></div>` }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings?.some(w => w.includes('missing a required ajo:/aem:/external: prefix'))).toBe(true);
   });
 
   // get

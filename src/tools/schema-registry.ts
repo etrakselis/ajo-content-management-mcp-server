@@ -10,7 +10,29 @@ import {
   ListXdmFieldGroupsSchema, GetXdmFieldGroupSchema,
   ListXdmUnionSchemasSchema, GetXdmUnionSchemaSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, DATA_OBJECT, LIST_DATA } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, encodedToolResultSize, DATA_OBJECT, LIST_DATA } from './utils.js';
+
+// A fully-resolved schema (full=true) can exceed the 1 MB tool-result transport
+// cap, which would otherwise surface as a bare "Tool result is too large" transport
+// truncation the caller can't branch on. We short-circuit with a structured
+// RESPONSE_TOO_LARGE BEFORE returning, measuring the ACTUAL MCP-ENCODED result size
+// (the layer the cap applies to) — not the raw object — so the size we report and
+// the limit we cite are internally consistent.
+const RESPONSE_BYTE_CAP = 1_000_000; // headroom under the 1,048,576 hard cap + JSON-RPC wrapper
+
+function oversizeError(data: unknown, recovery: string) {
+  const bytes = encodedToolResultSize({ success: true, data });
+  if (bytes <= RESPONSE_BYTE_CAP) return null;
+  const kb = Math.round(bytes / 1024);
+  return {
+    success: false as const,
+    error: {
+      code: 'RESPONSE_TOO_LARGE',
+      message: `The resolved schema serializes to ~${kb} KB as an MCP tool result, over the ~1 MB (1024 KB) limit. ${recovery}`,
+      details: { bytes }
+    }
+  };
+}
 
 const PERSONALIZATION_HINT =
   `Use these to find the REAL personalization attribute paths configured in this sandbox instead of ` +
@@ -93,7 +115,10 @@ export async function handleGetXdmSchema(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const { container, schemaId, full } = parsed.data;
-      return { success: true, data: await getSchema(container as Container, schemaId, full) };
+      const data = await getSchema(container as Container, schemaId, full);
+      const tooBig = oversizeError(data, 'Re-run with full=false to get the field-group $refs, then call get_xdm_field_group (full=true) on each group you need.');
+      if (tooBig) return tooBig;
+      return { success: true, data };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -168,7 +193,10 @@ export async function handleGetXdmFieldGroup(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const { container, fieldGroupId, full } = parsed.data;
-      return { success: true, data: await getFieldGroup(container as Container, fieldGroupId, full) };
+      const data = await getFieldGroup(container as Container, fieldGroupId, full);
+      const tooBig = oversizeError(data, 'Re-run with full=false to get the unresolved definition (the fully-resolved form is too large to return).');
+      if (tooBig) return tooBig;
+      return { success: true, data };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -236,7 +264,10 @@ export async function handleGetXdmUnionSchema(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const { unionId, full } = parsed.data;
-      return { success: true, data: await getUnionSchema(unionId, full) };
+      const data = await getUnionSchema(unionId, full);
+      const tooBig = oversizeError(data, 'Re-run with full=false to get the field-group $refs, then call get_xdm_field_group (full=true) on each one you need.');
+      if (tooBig) return tooBig;
+      return { success: true, data };
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
