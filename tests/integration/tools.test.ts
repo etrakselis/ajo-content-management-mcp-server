@@ -314,6 +314,45 @@ describe('Template Tools Integration', () => {
     expect(result.error.code).toBe('NOT_CONFIGURED');
   });
 
+  test('patch_content_template normalizes replace→add for /tagIds (Issue 2)', async () => {
+    mockClient.patchTemplate.mockResolvedValue({ success: true, etag: '"v2"' });
+    await handlePatchContentTemplate({
+      templateId: VALID_UUID, etag: '"v1"',
+      patches: [{ op: 'replace', path: '/tagIds', value: ['b4d081a7-fe4b-4c24-9491-2a246902c9ab'] }]
+    });
+    expect(mockClient.patchTemplate).toHaveBeenCalledWith(
+      VALID_UUID,
+      [{ op: 'add', path: '/tagIds', value: ['b4d081a7-fe4b-4c24-9491-2a246902c9ab'] }],
+      '"v1"'
+    );
+  });
+
+  // create/update — organization (Issue 1 two-step, Issue 3 tagIds)
+
+  test('create_content_template files into a folder via a follow-up add PATCH (Issue 1)', async () => {
+    mockClient.createTemplate.mockResolvedValue({ id: 't-fold', location: '/templates/t-fold', etag: '"v1"' });
+    mockClient.patchTemplate.mockResolvedValue({ success: true, etag: '"v2"' });
+    const result = await handleCreateContentTemplate({
+      name: 'Filed', templateType: 'html', channels: ['email'],
+      template: { html: '<html>x</html>' }, parentFolderId: '05472be1-a554-40a7-ac03-67b31d62f61f'
+    }) as { success: boolean; etag?: string };
+    expect(result.success).toBe(true);
+    expect(mockClient.createTemplate).toHaveBeenCalledWith(expect.not.objectContaining({ parentFolderId: expect.anything() }));
+    expect(mockClient.patchTemplate).toHaveBeenCalledWith('t-fold', [{ op: 'add', path: '/parentFolderId', value: '05472be1-a554-40a7-ac03-67b31d62f61f' }], '"v1"');
+    expect(result.etag).toBe('"v2"');
+  });
+
+  test('update_content_template strips parentFolderId from the PUT body (Issue 1)', async () => {
+    mockClient.updateTemplate.mockResolvedValue({ success: true });
+    await handleUpdateContentTemplate({
+      templateId: VALID_UUID, etag: '"v1"', name: 'T', templateType: 'html', channels: ['email'],
+      template: { html: '<html>x</html>' }, parentFolderId: '05472be1-a554-40a7-ac03-67b31d62f61f', tagIds: ['b4d081a7-fe4b-4c24-9491-2a246902c9ab']
+    });
+    const payload = mockClient.updateTemplate.mock.calls[0][1] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty('parentFolderId');
+    expect(payload).toHaveProperty('tagIds', ['b4d081a7-fe4b-4c24-9491-2a246902c9ab']);
+  });
+
   // delete
 
   test('delete_content_template calls correct API', async () => {
@@ -580,6 +619,79 @@ describe('Fragment Tools Integration', () => {
     }) as { success: boolean; warnings?: string[] };
     expect(result.success).toBe(true);
     expect(result.warnings?.some(w => w.includes('missing a required ajo:/aem:/external: prefix'))).toBe(true);
+  });
+
+  // create — organization (Issue 1 two-step folder placement, Issue 3 tagIds/labels)
+
+  const FOLDER_UUID = 'b45ee96b-a86d-481f-8554-dd3762aeaa8e';
+  const TAG_UUID = 'b0749baa-78c5-4a5b-a9e0-2b65ef754cb7';
+
+  test('create_content_fragment files into a folder via a follow-up add PATCH, not the create body (Issue 1)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-fold', location: '/fragments/f-fold', etag: '"v1"' });
+    mockClient.patchFragment.mockResolvedValue({ success: true, etag: '"v2"' });
+    const result = await handleCreateContentFragment({
+      name: 'Filed', type: 'html', channels: ['email'],
+      fragment: { content: '<div>x</div>' }, parentFolderId: FOLDER_UUID
+    }) as { success: boolean; etag?: string };
+    expect(result.success).toBe(true);
+    // parentFolderId must NOT be in the create body (the runtime rejects it there)
+    expect(mockClient.createFragment).toHaveBeenCalledWith(expect.not.objectContaining({ parentFolderId: expect.anything() }));
+    // folder applied via a follow-up add PATCH using the post-create etag
+    expect(mockClient.patchFragment).toHaveBeenCalledWith('f-fold', [{ op: 'add', path: '/parentFolderId', value: FOLDER_UUID }], '"v1"');
+    // returned etag is refreshed from the PATCH so it stays chainable
+    expect(result.etag).toBe('"v2"');
+  });
+
+  test('create_content_fragment still succeeds with a warning if folder placement fails (Issue 1)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-fold2', location: '/fragments/f-fold2', etag: '"v1"' });
+    mockClient.patchFragment.mockRejectedValue(new Error('folder boom'));
+    const result = await handleCreateContentFragment({
+      name: 'Filed', type: 'html', channels: ['email'],
+      fragment: { content: '<div>x</div>' }, parentFolderId: FOLDER_UUID
+    }) as { success: boolean; id: string; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.id).toBe('f-fold2');
+    expect(result.warnings?.some(w => w.includes('filing it into folder') && w.includes('patch_content_fragment'))).toBe(true);
+  });
+
+  test('create_content_fragment passes tagIds and labels through in the create body (Issue 3)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-tag', location: '/fragments/f-tag', etag: '"v1"' });
+    await handleCreateContentFragment({
+      name: 'Tagged', type: 'html', channels: ['email'], fragment: { content: '<div>x</div>' },
+      tagIds: [TAG_UUID], labels: ['C1']
+    });
+    expect(mockClient.createFragment).toHaveBeenCalledWith(expect.objectContaining({ tagIds: [TAG_UUID], labels: ['C1'] }));
+    expect(mockClient.patchFragment).not.toHaveBeenCalled(); // tagIds need no follow-up step
+  });
+
+  test('update_content_fragment strips parentFolderId from the PUT body but keeps tagIds (Issue 1/3)', async () => {
+    mockClient.updateFragment.mockResolvedValue({ success: true });
+    await handleUpdateContentFragment({
+      fragmentId: VALID_UUID, etag: '"v1"', name: 'F', type: 'html', channels: ['email'],
+      fragment: { content: '<div>x</div>' }, parentFolderId: FOLDER_UUID, tagIds: [TAG_UUID]
+    });
+    const payload = mockClient.updateFragment.mock.calls[0][1] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty('parentFolderId');
+    expect(payload).toHaveProperty('tagIds', [TAG_UUID]);
+  });
+
+  test('patch_content_fragment normalizes replace→add for /parentFolderId, leaves /name as replace (Issue 2)', async () => {
+    mockClient.patchFragment.mockResolvedValue({ success: true });
+    await handlePatchContentFragment({
+      fragmentId: VALID_UUID, etag: '"v1"',
+      patches: [
+        { op: 'replace', path: '/parentFolderId', value: FOLDER_UUID },
+        { op: 'replace', path: '/name', value: 'N' }
+      ]
+    });
+    expect(mockClient.patchFragment).toHaveBeenCalledWith(
+      VALID_UUID,
+      [
+        { op: 'add', path: '/parentFolderId', value: FOLDER_UUID },
+        { op: 'replace', path: '/name', value: 'N' }
+      ],
+      '"v1"'
+    );
   });
 
   // get

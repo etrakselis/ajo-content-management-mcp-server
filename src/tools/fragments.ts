@@ -9,7 +9,7 @@ import {
   UpdateFragmentSchema, PatchFragmentSchema, PublishFragmentSchema,
   GetLiveFragmentSchema, GetPublicationStatusSchema, ArchiveFragmentSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, malformedFragmentWarnings, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, malformedFragmentWarnings, normalizeMetadataPatches, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
 
 // Non-fatal advisories for a fragment write that still succeeds: Compatibility-mode
 // HTML (email html fragments) plus any prefix-less data-fragment embeds in the body.
@@ -68,6 +68,29 @@ const FRAGMENT_SUBTYPE_SCHEMA = {
 const EXPRESSION_REQUIRES_SUBTYPE = [
   { if: { properties: { type: { const: 'expression' } }, required: ['type'] }, then: { required: ['subType'] } }
 ];
+
+// Organization fields shared by create_ and update_. tagIds/labels are real runtime
+// write-model fields (accepted in the body) even though the published spec omits
+// them. parentFolderId is advertised but NOT accepted in the AJO write body — see the
+// per-action descriptions below for how each tool actually applies it.
+const TAG_IDS_SCHEMA = {
+  type: 'array' as const,
+  items: { type: 'string' as const },
+  description: 'Tag IDs (UUIDs) to bind to this fragment. Find/create them with the Unified Tags tools (list_tags / create_tag) and validate with validate_tags first. This SETS the whole array (it is not an append) — to add to existing tags, read the current tagIds (get_content_fragment) and resend the full list.'
+};
+const LABELS_SCHEMA = {
+  type: 'array' as const,
+  items: { type: 'string' as const },
+  description: 'OLAC (object-level access-control) label strings to attach to this fragment. Optional; sets the whole array.'
+};
+const PARENT_FOLDER_CREATE_PROP = {
+  type: 'string' as const, format: 'uuid',
+  description: 'UUID of the folder to file this fragment into. The AJO create body itself does NOT accept this; the server applies it for you via an automatic follow-up PATCH after the fragment is created. Omit to leave it unfiled. (If only the folder step fails, the create still succeeds and a warning explains how to retry.)'
+};
+const PARENT_FOLDER_UPDATE_PROP = {
+  type: 'string' as const, format: 'uuid',
+  description: 'Ignored on update: folder placement is managed separately and is preserved across a content replace, and the AJO write model rejects this field. To MOVE the fragment, use patch_content_fragment with { op: "add", path: "/parentFolderId" }.'
+};
 
 // ─── list_content_fragments ───────────────────────────────────────────────────
 
@@ -240,6 +263,8 @@ Example usage (Expression fragment — tenant-custom field):
 
 Personalization path rooting: standard XDM profile attributes use the "profile." prefix (e.g. {{profile.person.name.firstName}}); tenant-custom attributes sit under "profile._tenantId." (e.g. {{profile._acssandboxustwo.loyaltyTier}}). Do NOT root standard XDM fields (person, homeAddress, etc.) under the tenant namespace — only attributes your org added in a custom field group belong there. Use the 'discover-personalization-paths' prompt, or call list_xdm_union_schemas → get_xdm_union_schema (full=false) → get_xdm_field_group on each ref, to confirm real attribute paths. For the AJO-native expression SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
 
+ORGANIZATION: pass tagIds to tag the new fragment and parentFolderId to file it into a folder. tagIds goes in the create body directly; parentFolderId is applied by the server via an automatic follow-up step (the AJO create body does not accept it). For a fragment folder the folderType is "fragment" (create one with create_folder). If folder placement fails the create still succeeds (see warnings) and can be retried with patch_content_fragment.
+
 Returns: { success: true, id: "<uuid>", location: "/fragments/<uuid>", etag: "<etag>", warnings?: [...] }
 The returned etag is immediately reusable for a follow-up update_content_fragment / patch_content_fragment — no need to re-fetch right after creating. A "warnings" entry (email html fragments) means the HTML is not in AJO native format and will open in Compatibility mode.`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -255,7 +280,9 @@ The returned etag is immediately reusable for a follow-up update_content_fragmen
       channels: FRAGMENT_CHANNELS_SCHEMA,
       fragment: FRAGMENT_CONTENT_SCHEMA,
       subType: FRAGMENT_SUBTYPE_SCHEMA,
-      parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder' },
+      parentFolderId: PARENT_FOLDER_CREATE_PROP,
+      tagIds: TAG_IDS_SCHEMA,
+      labels: LABELS_SCHEMA,
       source: { type: 'object', description: 'Source metadata { origin: "ajo"|"external" }' }
     }
   }
@@ -267,9 +294,30 @@ export async function handleCreateContentFragment(args: unknown) {
     const parsed = CreateFragmentSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
     try {
-      const payload = { ...parsed.data, source: parsed.data.source ?? { origin: 'ajo' as const } };
-      const result = await createFragment(payload);
+      // parentFolderId is advertised on create (the OpenAPI spec defines it) but the
+      // runtime model rejects it in the create body, so strip it and apply it as a
+      // follow-up PATCH below. tagIds/labels DO go in the create body (the runtime
+      // accepts them) — they flow through ...rest.
+      const { parentFolderId, ...rest } = parsed.data;
+      const payload = { ...rest, source: rest.source ?? { origin: 'ajo' as const } };
+      const result = await createFragment(payload) as { id: string; location?: string; etag?: string };
       const warnings = fragmentWarnings(parsed.data);
+      if (parentFolderId != null) {
+        // The create already committed; if only the folder step fails we still return
+        // success (with a warning + retry hint) — never a false-negative on a write.
+        try {
+          let etag = result.etag;
+          if (!etag) etag = (await getFragment(result.id)).etag;
+          if (!etag) throw new Error('could not resolve the post-create etag');
+          const patched = await patchFragment(result.id, [{ op: 'add', path: '/parentFolderId', value: parentFolderId }], etag) as { etag?: string };
+          if (patched.etag) result.etag = patched.etag; // keep the returned etag chainable
+        } catch (err) {
+          warnings.push(
+            `Fragment created (id ${result.id}) but filing it into folder ${parentFolderId} failed: ${buildError(err).message} ` +
+            `Retry with patch_content_fragment: { "op": "add", "path": "/parentFolderId", "value": "${parentFolderId}" }.`
+          );
+        }
+      }
       return { success: true, ...result, ...(warnings.length ? { warnings } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };
@@ -381,7 +429,9 @@ Returns: { success: true, etag?: "<new-etag>", warnings?: [...] }  (a "warnings"
       channels: FRAGMENT_CHANNELS_SCHEMA,
       fragment: FRAGMENT_CONTENT_SCHEMA,
       subType: FRAGMENT_SUBTYPE_SCHEMA,
-      parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder' },
+      parentFolderId: PARENT_FOLDER_UPDATE_PROP,
+      tagIds: TAG_IDS_SCHEMA,
+      labels: LABELS_SCHEMA,
       source: { type: 'object', description: 'Source metadata { origin: "ajo"|"external" }' }
     }
   }
@@ -392,7 +442,11 @@ export async function handleUpdateContentFragment(args: unknown) {
   return withTelemetry('update_content_fragment', async () => {
     const parsed = UpdateFragmentSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
-    const { fragmentId, etag, ...rest } = parsed.data;
+    // Strip parentFolderId from the PUT body: it is NOT part of the runtime write
+    // model (rejected as an unrecognized field), and folder placement is managed
+    // separately and preserved across a content replace. To MOVE a fragment, use
+    // patch_content_fragment (/parentFolderId). tagIds/labels stay in the body.
+    const { fragmentId, etag, parentFolderId: _parentFolderId, ...rest } = parsed.data;
     const payload = { ...rest, source: rest.source ?? { origin: 'ajo' as const } };
     try {
       const result = await updateFragment(fragmentId, payload, etag);
@@ -410,18 +464,23 @@ export const patchContentFragmentDefinition = {
   name: 'patch_content_fragment',
   title: 'Rename or Move Content Fragment',
   outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
-  description: `Rename or redescribe a content fragment — use this when changing only metadata (name, description, or parent folder), NOT content. For content, type, or channel changes, use update_content_fragment instead.
+  description: `Rename/redescribe a content fragment, file it into a folder, or bind tags/labels — use this for metadata changes, NOT content. For content, type, or channel changes, use update_content_fragment instead.
 
-Only these paths are supported: /name, /description, /parentFolderId.
+Supported paths: /name, /description, /parentFolderId, /tagIds, /labels.
 
-Example usage:
+⚠ op for /parentFolderId, /tagIds, /labels: use "add" (these members may not exist yet on the object). Per JSON Patch (RFC 6902) "replace" requires the target to already exist and AJO rejects it with an opaque "Bad Patch request." The server auto-translates "replace" → "add" for these three paths, so either works — but "add" is the correct choice. /tagIds and /labels SET the whole array (read-modify-write via get_content_fragment to append).
+
+Example usage (file into a folder + tag, on a fragment that has neither yet):
 {
   "fragmentId": "b6d70a45-...",
   "etag": "\\"abc123\\"",
-  "patches": [{ "op": "replace", "path": "/name", "value": "New Fragment Name" }]
+  "patches": [
+    { "op": "add", "path": "/parentFolderId", "value": "b45ee96b-..." },
+    { "op": "add", "path": "/tagIds", "value": ["b0749baa-..."] }
+  ]
 }
 
-Returns: { success: true }`,
+Returns: { success: true, etag?: "<new-etag>" }`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
@@ -436,8 +495,8 @@ Returns: { success: true }`,
           type: 'object',
           required: ['op', 'path'],
           properties: {
-            op: { type: 'string', enum: ['add', 'remove', 'replace'] },
-            path: { type: 'string', description: 'Supported: /name, /description, /parentFolderId' },
+            op: { type: 'string', enum: ['add', 'remove', 'replace'], description: 'Use "add" for /parentFolderId, /tagIds, /labels (replace is auto-normalized to add for these).' },
+            path: { type: 'string', description: 'Supported: /name, /description, /parentFolderId, /tagIds, /labels' },
             value: {}
           }
         }
@@ -453,7 +512,9 @@ export async function handlePatchContentFragment(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     const { fragmentId, etag, patches } = parsed.data;
     try {
-      const result = await patchFragment(fragmentId, patches, etag);
+      // Translate replace→add for /parentFolderId, /tagIds, /labels (members that may
+      // not exist yet), so the call is forgiving regardless of the op the model chose.
+      const result = await patchFragment(fragmentId, normalizeMetadataPatches(patches), etag);
       return { ...result, success: true };
     } catch (err) {
       return { success: false, error: buildError(err) };

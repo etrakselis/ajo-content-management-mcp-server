@@ -7,7 +7,7 @@ import {
   ListTemplatesSchema, CreateTemplateSchema, GetTemplateSchema,
   UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, scanDataFragments, malformedFragmentWarnings, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, scanDataFragments, malformedFragmentWarnings, normalizeMetadataPatches, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
 
 // Pull the email HTML out of a template payload for the native-format check. The
 // "content" shape carries it at template.html.body (an object); the legacy "html"
@@ -132,6 +132,28 @@ const EMAIL_TEMPLATE_SHAPE_RULES = [
 
 const TEMPLATE_CONDITIONAL_RULES = [...CODE_CHANNEL_REQUIRES_SUBTYPE, ...EMAIL_TEMPLATE_SHAPE_RULES];
 
+// Organization fields shared by create_ and update_ (see the fragment tools for the
+// same pattern). tagIds/labels are real runtime write-model fields the published
+// spec omits; parentFolderId is advertised but NOT accepted in the AJO write body.
+const TAG_IDS_SCHEMA = {
+  type: 'array' as const,
+  items: { type: 'string' as const },
+  description: 'Tag IDs (UUIDs) to bind to this template. Find/create them with the Unified Tags tools (list_tags / create_tag) and validate with validate_tags first. This SETS the whole array (not an append) — to add to existing tags, read the current tagIds (get_content_template) and resend the full list.'
+};
+const LABELS_SCHEMA = {
+  type: 'array' as const,
+  items: { type: 'string' as const },
+  description: 'OLAC (object-level access-control) label strings to attach to this template. Optional; sets the whole array.'
+};
+const PARENT_FOLDER_CREATE_PROP = {
+  type: 'string' as const, format: 'uuid',
+  description: 'UUID of the folder to file this template into. The AJO create body itself does NOT accept this; the server applies it via an automatic follow-up PATCH after the template is created. Omit to leave it unfiled. (If only the folder step fails, the create still succeeds and a warning explains how to retry.)'
+};
+const PARENT_FOLDER_UPDATE_PROP = {
+  type: 'string' as const, format: 'uuid',
+  description: 'Ignored on update: folder placement is managed separately and preserved across a content replace, and the AJO write model rejects this field. To MOVE the template, use patch_content_template with { op: "add", path: "/parentFolderId" }.'
+};
+
 // ─── list_content_templates ───────────────────────────────────────────────────
 
 export const listContentTemplatesDefinition = {
@@ -255,6 +277,8 @@ Example usage (push notification template):
   "template": { "title": "Big Sale!", "message": "50% off today only" }
 }
 
+ORGANIZATION: pass tagIds to tag the new template and parentFolderId to file it into a folder. tagIds goes in the create body directly; parentFolderId is applied by the server via an automatic follow-up step (the AJO create body does not accept it). For a content-template folder the folderType is "content-template" (create one with create_folder). If folder placement fails the create still succeeds (see warnings) and can be retried with patch_content_template.
+
 Returns: { success: true, id: "<uuid>", location: "/templates/<uuid>", etag: "<etag>", warnings?: [...] }
 The returned etag is immediately reusable for a follow-up update_content_template / patch_content_template — no need to re-fetch right after creating. A "warnings" entry (email templates) means the HTML is not in AJO native format and will open in Compatibility mode.`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -270,7 +294,9 @@ The returned etag is immediately reusable for a follow-up update_content_templat
       channels: TEMPLATE_CHANNELS_SCHEMA,
       template: TEMPLATE_CONTENT_SCHEMA,
       subType: { type: 'string', enum: ['HTML', 'JSON'], description: 'Sub-type for code channel templates (HTML | JSON). REQUIRED when channel is "code"; not used for other channels.' },
-      parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder (optional)' },
+      parentFolderId: PARENT_FOLDER_CREATE_PROP,
+      tagIds: TAG_IDS_SCHEMA,
+      labels: LABELS_SCHEMA,
       source: { type: 'object', description: 'Source/origin metadata { origin: "ajo"|"aem"|"external" }' }
     }
   }
@@ -282,8 +308,27 @@ export async function handleCreateContentTemplate(args: unknown) {
     const parsed = CreateTemplateSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
     try {
-      const result = await createTemplate(parsed.data);
+      // parentFolderId is advertised on create (per the OpenAPI spec) but rejected by
+      // the runtime model in the create body, so strip it and apply it via a follow-up
+      // PATCH below. tagIds/labels stay in the body (the runtime accepts them).
+      const { parentFolderId, ...payload } = parsed.data;
+      const result = await createTemplate(payload) as { id: string; location?: string; etag?: string };
       const warnings = templateWarnings(parsed.data);
+      if (parentFolderId != null) {
+        // The create already committed; a failed folder step only adds a warning.
+        try {
+          let etag = result.etag;
+          if (!etag) etag = (await getTemplate(result.id)).etag;
+          if (!etag) throw new Error('could not resolve the post-create etag');
+          const patched = await patchTemplate(result.id, [{ op: 'add', path: '/parentFolderId', value: parentFolderId }], etag) as { etag?: string };
+          if (patched.etag) result.etag = patched.etag; // keep the returned etag chainable
+        } catch (err) {
+          warnings.push(
+            `Template created (id ${result.id}) but filing it into folder ${parentFolderId} failed: ${buildError(err).message} ` +
+            `Retry with patch_content_template: { "op": "add", "path": "/parentFolderId", "value": "${parentFolderId}" }.`
+          );
+        }
+      }
       return { success: true, ...result, ...(warnings.length ? { warnings } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };
@@ -443,7 +488,9 @@ Returns: { success: true, etag?: "<new-etag>", warnings?: [...] }  (a "warnings"
       channels: TEMPLATE_CHANNELS_SCHEMA,
       template: TEMPLATE_CONTENT_SCHEMA,
       subType: { type: 'string', enum: ['HTML', 'JSON'], description: 'Sub-type for code channel templates (HTML | JSON). REQUIRED when channel is "code"; not used for other channels.' },
-      parentFolderId: { type: 'string', format: 'uuid', description: 'UUID of parent folder' },
+      parentFolderId: PARENT_FOLDER_UPDATE_PROP,
+      tagIds: TAG_IDS_SCHEMA,
+      labels: LABELS_SCHEMA,
       source: { type: 'object', description: 'Source/origin metadata { origin: "ajo"|"aem"|"external" }' }
     }
   }
@@ -454,7 +501,11 @@ export async function handleUpdateContentTemplate(args: unknown) {
   return withTelemetry('update_content_template', async () => {
     const parsed = UpdateTemplateSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
-    const { templateId, etag, ...payload } = parsed.data;
+    // Strip parentFolderId from the PUT body: it is NOT part of the runtime write
+    // model (it would be rejected as an unrecognized field), and folder placement is
+    // managed separately and preserved across a content replace. To MOVE a template,
+    // use patch_content_template (/parentFolderId). tagIds/labels stay in the body.
+    const { templateId, etag, parentFolderId: _parentFolderId, ...payload } = parsed.data;
     try {
       const result = await updateTemplate(templateId, payload, etag);
       const warnings = templateWarnings(parsed.data);
@@ -471,9 +522,11 @@ export const patchContentTemplateDefinition = {
   name: 'patch_content_template',
   title: 'Rename or Move Content Template',
   outputSchema: buildOutputSchema({ etag: ETAG_FIELD }),
-  description: `Rename or redescribe a content template — use this when changing only metadata (name, description, or parent folder), NOT content. For content, type, or channel changes, use update_content_template instead.
+  description: `Rename/redescribe a content template, file it into a folder, or bind tags/labels — use this for metadata changes, NOT content. For content, type, or channel changes, use update_content_template instead.
 
-Only these paths are supported: /name, /description, /parentFolderId.
+Supported paths: /name, /description, /parentFolderId, /tagIds, /labels.
+
+⚠ op for /parentFolderId, /tagIds, /labels: use "add" (these members may not exist yet on the object). Per JSON Patch (RFC 6902) "replace" requires the target to already exist and AJO rejects it with an opaque "Bad Patch request." The server auto-translates "replace" → "add" for these three paths, so either works — but "add" is the correct choice. /tagIds and /labels SET the whole array (read-modify-write via get_content_template to append).
 
 Example usage:
 {
@@ -481,7 +534,7 @@ Example usage:
   "etag": "\\"abc123\\"",
   "patches": [
     { "op": "replace", "path": "/name", "value": "New Name" },
-    { "op": "replace", "path": "/description", "value": "Updated description" }
+    { "op": "add", "path": "/parentFolderId", "value": "0547... (content-template folder)" }
   ]
 }
 
@@ -502,8 +555,8 @@ Returns: { success: true, etag?: "<new-etag>" }
           type: 'object',
           required: ['op', 'path'],
           properties: {
-            op: { type: 'string', enum: ['add', 'remove', 'replace'] },
-            path: { type: 'string', description: 'Supported: /name, /description, /parentFolderId' },
+            op: { type: 'string', enum: ['add', 'remove', 'replace'], description: 'Use "add" for /parentFolderId, /tagIds, /labels (replace is auto-normalized to add for these).' },
+            path: { type: 'string', description: 'Supported: /name, /description, /parentFolderId, /tagIds, /labels' },
             value: { description: 'New value (required for add/replace)' }
           }
         }
@@ -519,8 +572,9 @@ export async function handlePatchContentTemplate(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     const { templateId, etag, patches } = parsed.data;
     try {
-      // patchTemplate already returns the { success: true, etag? } envelope.
-      return await patchTemplate(templateId, patches, etag);
+      // Translate replace→add for /parentFolderId, /tagIds, /labels (members that may
+      // not exist yet). patchTemplate already returns the { success, etag? } envelope.
+      return await patchTemplate(templateId, normalizeMetadataPatches(patches), etag);
     } catch (err) {
       return { success: false, error: buildError(err) };
     }

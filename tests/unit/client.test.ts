@@ -158,6 +158,12 @@ describe('fragment HTTP wrappers', () => {
     expect(await client.patchFragment('f1', [{ op: 'replace', path: '/name', value: 'x' }], '"v1"')).toEqual({ success: true });
   });
 
+  test('patchFragment returns the new etag when the PATCH response carries one (feedback Issue 1 two-step)', async () => {
+    mockInstance.patch.mockResolvedValue({ headers: { etag: '"v2"' } });
+    expect(await client.patchFragment('f1', [{ op: 'add', path: '/parentFolderId', value: 'x' }], '"v1"'))
+      .toEqual({ success: true, etag: '"v2"' });
+  });
+
   test('publishFragment keeps a small Retry-After as seconds (P3)', async () => {
     mockInstance.post.mockResolvedValue({ headers: { location: '/fragments/f1/publishStatus', 'retry-after': '5' } });
     const res = await client.publishFragment('f1');
@@ -240,6 +246,29 @@ describe('buildError — 409 recovery wording (P2-2)', () => {
     expect(e.code).toBe('CONFLICT');
     expect(e.message).toMatch(/get_content_template \/ get_content_fragment/);
     expect(e.message).toMatch(/stale etag/i);
+  });
+});
+
+describe('buildError — Bad Patch request hint (feedback Issue 2)', () => {
+  test('appends an op "add" hint to the opaque "Bad Patch request." 400', () => {
+    const e = client.buildError(axiosError(400, { title: 'Bad Patch request.' }));
+    expect(e.code).toBe('VALIDATION_ERROR');
+    expect(e.message).toMatch(/Bad Patch request/);
+    expect(e.message).toMatch(/use JSON-Patch op "add"/);
+    expect(e.message).toMatch(/parentFolderId/);
+  });
+
+  test('does not add the patch hint to unrelated 400s', () => {
+    const e = client.buildError(axiosError(400, { title: 'Some other validation error.' }));
+    expect(e.message).not.toMatch(/use JSON-Patch op "add"/);
+  });
+});
+
+describe('buildError — stale parentFolderId hint (feedback Issue A / CJMMAS-3014)', () => {
+  test('explains an orphaned folder reference and names the remove-op fix', () => {
+    const e = client.buildError(axiosError(400, { title: 'The given folder is invalid. The specified folder does not exist or is not applicable on the entity.' }));
+    expect(e.message).toMatch(/stored parentFolderId/);
+    expect(e.message).toMatch(/"op": "remove", "path": "\/parentFolderId"/);
   });
 });
 

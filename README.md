@@ -27,7 +27,7 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 
 ## Overview
 
-This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 24 tools covering the full template and fragment lifecycle, read-only Experience Platform Schema Registry (XDM) lookups, a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec and the personalization syntax library), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 38 tools covering the full template and fragment lifecycle, folder and tag organization (the Unified Tags/Folders API), read-only Experience Platform Schema Registry (XDM) lookups, a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec and the personalization syntax library), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
 
 The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{_yourtenant.profile.person.firstName}}`. Complementing them, the **authoring reference** tools teach the LLM the exact output formats AJO expects: `get_visual_designer_requirements` returns the native HTML serialization spec so generated email stays editable in the drag-and-drop designer, and `get_personalization_syntax` returns AJO's native personalization expression language (helper functions, conditionals, loops, dataset lookup) so expressions use real AJO constructs rather than generic Handlebars/Liquid.
 
@@ -57,6 +57,30 @@ The Schema Registry tools let the LLM discover the **real personalization attrib
 | `get_live_fragment` | Get content from last successful publication |
 | `get_fragment_publication_status` | Poll publication progress |
 | `archive_content_fragment` | Archive a fragment (fragments cannot be deleted via the API) |
+
+### Folders (organization)
+Organize content into a navigable tree (Unified Folders API). A folder is addressed by both a `folderType` (the object family it holds) and a `folderId`; file content into one via `parentFolderId` on the create/patch content tools. Requires the Unified Tags/Folders API on the credential's Developer Console project.
+| Tool | Description |
+|------|-------------|
+| `create_folder` | Create a top-level or nested folder *(write)* |
+| `get_folder` | Fetch a single folder by folderType + folderId |
+| `update_folder` | Rename a folder (only the name is patchable) *(write)* |
+| `delete_folder` | Delete a folder — irreversible *(write, destructive)* |
+| `list_subfolders` | List a folder's children to walk the tree |
+| `validate_folder` | Check whether a folder is eligible to hold objects |
+
+### Tags & tag categories (organization)
+Classify content for discovery (Unified Tags API). A tag belongs to exactly one category (`Uncategorized` if unspecified). Requires the Unified Tags/Folders API on the credential's Developer Console project. **Tag categories are read-only here** — creating/updating/deleting them requires system/product administrator privileges the typical MCP principal lacks, so those operations are intentionally not exposed; create tags in `Uncategorized` (omit `tagCategoryId`) for the non-admin path.
+| Tool | Description |
+|------|-------------|
+| `list_tag_categories` | List tag categories (sort/filter) |
+| `get_tag_category` | Fetch a tag category by ID |
+| `list_tags` | List/filter tags (e.g. by `tagCategoryId`) |
+| `create_tag` | Create a tag, optionally in a category *(write)* |
+| `get_tag` | Fetch a tag by ID |
+| `update_tag` | Rename, archive/unarchive, or move a tag *(write)* |
+| `delete_tag` | Delete a tag — irreversible *(write, destructive)* |
+| `validate_tags` | Validate a set of tag IDs (valid/invalid split) |
 
 ### Schema Registry (XDM) — read-only
 For discovering real personalization attribute paths. Requires the AEP Schema Registry API on the credential's Developer Console project.
@@ -396,7 +420,7 @@ The full tool set is **always advertised** to clients regardless of this setting
 
 When write access is on, the server adds a second safety layer: before performing a write it asks you to confirm the target, naming the org, tenant namespace, and sandbox (and the author it's acting as). This uses the MCP [elicitation](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation) capability, so the confirmation is enforced by the server rather than left to the LLM to remember to ask.
 
-- **Destructive writes** (`delete_content_template`, `archive_content_fragment`) are confirmed **every time** — there is no undo.
+- **Destructive writes** (`delete_content_template`, `archive_content_fragment`, `delete_folder`, `delete_tag`) are confirmed **every time** — there is no undo.
 - **Other writes** (create, update, patch, publish) are confirmed **once per sandbox per session**, then remembered for the rest of that session.
 - **Decline or dismiss** the prompt and the operation is **not performed** — the tool returns a `WRITE_CANCELLED` error and the LLM is instructed not to retry unless you ask again.
 - Clients that **don't support elicitation** fall back to a **confirm-and-retry gate**: the first write is held with a `WRITE_CONFIRMATION_REQUIRED` error that instructs the LLM to confirm the target with you conversationally, then re-invoke the same tool with `confirmWrite: true`. The same destructive-vs-other cadence applies (destructive ops require the confirmation every time; other writes once per sandbox per session). The access-mode toggle is still enforced independently — this gate is about confirming the *target*, not granting write permission.
@@ -550,6 +574,8 @@ All fields optional. Pass `_page.next` from the response as `start` to fetch the
 ```
 `templateType`: `html` | `html_primary_page` | `html_sub_page` | `content`. `channels`: exactly one of `email`, `push`, `inapp`, `sms`, `code`, `directMail`, `landingpage`, `shared`.
 
+**Organization:** pass `tagIds` (array of tag UUIDs) to tag the new template — these go in the create body directly. Pass `parentFolderId` to file it into a `content-template` folder — the AJO create body rejects `parentFolderId`, so the server applies it via an automatic follow-up `add` PATCH after create; if only that step fails the create still succeeds and a `warnings` entry explains how to retry. `labels` (OLAC access-control strings) are also accepted. On `update_content_template`, `parentFolderId` is ignored (placement is preserved); use `patch_content_template` to move.
+
 #### `get_content_template` *(read)*
 ```json
 { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
@@ -570,7 +596,7 @@ Full replacement (PUT). Always fetch first to get the etag:
 ```
 
 #### `patch_content_template` *(write)*
-Metadata-only changes via JSON Patch (`/name`, `/description`, `/parentFolderId`). For content/type/channel changes use `update_content_template`.
+Metadata-only changes via JSON Patch. Supported paths: `/name`, `/description`, `/parentFolderId`, `/tagIds`, `/labels`. Use op `add` for `/parentFolderId`, `/tagIds`, `/labels` (members that may not exist yet — the server auto-normalizes `replace`→`add` for these; `/tagIds`/`/labels` set the whole array). For content/type/channel changes use `update_content_template`.
 ```json
 {
   "templateId": "b6d70a45-...",
@@ -606,6 +632,8 @@ All fields optional. Paginate with `start` = `_page.next`.
 ```
 For an expression fragment: `"type": "expression"`, `"channels": ["shared"]`, `"fragment": { "expression": "Hello {{profile.person.firstName}}" }`.
 
+**Organization:** pass `tagIds` (array of tag UUIDs) to tag the new fragment — these go in the create body directly. Pass `parentFolderId` to file it into a `fragment` folder — the AJO create body rejects `parentFolderId`, so the server applies it via an automatic follow-up `add` PATCH after create; if only that step fails the create still succeeds and a `warnings` entry explains how to retry. `labels` (OLAC access-control strings) are also accepted. On `update_content_fragment`, `parentFolderId` is ignored (placement is preserved); use `patch_content_fragment` to move.
+
 #### `get_content_fragment` *(read)*
 ```json
 { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
@@ -626,7 +654,7 @@ Full replacement (PUT). Fetch first for the etag:
 ```
 
 #### `patch_content_fragment` *(write)*
-Metadata-only changes via JSON Patch (`/name`, `/description`, `/parentFolderId`). For content changes use `update_content_fragment`.
+Metadata-only changes via JSON Patch. Supported paths: `/name`, `/description`, `/parentFolderId`, `/tagIds`, `/labels`. Use op `add` for `/parentFolderId`, `/tagIds`, `/labels` (members that may not exist yet — the server auto-normalizes `replace`→`add` for these; `/tagIds`/`/labels` set the whole array). For content changes use `update_content_fragment`.
 ```json
 {
   "fragmentId": "b6d70a45-...",
@@ -665,6 +693,69 @@ journeys.
 
 > **Note:** This tool calls an internal AJO GraphQL API (`exc-unifiedcontent.experience.adobe.net`)
 > that is not part of the public Content REST API. Adobe may change this endpoint without notice.
+
+### Folders (Unified Folders API)
+
+Organize content into a navigable tree. Every folder call requires **both** a `folderType` (an **onboarded object-family noun**, not free-form) and a `folderId`. **For AJO content the nouns are asymmetric — `fragment` for content fragments and `content-template` for content templates** (note: the fragment noun is `fragment`, *not* `content-fragment`). They are *not* `dataset`/`segment` (other Experience Platform families the same API serves); any non-onboarded noun is rejected with `422` "not onboarded" (the server appends the known content nouns to that error). There is no API to enumerate onboarded nouns. The virtual id `root` addresses the top of a folderType's tree (e.g. for `list_subfolders`). File content into a folder by passing the folder id as `parentFolderId` on `create_content_fragment` / `create_content_template` (or via the patch tools). **Requires the Unified Tags/Folders API enabled on the credential's Developer Console project** (otherwise `FORBIDDEN` / 403). Override the gateway with `AJO_UNIFIED_TAGS_BASE_URL` if needed.
+
+#### `create_folder` *(write)*
+```json
+{ "folderType": "fragment", "name": "Q3 Campaign", "parentFolderId": "6a5e0927-1527-4abc-9993-376fd7067ca5" }
+```
+Use `"folderType": "content-template"` for template folders. Omit `parentFolderId` for a top-level folder (it is sent as `parentFolderId: null`). Note the field is `parentFolderId` — the OpenAPI spec's `parentId` is incorrect.
+
+#### `get_folder` *(read)* · `list_subfolders` *(read)* · `validate_folder` *(read)*
+```json
+{ "folderType": "content-template", "folderId": "83f8287c-767b-4106-b271-257282fd170e" }
+```
+`get_folder` returns one folder; `list_subfolders` returns its children (walk the tree — use `"folderId": "root"` for the top level); `validate_folder` checks whether the folder is eligible to hold objects.
+
+#### `update_folder` *(write)*
+```json
+{ "folderType": "content-template", "folderId": "83f8287c-...", "name": "Renamed Folder" }
+```
+The API only supports replacing the folder name; the tool builds the JSON-Patch op for you.
+
+#### `delete_folder` *(write, destructive)*
+```json
+{ "folderType": "content-template", "folderId": "83f8287c-..." }
+```
+Irreversible — confirmed every time.
+
+### Tags & tag categories (Unified Tags API)
+
+Classify content for discovery. A **tag** belongs to exactly one **tag category** (`Uncategorized` if none is given at create time). The `property` argument on the list tools is a filter attribute (e.g. `tagCategoryId=<id>`, `name`, `archived`) — **not** the FIQL grammar used by the content list tools. **Requires the Unified Tags/Folders API enabled on the credential's Developer Console project.**
+
+> **Tag categories are read-only here.** Creating/updating/deleting a tag *category* requires system/product administrator privileges in AJO, which the typical MCP principal does not have — so those operations are intentionally **not exposed** (they would only ever return 403). Use the read tools to discover categories, and create tags in `Uncategorized` for the non-admin path. To bind a tag to content, see `patch_content_fragment` / `patch_content_template` (`/tagIds`).
+
+#### `list_tag_categories` *(read)* · `get_tag_category` *(read)* · `list_tags` *(read)* · `get_tag` *(read)*
+```json
+{ "property": "tagCategoryId=e2b7c656-067b-4413-a366-adde0401df50", "sortBy": "name", "sortOrder": "asc" }
+```
+
+#### `create_tag` *(write)*
+```json
+{ "name": "summer-sale" }
+```
+Omit `tagCategoryId` to file the tag under `Uncategorized` (the path that does not require admin rights). Passing a custom `tagCategoryId` requires admin privileges and otherwise returns 403.
+
+#### `update_tag` *(write)*
+```json
+{ "tagId": "8af14b1e-...", "name": "summer-sale-2026", "archived": false }
+```
+Provide at least one field to change. The tool sends a **bare JSON-Patch array** of replace ops — `[ { "op": "replace", "path": "archived", "value": "true" } ]` (paths `name` / `archived` / `tagCategoryId`, no leading slash; `value` is always a string, so `archived` is coerced to `"true"`/`"false"`) — and the `experience.adobe.io` gateway wraps it into the backend's `{ patchRequestList: [...] }` envelope itself. (Sending it pre-wrapped causes a double-wrap that the backend rejects.) All supplied fields go in one PATCH. Renaming and archiving need no special rights; **moving a tag into a custom category requires admin privileges** (otherwise 403). To hide a tag without deleting it, set `archived: true`.
+
+#### `validate_tags` *(read)*
+```json
+{ "ids": ["2bd5ddd9-7284-4767-81d9-c75b122f2a6a", "invalid-tag"] }
+```
+Returns the valid/invalid split — useful before applying tag references to content.
+
+#### `delete_tag` *(write, destructive)*
+```json
+{ "tagId": "8af14b1e-..." }
+```
+Irreversible — confirmed every time. **AJO enforces two preconditions:** the tag must not be applied to any content (otherwise `403 "Associated Tag Count is not Zero"` — clear it from the `/tagIds` of every referencing fragment/template first) and it must be archived (otherwise `409 "Tag is not archived"` — `update_tag` with `archived: true` first). Full teardown order: clear associations → archive → delete. The server surfaces these as resource-specific hints (no stray template/fragment etag guidance).
 
 ### Schema Registry / XDM
 

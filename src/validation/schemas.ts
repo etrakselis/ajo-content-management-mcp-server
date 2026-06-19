@@ -38,6 +38,16 @@ export const PatchOpSchema = z.object({
 
 export const PatchRequestSchema = z.array(PatchOpSchema).min(1);
 
+// tagIds / labels: accepted by the runtime content models (PublicApiFragment and
+// the template equivalent) even though the OpenAPI spec omits them from the create
+// bodies (spec ↔ runtime drift — see mcp-server-feedback.md Issue 3). tagIds are
+// tag UUIDs (validate them with the Unified Tags tool validate_tags first); labels
+// are OLAC access-control label strings. Loosely typed (string arrays) so a future
+// upstream shape tweak doesn't make a valid call fail client-side. Shared by the
+// fragment and template create/update schemas.
+const TagIdsSchema = z.array(z.string().min(1)).optional();
+const LabelsSchema = z.array(z.string().min(1)).optional();
+
 // ─── Templates ───────────────────────────────────────────────────────────────
 
 const TemplateChannelEnum = z.enum(['email', 'push', 'inapp', 'sms', 'code', 'directMail', 'landingpage', 'shared']);
@@ -145,7 +155,11 @@ export const CreateTemplateSchema = z.object({
     metadata: z.record(z.unknown()).optional()
   }).optional(),
   subType: TemplateSubTypeEnum.optional(),
+  // Kept for ergonomics; stripped from the create body and applied via a follow-up
+  // PATCH (op add) by the handler — the runtime rejects it in the create body.
   parentFolderId: z.string().uuid().nullable().optional(),
+  tagIds: TagIdsSchema,
+  labels: LabelsSchema,
   template: z.record(z.unknown()).optional()
 }).superRefine(checkTemplateSubType).superRefine(checkTemplateContentShape);
 
@@ -166,6 +180,8 @@ export const UpdateTemplateSchema = z.object({
   }).optional(),
   subType: TemplateSubTypeEnum.optional(),
   parentFolderId: z.string().uuid().nullable().optional(),
+  tagIds: TagIdsSchema,
+  labels: LabelsSchema,
   template: z.record(z.unknown()).optional()
 }).superRefine(checkTemplateSubType).superRefine(checkTemplateContentShape);
 
@@ -219,7 +235,11 @@ export const CreateFragmentSchema = z.object({
     metadata: z.record(z.unknown()).optional()
   }).optional(),
   subType: FragmentSubTypeEnum.optional(),
+  // Kept in the schema for ergonomics, but the runtime rejects it in the create
+  // body — the handler strips it and applies it via a follow-up PATCH (op add).
   parentFolderId: z.string().uuid().nullable().optional(),
+  tagIds: TagIdsSchema,
+  labels: LabelsSchema,
   fragment: z.record(z.unknown())
 }).superRefine(checkFragmentContentShape);
 
@@ -240,6 +260,8 @@ export const UpdateFragmentSchema = z.object({
   }).optional(),
   subType: FragmentSubTypeEnum.optional(),
   parentFolderId: z.string().uuid().nullable().optional(),
+  tagIds: TagIdsSchema,
+  labels: LabelsSchema,
   fragment: z.record(z.unknown())
 }).superRefine(checkFragmentContentShape);
 
@@ -315,4 +337,101 @@ export const GetXdmUnionSchemaSchema = z.object({
   // Start with full=false to get the field-group $ref list, then resolve each
   // group you need via get_xdm_field_group.
   full: z.boolean().optional().default(false)
+});
+
+// ─── Unified Folders ─────────────────────────────────────────────────────────
+// Folders organize business objects (here, AJO content) into a navigable tree.
+// folderType selects the object family the folder holds; for AJO content it is
+// "content-template" or "content-fragment" (confirmed against the platform). We
+// keep it a free-form string rather than an enum so other Experience Platform
+// folder families (e.g. dataset/segment) are not rejected.
+const FolderTypeSchema = z.string().min(1, 'folderType is required');
+const FolderIdSchema = z.string().min(1, 'folderId is required');
+
+export const CreateFolderSchema = z.object({
+  folderType: FolderTypeSchema,
+  name: z.string().min(1, 'Folder name is required'),
+  // The API field is parentFolderId (the OpenAPI spec's "parentId" is wrong).
+  parentFolderId: z.string().min(1).optional()
+});
+
+export const GetFolderSchema = z.object({
+  folderType: FolderTypeSchema,
+  folderId: FolderIdSchema
+});
+
+// The API only supports replacing /name on a folder, so the tool exposes a single
+// `name` field and builds the JSON-Patch op for it (see folders.ts).
+export const UpdateFolderSchema = z.object({
+  folderType: FolderTypeSchema,
+  folderId: FolderIdSchema,
+  name: z.string().min(1, 'name is required to rename a folder')
+});
+
+export const DeleteFolderSchema = z.object({
+  folderType: FolderTypeSchema,
+  folderId: FolderIdSchema
+});
+
+export const ListSubfoldersSchema = z.object({
+  folderType: FolderTypeSchema,
+  folderId: FolderIdSchema
+});
+
+export const ValidateFolderSchema = z.object({
+  folderType: FolderTypeSchema,
+  folderId: FolderIdSchema
+});
+
+// ─── Unified Tags & Tag categories ─────────────────────────────────────────────
+// Tags classify business objects; tag categories group tags into meaningful sets.
+// Both list endpoints share the same pagination/sort grammar. `property` is a
+// filter attribute (e.g. "tagCategoryId=<id>", "name", "archived"), accepted as a
+// string or array of strings — distinct from the FIQL `property` on the content
+// list tools, so the FIQL operator check does NOT apply here.
+const TagListBase = {
+  start: z.string().optional(),
+  limit: z.number().int().min(1).max(1000).optional(),
+  property: z.union([z.string(), z.array(z.string())]).optional(),
+  sortBy: z.string().optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional()
+};
+
+export const ListTagCategoriesSchema = z.object({ ...TagListBase });
+
+export const GetTagCategorySchema = z.object({
+  tagCategoryId: z.string().min(1, 'tagCategoryId is required')
+});
+
+// NOTE: tag-category create/update/delete schemas intentionally omitted — those
+// operations are admin-only upstream and are not exposed by this server.
+
+export const ListTagsSchema = z.object({ ...TagListBase });
+
+export const CreateTagSchema = z.object({
+  name: z.string().min(1, 'Tag name is required'),
+  // Omit to create the tag in the "Uncategorized" category (per the API default).
+  tagCategoryId: z.string().min(1).optional()
+});
+
+export const GetTagSchema = z.object({
+  tagId: z.string().min(1, 'tagId is required')
+});
+
+export const UpdateTagSchema = z.object({
+  tagId: z.string().min(1, 'tagId is required'),
+  name: z.string().min(1).optional(),
+  archived: z.boolean().optional(),
+  tagCategoryId: z.string().min(1).optional()
+}).refine(d => d.name !== undefined || d.archived !== undefined || d.tagCategoryId !== undefined, {
+  message: 'Provide at least one field to update: name, archived, or tagCategoryId', path: ['name']
+});
+
+export const DeleteTagSchema = z.object({
+  tagId: z.string().min(1, 'tagId is required')
+});
+
+export const ValidateTagsSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1, 'Provide at least one tag id to validate'),
+  entity: z.string().optional()
 });

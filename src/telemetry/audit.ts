@@ -21,8 +21,8 @@ const AUDIT_LOG_PATH = process.env.AUDIT_LOG_PATH || path.resolve(process.cwd(),
 export interface AuditEntry {
   action: string;                 // the tool name, e.g. "create_content_fragment"
   authorEmail: string;            // self-declared, set at server setup (unverified)
-  resourceType: 'fragment' | 'template' | 'unknown';
-  resourceId?: string;            // fragment/template UUID (from args or create result)
+  resourceType: 'fragment' | 'template' | 'folder' | 'tag' | 'unknown';
+  resourceId?: string;            // fragment/template/folder/tag ID (from args or create result)
   resourceName?: string;          // human-readable name when the call supplies one
   sandbox?: string | null;
   tenantNamespace?: string | null;

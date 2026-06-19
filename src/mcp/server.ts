@@ -56,6 +56,28 @@ import {
   getXdmUnionSchemaDefinition, handleGetXdmUnionSchema
 } from '../tools/schema-registry.js';
 
+// Folder tools — organize content into a navigable tree (Unified Folders API)
+import {
+  createFolderDefinition, handleCreateFolder,
+  getFolderDefinition, handleGetFolder,
+  updateFolderDefinition, handleUpdateFolder,
+  deleteFolderDefinition, handleDeleteFolder,
+  listSubfoldersDefinition, handleListSubfolders,
+  validateFolderDefinition, handleValidateFolder
+} from '../tools/folders.js';
+
+// Tag + tag-category tools — classify content for discovery (Unified Tags API)
+import {
+  listTagCategoriesDefinition, handleListTagCategories,
+  getTagCategoryDefinition, handleGetTagCategory,
+  listTagsDefinition, handleListTags,
+  createTagDefinition, handleCreateTag,
+  getTagDefinition, handleGetTag,
+  updateTagDefinition, handleUpdateTag,
+  deleteTagDefinition, handleDeleteTag,
+  validateTagsDefinition, handleValidateTags
+} from '../tools/tags.js';
+
 // Server context — read-only; reports who/what this server is operating as
 import { getServerContextDefinition, handleGetServerContext, setToolCatalog } from '../tools/context.js';
 import { getVisualDesignerRequirementsDefinition, handleGetVisualDesignerRequirements } from '../tools/visual-designer.js';
@@ -64,7 +86,9 @@ import { buildToolCatalog, formatToolCatalog } from './tool-catalog.js';
 import {
   CreateTemplateSchema, UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema,
   CreateFragmentSchema, UpdateFragmentSchema, PatchFragmentSchema,
-  PublishFragmentSchema, ArchiveFragmentSchema
+  PublishFragmentSchema, ArchiveFragmentSchema,
+  CreateFolderSchema, UpdateFolderSchema, DeleteFolderSchema,
+  CreateTagSchema, UpdateTagSchema, DeleteTagSchema
 } from '../validation/schemas.js';
 import type { ZodTypeAny } from 'zod';
 
@@ -91,6 +115,23 @@ const ALL_TOOLS = [
   getXdmFieldGroupDefinition,
   listXdmUnionSchemasDefinition,
   getXdmUnionSchemaDefinition,
+  // Folders — organize content into a navigable tree
+  createFolderDefinition,
+  getFolderDefinition,
+  updateFolderDefinition,
+  deleteFolderDefinition,
+  listSubfoldersDefinition,
+  validateFolderDefinition,
+  // Tags & tag categories — classify content for discovery
+  // (tag-category mutation is admin-only upstream and intentionally not exposed)
+  listTagCategoriesDefinition,
+  getTagCategoryDefinition,
+  listTagsDefinition,
+  createTagDefinition,
+  getTagDefinition,
+  updateTagDefinition,
+  deleteTagDefinition,
+  validateTagsDefinition,
   // Server context — read-only
   getServerContextDefinition,
   // Visual Email Designer HTML spec — read-only reference
@@ -112,7 +153,11 @@ setToolCatalog(TOOL_CATALOG);
 const WRITE_TOOLS = new Set<string>([
   'create_content_template', 'update_content_template', 'patch_content_template', 'delete_content_template',
   'create_content_fragment', 'update_content_fragment', 'patch_content_fragment',
-  'publish_content_fragment', 'archive_content_fragment'
+  'publish_content_fragment', 'archive_content_fragment',
+  // Folders & tags (organization) — validate_* and list_/get_ stay read-only.
+  // (Tag-category mutation is admin-only upstream and not exposed by this server.)
+  'create_folder', 'update_folder', 'delete_folder',
+  'create_tag', 'update_tag', 'delete_tag'
 ]);
 
 const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
@@ -130,7 +175,13 @@ const WRITE_TOOL_SCHEMAS: Record<string, ZodTypeAny> = {
   update_content_fragment: UpdateFragmentSchema,
   patch_content_fragment: PatchFragmentSchema,
   publish_content_fragment: PublishFragmentSchema,
-  archive_content_fragment: ArchiveFragmentSchema
+  archive_content_fragment: ArchiveFragmentSchema,
+  create_folder: CreateFolderSchema,
+  update_folder: UpdateFolderSchema,
+  delete_folder: DeleteFolderSchema,
+  create_tag: CreateTagSchema,
+  update_tag: UpdateTagSchema,
+  delete_tag: DeleteTagSchema
 };
 
 // Page cap for the ajo://fragments / ajo://templates directory reads. At 100
@@ -142,7 +193,10 @@ const MAX_DIRECTORY_PAGES = 50;
 // Writes with no undo. These are always re-confirmed with the user (never cached)
 // when the client supports elicitation. The AJO API has no delete for fragments,
 // so archive is the permanent equivalent.
-const DESTRUCTIVE_TOOLS = new Set<string>(['delete_content_template', 'archive_content_fragment']);
+const DESTRUCTIVE_TOOLS = new Set<string>([
+  'delete_content_template', 'archive_content_fragment',
+  'delete_folder', 'delete_tag'
+]);
 const isDestructiveTool = (name: string): boolean => DESTRUCTIVE_TOOLS.has(name);
 
 // Irreversible (but NON-destructive) writes: they don't delete or overwrite
@@ -281,6 +335,22 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   get_xdm_field_group: handleGetXdmFieldGroup,
   list_xdm_union_schemas: handleListXdmUnionSchemas,
   get_xdm_union_schema: handleGetXdmUnionSchema,
+  // Folders — organize content into a navigable tree
+  create_folder: handleCreateFolder,
+  get_folder: handleGetFolder,
+  update_folder: handleUpdateFolder,
+  delete_folder: handleDeleteFolder,
+  list_subfolders: handleListSubfolders,
+  validate_folder: handleValidateFolder,
+  // Tags & tag categories — classify content for discovery
+  list_tag_categories: handleListTagCategories,
+  get_tag_category: handleGetTagCategory,
+  list_tags: handleListTags,
+  create_tag: handleCreateTag,
+  get_tag: handleGetTag,
+  update_tag: handleUpdateTag,
+  delete_tag: handleDeleteTag,
+  validate_tags: handleValidateTags,
   // Server context — read-only
   get_server_context: handleGetServerContext,
   // Visual Email Designer HTML spec — read-only reference
@@ -636,14 +706,21 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       // rejected above). Captures both successful and handler-rejected attempts.
       if (isWriteTool(name)) {
         const callArgs = (args ?? {}) as Record<string, unknown>;
-        const argId = typeof callArgs.fragmentId === 'string'
-          ? callArgs.fragmentId
-          : (typeof callArgs.templateId === 'string' ? callArgs.templateId : undefined);
+        // The id arg varies by resource family; probe each known key in turn.
+        const idKeys = ['fragmentId', 'templateId', 'folderId', 'tagCategoryId', 'tagId'];
+        const argId = idKeys.map(k => callArgs[k]).find((v): v is string => typeof v === 'string');
+        const resourceType = name.includes('fragment') ? 'fragment'
+          : name.includes('template') ? 'template'
+          : name.includes('folder') ? 'folder'
+          : name.includes('tag') ? 'tag'
+          : 'unknown';
+        const resultData = (resultObj as { data?: { id?: unknown } })?.data;
+        const resultId = resultObj?.id ?? (typeof resultData?.id === 'string' ? resultData.id : undefined);
         recordAudit({
           action: name,
           authorEmail: getConfiguredAuthorEmail() ?? 'unknown',
-          resourceType: name.includes('fragment') ? 'fragment' : name.includes('template') ? 'template' : 'unknown',
-          resourceId: argId ?? resultObj?.id,
+          resourceType,
+          resourceId: argId ?? resultId,
           resourceName: typeof callArgs.name === 'string' ? callArgs.name : undefined,
           sandbox: activeSandbox,
           tenantNamespace: activeTenantId ? `_${activeTenantId}` : null,

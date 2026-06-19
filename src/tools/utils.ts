@@ -155,6 +155,27 @@ export function malformedFragmentWarnings(data: unknown): string[] {
     `(Forbidden: fragment URI syntax is incorrect). See get_visual_designer_requirements.`);
 }
 
+// JSON-Patch paths whose target member may not exist yet on a content object
+// (a freshly created fragment/template has no parentFolderId, tagIds, or labels).
+// Per RFC 6902 `replace` requires the member to already exist, so AJO rejects it
+// with an opaque "Bad Patch request."; `add` creates-or-overwrites and always works.
+const ADD_PREFERRED_PATHS = ['/parentFolderId', '/tagIds', '/labels'];
+
+// Rewrite `replace` → `add` for the may-not-exist metadata paths above, so the
+// patch_ tools are forgiving and deterministic regardless of which op the caller
+// reached for (the reviewer hit "Bad Patch request." using replace on /parentFolderId).
+// `add` on an existing member overwrites it, so this never changes the outcome for a
+// member that does exist. Other ops/paths pass through untouched.
+export function normalizeMetadataPatches<T extends { op?: string; path?: string }>(patches: T[]): T[] {
+  return patches.map(p => {
+    if (p.op === 'replace' && typeof p.path === 'string' &&
+        ADD_PREFERRED_PATHS.some(pre => p.path === pre || p.path!.startsWith(pre + '/'))) {
+      return { ...p, op: 'add' };
+    }
+    return p;
+  });
+}
+
 // Standard pagination envelope, shared by every list result.
 const PAGE_PROPS = {
   type: 'object' as const,

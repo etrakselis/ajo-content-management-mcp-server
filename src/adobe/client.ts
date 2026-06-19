@@ -230,6 +230,26 @@ function buildError(err: unknown): { code: string; message: string; details: unk
       message += ' (Stale etag: the resource changed since you fetched it. Re-fetch it with ' +
         'get_content_template / get_content_fragment to obtain the current etag, then re-submit your change.)';
     }
+    // AJO returns a generic "Bad Patch request." for a JSON-Patch that targets a
+    // member that does not yet exist (RFC 6902: `replace` requires the target to
+    // exist). The common offender is setting /parentFolderId, /tagIds, or /labels on
+    // an object that has none yet. Point the caller at op `add`, which creates-or-
+    // overwrites. (The patch_ handlers also auto-normalize replace→add for these
+    // paths, so this hint mainly covers other paths / direct misuse.)
+    if (status === 400 && /bad patch request/i.test(message)) {
+      message += ' (If you are setting a field that may not exist yet — e.g. /parentFolderId, /tagIds, or ' +
+        '/labels — use JSON-Patch op "add" rather than "replace": "replace" requires the member to already exist.)';
+    }
+    // CJMMAS-3014: the object's STORED parentFolderId points at a folder that no longer
+    // exists (e.g. the folder was deleted), so the server re-validates that stale
+    // reference and rejects ANY write — even one that doesn't touch the folder. The raw
+    // message reads as if the caller supplied a bad folder; clarify it and name the fix.
+    if (/given folder is invalid|CJMMAS-3014/i.test(message)) {
+      message += ' (This usually means the object\'s stored parentFolderId points to a folder that no longer ' +
+        'exists — the server re-validates it on every write, so even an unrelated patch fails. Add ' +
+        '{ "op": "remove", "path": "/parentFolderId" } to your patch (alongside your other ops) to clear the ' +
+        'stale folder reference.)';
+    }
     return {
       code: (status && codes[status]) || 'API_ERROR',
       message,
@@ -379,13 +399,17 @@ export async function updateFragment(fragmentId: string, payload: unknown, etag:
 
 export async function patchFragment(fragmentId: string, patchOps: unknown[], etag: string) {
   const client = getClient();
-  await client.patch(`/fragments/${fragmentId}`, patchOps, {
+  const response = await client.patch(`/fragments/${fragmentId}`, patchOps, {
     headers: {
       'Content-Type': 'application/json-patch+json',
       'If-Match': etag
     }
   });
-  return { success: true };
+  // Mirror patchTemplate: return the new etag (best-effort) so a caller — including
+  // the create_ two-step folder placement — can chain a follow-up write without a
+  // 409. Tolerate a 204/empty body and a missing ETag header rather than throwing.
+  const newEtag = response.headers?.['etag'];
+  return { success: true, ...(newEtag ? { etag: newEtag } : {}) };
 }
 
 export async function publishFragment(fragmentId: string) {

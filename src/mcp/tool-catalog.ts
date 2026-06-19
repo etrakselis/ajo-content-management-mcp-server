@@ -26,6 +26,8 @@ const GROUPS: Array<{ group: string; match: (name: string) => boolean }> = [
   { group: 'Content templates', match: n => n.includes('template') },
   { group: 'Content fragments', match: n => n.includes('fragment') },
   { group: 'XDM / Schema Registry (read-only)', match: n => n.includes('xdm') },
+  { group: 'Folders (organization)', match: n => n.includes('folder') },
+  { group: 'Tags & tag categories (organization)', match: n => n.includes('tag') },
   { group: 'Server', match: () => true }
 ];
 
