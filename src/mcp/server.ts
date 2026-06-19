@@ -261,6 +261,32 @@ function augmentWriteTool<T extends { name: string; description: string; inputSc
   };
 }
 
+// Tools that assign a brand-new name (create_*) vs. tools that can rename an
+// existing object (update_* full-replace, patch_* via /name). When a naming
+// convention is enforced, the former get the full rules inline and the latter a
+// concise pointer — see the namingRulesBlock / namingPointer construction in
+// createMcpServer. Surfacing the rules here, on the tool description, is the only
+// discovery channel a model can't skip (unlike instructions or get_server_context).
+const NAMING_CREATE_TOOLS = new Set<string>([
+  'create_content_template', 'create_content_fragment',
+  'create_folder', 'create_tag'
+]);
+const NAMING_RENAME_TOOLS = new Set<string>([
+  'update_content_template', 'update_content_fragment',
+  'patch_content_template', 'patch_content_fragment',
+  'update_folder', 'update_tag'
+]);
+
+// Append the enforced naming convention to a tool's description: the full rules for
+// create_* tools, a pointer for rename-capable tools, nothing otherwise. `rules`
+// and `pointer` are empty strings when no convention is enabled, so this is a no-op
+// then. Returns a shallow copy so the shared ALL_TOOLS definitions are never mutated.
+function augmentNamingTool<T extends { name: string; description: string }>(tool: T, rules: string, pointer: string): T {
+  if (rules && NAMING_CREATE_TOOLS.has(tool.name)) return { ...tool, description: tool.description + rules };
+  if (pointer && NAMING_RENAME_TOOLS.has(tool.name)) return { ...tool, description: tool.description + pointer };
+  return tool;
+}
+
 // The display title lives once on the top-level `title` field (the spec's
 // canonical display name). Mirror it into annotations.title at serve time for
 // clients that still read the older annotation field, so the source tool
@@ -419,10 +445,41 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
 
   // Naming convention rules set by the administrator on the config page. When a
   // convention is enabled the LLM MUST follow it when creating or renaming content.
-  // Surfaced here (in instructions) so it's applied automatically for every call.
+  // It is surfaced through THREE redundant channels because no single one is
+  // reliable: (1) here in `instructions` (many clients don't fetch them), (2) the
+  // get_server_context tool (weaker models forget to call it), and (3) — the only
+  // channel a model can't skip — inline on the description of every tool that
+  // assigns a name (see augmentNamingTool / the ListTools handler below).
   const namingConvention = getConfiguredNamingConvention();
-  const namingConventionNote = (namingConvention?.enabled && namingConvention.markdown.trim())
-    ? ` NAMING CONVENTIONS: The administrator has defined naming rules that you MUST follow when creating or naming both content templates AND content fragments. Do not deviate from these rules even if the user asks for a different name — explain the convention and suggest a compliant name instead. Rules:\n${namingConvention.markdown.trim()}`
+  const namingConventionMd = (namingConvention?.enabled && namingConvention.markdown.trim())
+    ? namingConvention.markdown.trim()
+    : '';
+  const namingEnabled = namingConventionMd.length > 0;
+  const namingConventionNote = namingEnabled
+    ? ` NAMING CONVENTIONS: The administrator has defined naming rules that you MUST follow when creating or naming content templates, content fragments, folders, and tags. Do not deviate from these rules even if the user asks for a different name — explain the convention and suggest a compliant name instead. Rules:\n${namingConventionMd}`
+    : '';
+
+  // Full rules block, appended to the description of the tools that assign a brand
+  // new name (create_*) — the moment the model is constructing the name, so the
+  // rules sit right where they're needed with no extra tool call.
+  const namingRulesBlock = namingEnabled
+    ? `\n\n=== ENFORCED NAMING CONVENTION (MANDATORY) ===\n` +
+      `This server enforces an administrator-defined naming convention. The name you assign with this tool ` +
+      `MUST comply with the rules below. If the user asks for a non-compliant name, do not silently comply — ` +
+      `explain the rule and propose a compliant name. The same rules apply to content templates, fragments, ` +
+      `folders, and tags.\n` +
+      `Rules (markdown):\n${namingConventionMd}\n=== END NAMING CONVENTION ===`
+    : '';
+
+  // Concise pointer, appended to the rename-capable tools (update_*/patch_*). These
+  // act on an existing object, so renaming is the less-common path; the notice
+  // guarantees awareness at every naming entry point without duplicating the full
+  // rules onto every tool. The full text lives on the create_* tools and in
+  // get_server_context.
+  const namingPointer = namingEnabled
+    ? `\n\n[Enforced naming convention] This server enforces an administrator-defined naming convention. ` +
+      `Any name you set or change with this tool MUST comply with it. The full rules are in the create_* tool ` +
+      `descriptions (create_content_template, create_content_fragment, create_folder, create_tag) and from get_server_context.`
     : '';
 
   const instructions = (tenantDesc
@@ -600,8 +657,13 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     // and ignore tools/list_changed, so hiding write tools would strand them in
     // read-only even after the toggle is flipped on. Write enforcement happens in
     // CallTool instead. Write tools get the runtime-gate note and the confirmWrite
-    // flag (see augmentWriteTool).
-    const tools = ALL_TOOLS.map(t => withAnnotationTitle(isWriteTool(t.name) ? augmentWriteTool(t) : t));
+    // flag (see augmentWriteTool); name-assigning tools get the enforced naming
+    // convention inline (see augmentNamingTool) so weaker models that skip
+    // get_server_context still discover it.
+    const tools = ALL_TOOLS.map(t => {
+      const augmented = isWriteTool(t.name) ? augmentWriteTool(t) : t;
+      return withAnnotationTitle(augmentNamingTool(augmented, namingRulesBlock, namingPointer));
+    });
     return { tools };
   });
 

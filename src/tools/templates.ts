@@ -368,7 +368,8 @@ Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { id, name, templateType, channels, template, createdAt, modifiedAt, ... }, etag: "...", embeddedFragments: [{ reference, source, id }], invalidFragmentReferences?: ["<bad value>"] }
 The etag is required for update (PUT/PATCH) operations.
-NOTE on fragment references: the upstream data.referencedFragments only lists formally-registered references and is empty for inline data-fragment="(ajo|aem|external):<uuid>" embeds. The server-derived embeddedFragments array DOES capture those inline embeds — use it (not referencedFragments) to confirm what a template embeds. If invalidFragmentReferences is present, the body has data-fragment values missing the required ajo:/aem:/external: prefix; those embeds are broken and will fail at render.`,
+NOTE on fragment references: the upstream data.referencedFragments only lists formally-registered references and is empty for inline data-fragment="(ajo|aem|external):<uuid>" embeds. The server-derived embeddedFragments array DOES capture those inline embeds — use it (not referencedFragments) to confirm what a template embeds. If invalidFragmentReferences is present, the body has data-fragment values missing the required ajo:/aem:/external: prefix; those embeds are broken and will fail at render.
+ONLY data-fragment="(ajo|aem|external):<uuid>" embeds are trackable. Name-based references like {{fragmentName}} are personalization expressions, NOT fragment embeds — they are intentionally NOT reflected in embeddedFragments/referencedFragments, so an empty array does not mean a name-based reference is broken. To embed a fragment in a verifiable way, use the data-fragment="ajo:<uuid>" syntax.`,
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,

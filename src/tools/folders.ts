@@ -32,13 +32,22 @@ const FOLDER_HINT =
 const FOLDER_TYPE_PROP = { type: 'string' as const, description: 'The onboarded object-family noun the folder holds (NOT free-form). For AJO content: "fragment" (content fragments) or "content-template" (content templates) — note the fragment noun is "fragment", not "content-fragment". Unknown nouns return 422 "not onboarded". Required.' };
 const FOLDER_ID_PROP = { type: 'string' as const, description: 'The folder ID (UUID). The virtual id "root" addresses the top-level folder of a folderType (e.g. for list_subfolders).' };
 
-// Enrich the upstream error: a not-onboarded folderType comes back as an opaque 422
-// ("Noun: [X] not onboarded to onto folders"). Append the known AJO content nouns so
-// the caller can retry with a valid value instead of guessing.
+// Enrich opaque upstream folder errors with actionable guidance.
 function folderError(err: unknown) {
   const e = buildError(err);
   if (/not onboarded/i.test(e.message)) {
+    // A not-onboarded folderType ("Noun: [X] not onboarded to onto folders"). Name the
+    // valid AJO content nouns, and call out the most common mistake explicitly.
     e.message += ` For AJO content, valid folderType nouns are ${KNOWN_CONTENT_FOLDER_NOUNS}.`;
+    if (/content[-_]?fragment/i.test(e.message)) {
+      e.message += ` Did you mean folderType "fragment"? (The content-fragment folder noun is just "fragment".)`;
+    }
+  }
+  // Deleting a parent right after a child can 422 because the child delete hasn't
+  // propagated yet (folder deletes are eventually consistent) — tell the caller to retry.
+  if (/children for this folder already exist/i.test(e.message)) {
+    e.message += ` If you just deleted a child folder, this is usually a propagation lag rather than a real ` +
+      `blocker — wait a moment and retry the parent delete.`;
   }
   return e;
 }
@@ -169,6 +178,10 @@ export const deleteFolderDefinition = {
   title: 'Delete Folder',
   outputSchema: buildOutputSchema({ data: DATA_OBJECT }),
   description: `Delete a folder. ⚠ Irreversible — confirm with the user first. The folder must be empty/eligible for deletion (use validate_folder to check). ${FOLDER_HINT}
+
+EVENTUAL CONSISTENCY: folder deletes are applied asynchronously. Deleting a parent immediately after deleting its child can return 422 "Children for this folder already exist" simply because the child deletion hasn't propagated yet — wait a moment and retry (the parent delete then succeeds). Delete children before parents.
+
+⚠ STALE REFERENCES: deleting a folder does NOT clear the parentFolderId of assets (fragments/templates) that lived in it. Any such asset will then FAIL every subsequent patch (the server re-validates the now-missing folder on every write, even patches unrelated to folders). Before deleting a folder, either move its contents elsewhere or patch /parentFolderId off those assets. If you hit it after the fact, add { "op": "remove", "path": "/parentFolderId" } to the asset's patch.
 
 Example usage: { "folderType": "content-template", "folderId": "83f8287c-..." }
 

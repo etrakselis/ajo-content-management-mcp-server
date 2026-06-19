@@ -105,6 +105,20 @@ describe('folder tools', () => {
     expect(res.error?.message).toMatch(/content-template/);
   });
 
+  test('create_folder suggests "fragment" when "content-fragment" is rejected as not onboarded (Issue 2.6)', async () => {
+    m.createFolder.mockRejectedValue(new Error('Noun: content-fragment not onboarded to onto folders'));
+    const res = await handleCreateFolder({ folderType: 'content-fragment', name: 'X' }) as { success: boolean; error?: { message: string } };
+    expect(res.success).toBe(false);
+    expect(res.error?.message).toMatch(/Did you mean folderType "fragment"/);
+  });
+
+  test('delete_folder enriches a "Children ... already exist" 422 with a propagation-lag retry hint (Issue 2.2)', async () => {
+    m.deleteFolder.mockRejectedValue(new Error('Children for this folder already exist'));
+    const res = await handleDeleteFolder({ folderType: 'content-template', folderId: FOLDER_ID }) as { success: boolean; error?: { message: string } };
+    expect(res.success).toBe(false);
+    expect(res.error?.message).toMatch(/propagation lag|wait a moment and retry/i);
+  });
+
   test('list_subfolders and validate_folder pass through the upstream payload', async () => {
     m.getSubfolders.mockResolvedValue({ id: FOLDER_ID, children: [] });
     m.validateFolder.mockResolvedValue({ id: FOLDER_ID, status: 'IN_USE' });

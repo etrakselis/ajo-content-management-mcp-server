@@ -27,24 +27,28 @@ export const landingPageHtml = `<!DOCTYPE html>
     header {
       background: var(--adobe-dark);
       padding: 0 40px;
-      height: 56px;
+      height: 36px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
     }
     .logo {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       color: white;
-      font-size: 15px;
+      font-size: 20px;
       font-weight: 600;
       letter-spacing: -0.01em;
+      line-height: 1;
     }
     .logo-mark {
-      width: 32px;
-      height: 32px;
-      border-radius: 4px;
+      width: 22px;
+      height: 22px;
+      border-radius: 3px;
       display: block;
       object-fit: contain;
     }
@@ -55,7 +59,54 @@ export const landingPageHtml = `<!DOCTYPE html>
       padding: 2px 8px;
       border-radius: 100px;
       font-weight: 500;
+      position: absolute;
+      right: 40px;
     }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    @property --btn-angle {
+      syntax: '<angle>';
+      initial-value: 0deg;
+      inherits: false;
+    }
+    @keyframes traceBorder {
+      to { --btn-angle: 360deg; }
+    }
+    .btn-about {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      background: rgba(255,255,255,0.12);
+      color: rgba(255,255,255,0.9);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s;
+      position: relative;
+    }
+    .btn-about::before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border-radius: 7px;
+      padding: 1px;
+      background: conic-gradient(from var(--btn-angle), transparent 80%, #FA0F00 88%, transparent 95%);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      animation: traceBorder 2s linear infinite;
+      pointer-events: none;
+    }
+    .btn-about:hover { background: rgba(255,255,255,0.2); }
+    .btn-about svg { width: 15px; height: 15px; opacity: 0.85; }
     main {
       max-width: 720px;
       margin: 0 auto;
@@ -398,12 +449,15 @@ export const landingPageHtml = `<!DOCTYPE html>
       resize: vertical;
       outline: none;
       transition: border-color 0.15s;
-      background: rgba(38, 142, 108, 0.06);
-      color: var(--adobe-dark);
+      background: #2C2C2C;
+      color: #F2F2F2;
+      caret-color: #F2F2F2;
+      border-color: #2C2C2C;
       display: block;
     }
+    .md-editor::placeholder { color: #9A9A9A; }
     .md-editor:focus { border-color: var(--adobe-red); }
-    .md-dropzone-wrap.drag-over .md-editor { border-color: var(--adobe-red); background: rgba(250,15,0,0.02); }
+    .md-dropzone-wrap.drag-over .md-editor { border-color: var(--adobe-red); background: #1F1F1F; }
     .md-drop-overlay {
       display: none;
       position: absolute;
@@ -433,15 +487,26 @@ export const landingPageHtml = `<!DOCTYPE html>
       flex-shrink: 0;
     }
     .upload-md-btn:hover { background: var(--adobe-light); }
+    .md-editor-msg { display: none; font-size: 12px; line-height: 1.45; margin-top: 8px; }
+    .md-editor-msg.show { display: block; }
+    .md-editor-msg.error { color: #C9252D; }
+    .md-editor-msg.warn { color: var(--adobe-warn); }
   </style>
 </head>
 <body>
   <header>
-    <div class="logo">
-      <img class="logo-mark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAABL1BMVEUAAADjHADqDwDqEQDrFADrDwDqEQDqEADqDwD/AADqEQDpDwDqEQDrEADrFADqEADqEADnEADpEADqDwD/AADqEADqEADfAADrEQDqEADqEADrEADqEADqEADqEADrEQDqEADsDgDqEADpEAD/AADsEwDqEADqEADwDwDqEADqEQDqEADpCwDpDwDqEADrFADpEADqEQD/AADqEADqEQDbAADqEADqEAD/AADoEADoDwDpEADpEADqEADqEADrDQDpEADqDgDrEADqEADoEQDnDADqEADqEADrEAD/AADqEADqEADuEQDpEQDrEQDqEADpEADqEADqDwDqDgDqDwDrEADpDwDqDwDqDwDrEADuEQDqEADoDwDqEQDqDwDpEADrDQDrEADqEADqEAD///8XdvSxAAAAY3RSTlMACYeIDWRszNYBPUSorxn6/CCAhgXk6whZX8S878owS5I2neEDKf6hEfV7+Bd2+xpdegLeqgfq4gRPQ45SutwnvSVzwCwVlPCiBunzDzuKbdX0dyTXu0WVVLAe5SFKhaQmfW7io+08AAAAAWJLR0Rkwtq4CQAAAAlwSFlzAAAA6AAAAOgBhtX2rwAAAAd0SU1FB+gIFBUtLabQ30cAAAEtSURBVDjLrZJXQ8IwFIUjRQQRRUXcewKKW3Erbhy4wAEimv//H0y4p22Slic9L733nC+jSRj7T7UELFKwCdDKoVAToM0GwhHfvJ07ivoCHS4Q88s7u1wg3u0D9HBFvd480acCyX4PMMA1DXqAIQqGR+g7auZjGDk+gWLSAKbInp6ZnaNqXs8XUmSnnbUyixqwRG52mbEVrLGq5mvrZG6IenOL6u2cAuxg1K5s9tDsK8ABWYeNWzzCNo/d/ARWntpTTHHmAPj3zLl+qBd2Hrwk4wr9dYH6m1sYIYy4s0fcwyhSG3mg9vFJKi82+ow9vdDTi+r3KOcpoS43gJgOvArrDfW7zD/iOpBMMJar4OlVBWBxQ5/CrKEOiKMvmMCXMq14enXL1Ldc+AdNnf1Zv9MjogPfmGNPAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI0LTA4LTIwVDIxOjQ1OjQ1KzAwOjAwMdr8AwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNC0wOC0yMFQyMTo0NTo0NSswMDowMECHRL8AAAAZdEVYdFNvZnR3YXJlAHd3dy5pbmtzY2FwZS5vcmeb7jwaAAAAV3pUWHRSYXcgcHJvZmlsZSB0eXBlIGlwdGMAAHic4/IMCHFWKCjKT8vMSeVSAAMjCy5jCxMjE0uTFAMTIESANMNkAyOzVCDL2NTIxMzEHMQHy4BIoEouAOoXEXTyQjWVAAAAAElFTkSuQmCC" alt="ET AJO Content MCP logo" />
-      ET AJO Content MCP
+    <div class="header-actions">
+      <div class="logo">
+        <img class="logo-mark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAABL1BMVEUAAADjHADqDwDqEQDrFADrDwDqEQDqEADqDwD/AADqEQDpDwDqEQDrEADrFADqEADqEADnEADpEADqDwD/AADqEADqEADfAADrEQDqEADqEADrEADqEADqEADqEADrEQDqEADsDgDqEADpEAD/AADsEwDqEADqEADwDwDqEADqEQDqEADpCwDpDwDqEADrFADpEADqEQD/AADqEADqEQDbAADqEADqEAD/AADoEADoDwDpEADpEADqEADqEADrDQDpEADqDgDrEADqEADoEQDnDADqEADqEADrEAD/AADqEADqEADuEQDpEQDrEQDqEADpEADqEADqDwDqDgDqDwDrEADpDwDqDwDqDwDrEADuEQDqEADoDwDqEQDqDwDpEADrDQDrEADqEADqEAD///8XdvSxAAAAY3RSTlMACYeIDWRszNYBPUSorxn6/CCAhgXk6whZX8S878owS5I2neEDKf6hEfV7+Bd2+xpdegLeqgfq4gRPQ45SutwnvSVzwCwVlPCiBunzDzuKbdX0dyTXu0WVVLAe5SFKhaQmfW7io+08AAAAAWJLR0Rkwtq4CQAAAAlwSFlzAAAA6AAAAOgBhtX2rwAAAAd0SU1FB+gIFBUtLabQ30cAAAEtSURBVDjLrZJXQ8IwFIUjRQQRRUXcewKKW3Erbhy4wAEimv//H0y4p22Slic9L733nC+jSRj7T7UELFKwCdDKoVAToM0GwhHfvJ07ivoCHS4Q88s7u1wg3u0D9HBFvd480acCyX4PMMA1DXqAIQqGR+g7auZjGDk+gWLSAKbInp6ZnaNqXs8XUmSnnbUyixqwRG52mbEVrLGq5mvrZG6IenOL6u2cAuxg1K5s9tDsK8ABWYeNWzzCNo/d/ARWntpTTHHmAPj3zLl+qBd2Hrwk4wr9dYH6m1sYIYy4s0fcwyhSG3mg9vFJKi82+ow9vdDTi+r3KOcpoS43gJgOvArrDfW7zD/iOpBMMJar4OlVBWBxQ5/CrKEOiKMvmMCXMq14enXL1Ldc+AdNnf1Zv9MjogPfmGNPAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI0LTA4LTIwVDIxOjQ1OjQ1KzAwOjAwMdr8AwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNC0wOC0yMFQyMTo0NTo0NSswMDowMECHRL8AAAAZdEVYdFNvZnR3YXJlAHd3dy5pbmtzY2FwZS5vcmeb7jwaAAAAV3pUWHRSYXcgcHJvZmlsZSB0eXBlIGlwdGMAAHic4/IMCHFWKCjKT8vMSeVSAAMjCy5jCxMjE0uTFAMTIESANMNkAyOzVCDL2NTIxMzEHMQHy4BIoEouAOoXEXTyQjWVAAAAAElFTkSuQmCC" alt="ET AJO Content MCP logo" />
+        <span class="logo-text">ET AJO Content MCP</span>
+      </div>
+      <a class="btn-about" href="https://github.com/etrakselis/ajo_content_mgmt_mcp" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.604-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836a9.59 9.59 0 012.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
+        </svg>
+        About
+      </a>
     </div>
-    <span class="badge" id="statusBadge">Not configured</span>
   </header>
 
   <main>
@@ -565,11 +630,11 @@ export const landingPageHtml = `<!DOCTYPE html>
     <div class="step-label">Step 5 — Naming Convention</div>
     <div class="card">
       <h2>Content naming convention</h2>
-      <p>Optionally define naming rules for content templates and fragments. When enforcement is on, the connected LLM will follow these rules automatically whenever it creates or names content — for both templates and fragments. Write your convention in markdown — the LLM reads it directly.</p>
+      <p>Optionally define naming rules for content templates, fragments, folders, and tags. When enforcement is on, the connected LLM will follow these rules automatically whenever it creates or names any of those. Write your convention in markdown — the LLM reads it directly.</p>
       <label class="toggle-row" for="namingConventionToggle" style="cursor:pointer;margin-bottom:0">
         <span class="toggle-text">
           <span class="toggle-title">Enforce naming convention</span>
-          <span class="hint">When on, the LLM must follow the rules below when naming new content templates and fragments.</span>
+          <span class="hint">When on, the LLM must follow the rules below when naming new content templates, fragments, folders, and tags.</span>
         </span>
         <span class="switch">
           <input type="checkbox" id="namingConventionToggle" />
@@ -578,31 +643,15 @@ export const landingPageHtml = `<!DOCTYPE html>
       </label>
       <div id="namingConventionEditor" class="naming-editor-wrap" style="display:none">
         <div class="md-dropzone-wrap" id="namingMdDropzone">
-          <textarea id="namingConventionMarkdown" class="md-editor" placeholder="# Content Naming Convention
-
-Define your naming rules here in markdown. The LLM will read and apply these rules to both templates and fragments.
-
-## Format
-Use the pattern: [channel/type]-[use-case]-[descriptor]
-
-## Template examples
-- email-promo-welcome
-- push-lifecycle-onboarding
-
-## Fragment examples
-- html-hero-header
-- expr-promo-discount-code
-
-## Rules
-- Use lowercase letters, numbers, and hyphens only
-- Be descriptive but concise"></textarea>
+          <textarea id="namingConventionMarkdown" class="md-editor" maxlength="20000" placeholder="Define your naming rules in markdown. The LLM will read and apply these rules to templates, fragments, folders, and tags.">{{DEFAULT_NAMING_CONVENTION}}</textarea>
           <div class="md-drop-overlay">Drop .md file here</div>
           <input type="file" id="namingMdFileInput" accept=".md,text/markdown,text/plain" style="display:none" />
         </div>
         <div class="md-editor-footer">
-          <span class="hint">Type markdown directly, or drag and drop / upload a <code>.md</code> file to populate.</span>
+          <span class="hint">If needed, edit/replace the above default for your use-case, otherwise leave as is.</span>
           <button class="upload-md-btn" type="button" id="namingMdUploadBtn">Upload .md file</button>
         </div>
+        <div class="md-editor-msg" id="namingMdMsg"></div>
       </div>
     </div>
     </section>
@@ -670,6 +719,11 @@ Use the pattern: [channel/type]-[use-case]-[descriptor]
   <script>
     let credentials = null;
     let serverUrl = window.location.origin;
+
+    // The naming-convention editor is pre-filled (server-injected) with the default
+    // governance rules. Capture that initial value so a server-reset can restore it
+    // rather than blanking the box.
+    const DEFAULT_NAMING_MD = document.getElementById('namingConventionMarkdown').value;
 
     function copyText(id) {
       const el = document.getElementById(id);
@@ -757,7 +811,7 @@ Use the pattern: [channel/type]-[use-case]-[descriptor]
           document.getElementById('fileAccepted').classList.add('show');
           // Prefer the credential set's own name (top-level "name" in the export); fall back to the filename
           const credName = (typeof credentials.name === 'string' && credentials.name.trim()) ? credentials.name.trim() : file.name;
-          document.getElementById('fileName').textContent = credName + ' — ' + (credentials.values?.length || 0) + ' values';
+          document.getElementById('fileName').textContent = credName ;
           dropzone.style.display = 'none';
           discoverSandboxes();
         } catch {
@@ -791,7 +845,6 @@ Use the pattern: [channel/type]-[use-case]-[descriptor]
       document.getElementById('connInfo').classList.remove('show');
       document.getElementById('orgFallback').classList.remove('show');
       document.getElementById('orgInput').value = '';
-      document.getElementById('statusBadge').textContent = 'Not configured';
       document.getElementById('errorMsg').classList.remove('show');
     }
 
@@ -809,7 +862,7 @@ Use the pattern: [channel/type]-[use-case]-[descriptor]
       document.getElementById('authorEmailInput').value = '';
       document.getElementById('namingConventionToggle').checked = false;
       document.getElementById('namingConventionEditor').style.display = 'none';
-      document.getElementById('namingConventionMarkdown').value = '';
+      document.getElementById('namingConventionMarkdown').value = DEFAULT_NAMING_MD;
       document.getElementById('resetNotice').classList.add('show');
       checkReady();
     }
@@ -1101,7 +1154,6 @@ Use the pattern: [channel/type]-[use-case]-[descriptor]
       }
 
       // Server is active — render the connection summary right below the button
-      document.getElementById('statusBadge').textContent = 'Active';
       document.getElementById('httpEndpoint').textContent = serverUrl + '/mcp';
       document.getElementById('statusPanel').classList.add('show');
       setAccessModeDisplay(data.writesAllowed);
@@ -1144,10 +1196,52 @@ Use the pattern: [channel/type]-[use-case]-[descriptor]
       };
     }
 
+    // Naming convention is injected into the LLM's system prompt every session, so
+    // it's capped (matching the server's limit). maxlength bounds typing/pasting;
+    // these guards bound file uploads, which set .value programmatically and so
+    // bypass maxlength. The byte guard rejects an absurd/binary file before reading
+    // it into memory; the char guard is the authoritative check after decoding.
+    const MAX_NAMING_MD_LEN = 20000;
+    const MAX_NAMING_FILE_BYTES = 100 * 1024;
+
     (function setupNamingConvention() {
       const dropzone = document.getElementById('namingMdDropzone');
       const fileInput = document.getElementById('namingMdFileInput');
       const uploadBtn = document.getElementById('namingMdUploadBtn');
+      const textarea = document.getElementById('namingConventionMarkdown');
+      const msg = document.getElementById('namingMdMsg');
+
+      function showMsg(text, kind) {
+        msg.textContent = text;
+        msg.className = 'md-editor-msg show ' + (kind || 'error');
+      }
+      function clearMsg() { msg.textContent = ''; msg.className = 'md-editor-msg'; }
+
+      function invalidate() {
+        if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) resetActivationUI();
+      }
+
+      // Read a dropped/selected .md file into the editor, with size guards.
+      function loadMdFile(file) {
+        if (!file) return;
+        if (file.size > MAX_NAMING_FILE_BYTES) {
+          showMsg('That file is too large to be a naming convention (max ' + Math.round(MAX_NAMING_FILE_BYTES / 1024) + ' KB). Upload a smaller .md file.', 'error');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const text = String(ev.target.result);
+          if (text.length > MAX_NAMING_MD_LEN) {
+            showMsg('That file has ' + text.length.toLocaleString() + ' characters, over the ' + MAX_NAMING_MD_LEN.toLocaleString() + '-character limit. Trim it and try again — it was not loaded.', 'error');
+            return;
+          }
+          clearMsg();
+          textarea.value = text;
+          invalidate();
+        };
+        reader.onerror = () => showMsg('Could not read that file. Try again or paste the markdown directly.', 'error');
+        reader.readAsText(file);
+      }
 
       uploadBtn.addEventListener('click', () => fileInput.click());
 
@@ -1159,34 +1253,22 @@ Use the pattern: [channel/type]-[use-case]-[descriptor]
       });
       dropzone.addEventListener('drop', (e) => {
         e.preventDefault();
-        const file = e.dataTransfer.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          document.getElementById('namingConventionMarkdown').value = ev.target.result;
-          if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) resetActivationUI();
-        };
-        reader.readAsText(file);
+        loadMdFile(e.dataTransfer.files[0]);
       });
       fileInput.addEventListener('change', () => {
-        const file = fileInput.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          document.getElementById('namingConventionMarkdown').value = ev.target.result;
-          if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) resetActivationUI();
-        };
-        reader.readAsText(file);
+        loadMdFile(fileInput.files[0]);
         fileInput.value = '';
       });
 
       document.getElementById('namingConventionToggle').addEventListener('change', (e) => {
         document.getElementById('namingConventionEditor').style.display = e.target.checked ? '' : 'none';
-        if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) resetActivationUI();
+        invalidate();
       });
 
-      document.getElementById('namingConventionMarkdown').addEventListener('input', () => {
-        if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) resetActivationUI();
+      textarea.addEventListener('input', () => {
+        // maxlength caps typed/pasted length; clear any stale over-limit message.
+        if (textarea.value.length <= MAX_NAMING_MD_LEN) clearMsg();
+        invalidate();
       });
     })();
 

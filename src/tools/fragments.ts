@@ -231,6 +231,8 @@ export const createContentFragmentDefinition = {
   description: `Create a new content fragment in Adobe Journey Optimizer.
 Fragments are reusable content blocks that can be embedded in campaigns and journeys.
 
+LIFECYCLE NOTE (plan cleanup accordingly): fragments have NO hard-delete — there is no REST delete endpoint. The only permanent removal is archive_content_fragment (archiving is the terminal state). Do not assume create/delete symmetry.
+
 ⚠ VISUAL EMAIL DESIGNER REQUIREMENT (type "html", channel "email"):
   The HTML content must use AJO's native serialization format (acr-* class
   namespace, structure/component catalog, required <head> with content-version
@@ -665,9 +667,15 @@ export const archiveContentFragmentDefinition = {
     id: { type: 'string', description: 'UUID of the archived fragment.' },
     etag: { type: 'string', description: 'New ETag after archival.' }
   }),
-  description: `Archive a content fragment in Adobe Journey Optimizer.
-Fragments cannot be deleted via the API — archiving is the permanent equivalent. An archived fragment
-is removed from the active library and can no longer be used in new campaigns or journeys.
+  description: `Archive (the permanent DELETE-equivalent for) a content fragment in Adobe Journey Optimizer.
+Fragments have NO hard-delete / REST delete endpoint — archive is the ONLY way to permanently remove a fragment.
+So if you are cleaning up or "deleting" fragments, use this tool. An archived fragment is removed from the
+active library and can no longer be used in new campaigns or journeys.
+
+⚠ Archiving does NOT clear the fragment's tag associations. An archived fragment still counts as an active
+association for its tags, so delete_tag on any of those tags fails with 403 "Associated Tag Count is not Zero".
+If you intend to delete the tags applied to this fragment, first patch the fragment to clear them
+(patch_content_fragment with { "op": "replace"/"add", "path": "/tagIds", "value": [] }) — before or after archiving.
 
 No etag is required. This operation bypasses optimistic locking (the internal GraphQL mutation
 accepts an empty etag), so no concurrent-modification check is performed. Confirm the fragment ID

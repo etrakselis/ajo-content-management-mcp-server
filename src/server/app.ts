@@ -14,6 +14,7 @@ import { getConnectedClients, addSession, touchSession, openSessionStream, close
 import { getWritesAllowed, setWritesAllowed, onWriteAccessChanged } from '../mcp/access-policy.js';
 import { logger, metricsRegistry } from '../telemetry/index.js';
 import { landingPageHtml } from '../ui/landing.js';
+import { getDefaultNamingConvention } from '../ui/naming-convention-default.js';
 
 // ─── Shared configuration helpers ──────────────────────────────────────────
 
@@ -103,20 +104,32 @@ function parseConfigRequest(body: Record<string, unknown>): ParsedConfigRequest 
   };
 }
 
-// Parse and sanitize naming convention config from the configure request body.
-// Caps markdown length to prevent oversized payloads from bloating MCP instructions.
-const MAX_CONVENTION_MARKDOWN_LEN = 10_000;
+// Parse and validate naming convention config from the configure request body.
+// The markdown is injected verbatim into the MCP server instructions (sent on
+// every session), so it's capped to bound both abuse and per-session token cost.
+// Over-limit input is REJECTED rather than silently truncated — truncating a
+// governance ruleset mid-sentence would hand the LLM a partial, misleading spec.
+// Counts UTF-16 code units (String#length), matching the client's maxlength so the
+// two layers agree on what "20,000 characters" means.
+const MAX_CONVENTION_MARKDOWN_LEN = 20_000;
 
-function parseNamingConvention(raw: unknown): NamingConventionConfig | undefined {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+type ParsedNamingConvention =
+  | { ok: true; value: NamingConventionConfig | undefined }
+  | { ok: false; error: string };
+
+function parseNamingConvention(raw: unknown): ParsedNamingConvention {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: true, value: undefined };
   const obj = raw as Record<string, unknown>;
-  if (typeof obj.enabled !== 'boolean') return undefined;
-  return {
-    enabled: obj.enabled,
-    markdown: typeof obj.markdown === 'string'
-      ? obj.markdown.slice(0, MAX_CONVENTION_MARKDOWN_LEN)
-      : ''
-  };
+  if (typeof obj.enabled !== 'boolean') return { ok: true, value: undefined };
+  const markdown = typeof obj.markdown === 'string' ? obj.markdown : '';
+  if (markdown.length > MAX_CONVENTION_MARKDOWN_LEN) {
+    return {
+      ok: false,
+      error: `Naming convention is too large (${markdown.length.toLocaleString()} characters). ` +
+        `The limit is ${MAX_CONVENTION_MARKDOWN_LEN.toLocaleString()} characters — shorten it and try again.`
+    };
+  }
+  return { ok: true, value: { enabled: obj.enabled, markdown } };
 }
 
 // Self-declared author email. We require a syntactically valid address but make
@@ -449,9 +462,21 @@ export function createExpressApp(): express.Application {
 
   // ─── Landing Page ─────────────────────────────────────────────────────────
 
+  // Pre-fill the naming-convention editor with the default governance rules.
+  // Escaped for safe embedding as textarea content (& and < would otherwise be
+  // parsed as entities / a tag); a function replacement avoids String.replace
+  // interpreting `$` sequences in the markdown. Rendered once at startup since the
+  // default never changes for the life of the process.
+  const escapeForTextarea = (s: string): string =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const renderedLandingPage = landingPageHtml.replace(
+    '{{DEFAULT_NAMING_CONVENTION}}',
+    () => escapeForTextarea(getDefaultNamingConvention())
+  );
+
   app.get('/', (_req, res) => {
     res.setHeader('Content-Type', 'text/html');
-    res.send(landingPageHtml);
+    res.send(renderedLandingPage);
   });
 
   // ─── Configuration API ────────────────────────────────────────────────────
@@ -599,8 +624,12 @@ export function createExpressApp(): express.Application {
     // Access mode — read-only by default; writes only when explicitly enabled.
     setWritesAllowed(req.body?.allowWrites === true);
 
-    // Optional naming convention — parsed and sanitized before storage.
-    const namingConvention = parseNamingConvention((req.body as Record<string, unknown>)?.namingConvention);
+    // Optional naming convention — validated before storage; over-limit is rejected.
+    const ncResult = parseNamingConvention((req.body as Record<string, unknown>)?.namingConvention);
+    if (!ncResult.ok) {
+      return res.status(400).json({ success: false, error: ncResult.error });
+    }
+    const namingConvention = ncResult.value;
 
     // Apply credentials so the token manager can acquire an IMS token
     tokenManager.setCredentials(creds);
