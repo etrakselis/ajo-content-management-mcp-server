@@ -875,6 +875,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     let clientPollTimer = null;
     let pollFailCount = 0;
     let prevClientCount = 0;
+    let countdownTimer = null;
     const KNOWN_CLIENTS = {
       'claude-ai': 'Claude Desktop',
       'claude-code': 'Claude Code',
@@ -988,8 +989,29 @@ export const landingPageHtml = `<!DOCTYPE html>
       checkReady();
     });
 
+    function startRetryCountdown(seconds) {
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      let remaining = Math.max(1, parseInt(seconds, 10) || 60);
+      startBtn.disabled = true;
+      function tick() {
+        if (remaining <= 0) {
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+          showError('Rate limit cleared — you can try again now.');
+          startBtn.disabled = false;
+          startBtn.innerHTML = needsOrg ? 'Activate MCP Server' : 'Start MCP Server';
+          return;
+        }
+        showError('Too many requests — please try again in ' + remaining + ' second' + (remaining !== 1 ? 's' : '') + '.');
+        remaining--;
+      }
+      tick();
+      countdownTimer = setInterval(tick, 1000);
+    }
+
     // Reset everything that activation produced, back to the pre-launch state
     function resetActivationUI() {
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
       needsOrg = false;
       serverActive = false;
       document.getElementById('clientRestartNotice').classList.remove('show');
@@ -1000,12 +1022,13 @@ export const landingPageHtml = `<!DOCTYPE html>
       btn.innerHTML = 'Start MCP Server';
       btn.style.background = '';
       btn.disabled = false;
-      btn.classList.remove('btn-trace', 'btn-breathing');
+      btn.classList.remove('btn-trace');
       document.getElementById('statusPanel').classList.remove('show');
       document.getElementById('connInfo').classList.remove('show');
       document.getElementById('orgFallback').classList.remove('show');
       document.getElementById('orgInput').value = '';
       document.getElementById('errorMsg').classList.remove('show');
+      btn.classList.toggle('btn-breathing', !document.getElementById('step6').classList.contains('hidden'));
       updateProgress();
     }
 
@@ -1297,7 +1320,11 @@ export const landingPageHtml = `<!DOCTYPE html>
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-      if (res.status === 429) throw new Error('Too many requests — please wait a moment and try again.');
+      if (res.status === 429) {
+        const err = new Error('TOO_MANY_REQUESTS');
+        err.retryAfter = res.headers.get('Retry-After');
+        throw err;
+      }
       return res.json();
     }
 
@@ -1324,6 +1351,7 @@ export const landingPageHtml = `<!DOCTYPE html>
         try {
           detect = await postJson('/api/detect-tenant', { credentials, sandboxName: sandbox });
         } catch (err) {
+          if (err.retryAfter !== undefined) { startRetryCountdown(err.retryAfter); return; }
           return failStart('Network error: ' + err.message);
         }
         if (!detect.success) {
@@ -1360,6 +1388,7 @@ export const landingPageHtml = `<!DOCTYPE html>
         data = await postJson('/api/configure', { credentials, sandboxName: sandbox, orgName: org || undefined, allowWrites, authorEmail: getAuthorEmail(), namingConvention: getNamingConvention() });
       } catch (err) {
         clearInterval(stepTimer);
+        if (err.retryAfter !== undefined) { startRetryCountdown(err.retryAfter); return; }
         return failStart('Network error: ' + err.message);
       }
       clearInterval(stepTimer);
@@ -1399,6 +1428,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       serverActive = true;
       updateProgress();
       startBtn.disabled = false;
+      startBtn.classList.add('btn-breathing');
       startBtn.innerHTML = 'Deactivate Server';
       startBtn.style.background = 'var(--adobe-mid)';
     }
