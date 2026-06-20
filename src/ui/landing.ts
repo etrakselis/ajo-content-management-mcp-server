@@ -35,6 +35,39 @@ export const landingPageHtml = `<!DOCTYPE html>
       z-index: 100;
       border-bottom: 1px solid rgba(255,255,255,0.12);
     }
+    .setup-tracker {
+      position: absolute;
+      right: 48px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .setup-tracker-label {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.65);
+    }
+    .setup-tracker-dots {
+      display: flex;
+      gap: 7px;
+      align-items: center;
+    }
+    .setup-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.2);
+      transition: background 0.4s ease;
+    }
+    .setup-dot.done { background: var(--adobe-red); }
+    .setup-tracker-pct {
+      font-size: 12px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.65);
+      min-width: 36px;
+    }
     .logo-mark {
       width: 30px;
       height: 30px;
@@ -594,6 +627,16 @@ export const landingPageHtml = `<!DOCTYPE html>
         About
       </a>
     </div>
+    <div class="setup-tracker" id="setupTracker">
+      <span class="setup-tracker-label">Steps Completed</span>
+      <div class="setup-tracker-dots">
+        <span class="setup-dot" id="sdot1"></span>
+        <span class="setup-dot" id="sdot2"></span>
+        <span class="setup-dot" id="sdot3"></span>
+        <span class="setup-dot" id="sdot4"></span>
+      </div>
+      <span class="setup-tracker-pct" id="setupPct">0%</span>
+    </div>
   </header>
 
   <main>
@@ -963,6 +1006,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('orgFallback').classList.remove('show');
       document.getElementById('orgInput').value = '';
       document.getElementById('errorMsg').classList.remove('show');
+      updateProgress();
     }
 
     // The server lost its configuration (container restarted/rebuilt). Return the
@@ -1168,6 +1212,7 @@ export const landingPageHtml = `<!DOCTYPE html>
           if (label) label.textContent = 'Step ' + n + ' — ' + section.dataset.stepName;
         }
       });
+      updateProgress();
       // Breathing animation on the activate button tracks step 6 visibility.
       startBtn.classList.toggle('btn-breathing', !document.getElementById('step6').classList.contains('hidden'));
 
@@ -1207,6 +1252,19 @@ export const landingPageHtml = `<!DOCTYPE html>
       emailSyncTimer = setTimeout(syncSteps, 600);
     });
 
+    function updateProgress() {
+      const s1 = !!credentials;
+      const s2 = !!(credentials && getSandboxName());
+      const s3 = !!(credentials && getSandboxName() && isAuthorEmailValid());
+      const s4 = serverActive;
+      [s1, s2, s3, s4].forEach((done, i) => {
+        document.getElementById('sdot' + (i + 1)).classList.toggle('done', done);
+      });
+      const pct = [s1, s2, s3, s4].filter(Boolean).length * 25;
+      document.getElementById('setupPct').textContent = pct + '%';
+      document.getElementById('setupTracker').style.display = s4 ? 'none' : '';
+    }
+
     function updateCardTrace(step) {
       document.querySelectorAll('.card').forEach(c => c.classList.remove('card-trace'));
       if (serverActive || !step || step.id === 'step6') return;
@@ -1239,6 +1297,7 @@ export const landingPageHtml = `<!DOCTYPE html>
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
+      if (res.status === 429) throw new Error('Too many requests — please wait a moment and try again.');
       return res.json();
     }
 
@@ -1268,7 +1327,7 @@ export const landingPageHtml = `<!DOCTYPE html>
           return failStart('Network error: ' + err.message);
         }
         if (!detect.success) {
-          return failStart(detect.error || 'Could not validate credentials.');
+          return failStart(typeof detect.error === 'string' ? detect.error : 'Could not validate credentials.');
         }
         if (!detect.tenantNamespace) {
           // No namespace — reveal the org input and wait for the user before activating
@@ -1306,7 +1365,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       clearInterval(stepTimer);
 
       if (!data.success) {
-        return failStart(data.error || 'Configuration failed.');
+        return failStart(typeof data.error === 'string' ? data.error : 'Configuration failed.');
       }
 
       // Server is active — render the connection summary right below the button
@@ -1338,6 +1397,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       }
 
       serverActive = true;
+      updateProgress();
       startBtn.disabled = false;
       startBtn.innerHTML = 'Deactivate Server';
       startBtn.style.background = 'var(--adobe-mid)';
