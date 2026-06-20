@@ -25,7 +25,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       min-height: 100vh;
     }
     header {
-      background: var(--adobe-dark);
+      background: #3D3D3D;
       padding: 16px 48px;
       display: flex;
       align-items: center;
@@ -33,6 +33,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       position: sticky;
       top: 0;
       z-index: 100;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
     }
     .logo-mark {
       width: 30px;
@@ -284,8 +285,10 @@ export const landingPageHtml = `<!DOCTYPE html>
     .switch input:checked + .slider { background: var(--adobe-success); }
     .switch input:checked + .slider::before { transform: translateX(20px); }
     .btn-primary {
-      width: 100%;
+      width: auto;
+      min-width: 220px;
       height: 44px;
+      padding: 0 32px;
       background: #C0392B;
       color: white;
       border: none;
@@ -432,7 +435,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     .conn-info.show { display: flex; }
     .conn-row { display: flex; align-items: center; gap: 12px; }
-    .conn-key { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--adobe-mid); width: 150px; flex-shrink: 0; }
+    .conn-key { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--adobe-mid); flex-shrink: 0; }
     .conn-val { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px; font-weight: 600; color: var(--adobe-dark); word-break: break-all; }
     .conn-val.warn { color: var(--adobe-warn); font-family: var(--font-display); font-weight: 500; }
     .org-fallback { display: none; flex-direction: column; gap: 6px; margin-top: 16px; }
@@ -749,9 +752,11 @@ export const landingPageHtml = `<!DOCTYPE html>
     <div class="step-label">Step 6 — Launch</div>
     <div class="card">
       <div class="error-msg" id="errorMsg"></div>
-      <button class="btn-primary" id="startBtn" disabled>
-        Start MCP Server
-      </button>
+      <div style="display:flex;justify-content:center;">
+        <button class="btn-primary" id="startBtn" disabled>
+          Start MCP Server
+        </button>
+      </div>
 
       <!-- Connection summary — shown right below the button once the server is
            active. Tenant namespace and sandbox are already shown above (banner +
@@ -792,7 +797,6 @@ export const landingPageHtml = `<!DOCTYPE html>
         <div class="endpoint-row">
           <span class="endpoint-label">HTTP</span>
           <span class="endpoint-value" id="httpEndpoint">http://localhost:3000/mcp</span>
-          <button class="copy-btn" onclick="copyText('httpEndpoint')">Copy</button>
         </div>
         <div class="endpoint-row">
           <span class="endpoint-label">STDIO</span>
@@ -1205,7 +1209,7 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     function updateCardTrace(step) {
       document.querySelectorAll('.card').forEach(c => c.classList.remove('card-trace'));
-      if (!step || step.id === 'step6') return;
+      if (serverActive || !step || step.id === 'step6') return;
       const cards = step.querySelectorAll('.card');
       if (cards.length) cards[cards.length - 1].classList.add('card-trace');
     }
@@ -1316,7 +1320,11 @@ export const landingPageHtml = `<!DOCTYPE html>
         hadConnectedClients = false;
       }
       startClientPolling();
-      setTimeout(() => document.getElementById('statusPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+      setTimeout(() => {
+        const el = document.getElementById('step6');
+        const hdrH = document.querySelector('header').offsetHeight;
+        window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - hdrH, behavior: 'smooth' });
+      }, 150);
 
       // Finalize the tenant identity in the banner above (it may have been
       // unknown until the user supplied an org name for the fallback).
@@ -1337,13 +1345,8 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     function setAccessModeDisplay(writesAllowed) {
       const el = document.getElementById('connAccess');
-      if (writesAllowed === false) {
-        el.textContent = 'Read-only';
-        el.classList.add('warn');
-      } else {
-        el.textContent = 'Read & write';
-        el.classList.remove('warn');
-      }
+      el.textContent = writesAllowed === false ? 'Read-only' : 'Read & write';
+      el.classList.add('warn');
     }
 
     // ─── Naming convention ─────────────────────────────────────────────────────
