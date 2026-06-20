@@ -1,8 +1,12 @@
-# Adobe Journey Optimizer Asset Governance & Naming Standards (Enterprise Governance Specification)
+# Adobe Journey Optimizer Asset Governance & Naming Standard
 
-## Purpose
+## Enterprise Governance Specification for LLM Asset Management
 
-This specification defines the mandatory standards an LLM must follow when creating, naming, tagging, organizing, migrating, deprecating, and managing Adobe Journey Optimizer (AJO) assets.
+---
+
+# Purpose
+
+This specification defines the mandatory standards an LLM must follow when creating, naming, validating, tagging, organizing, migrating, deprecating, and managing Adobe Journey Optimizer (AJO) assets.
 
 Covered asset types:
 
@@ -16,48 +20,108 @@ Objectives:
 - Consistent naming
 - Easy asset discovery
 - Reuse before creation
-- Simplified governance
-- Clear relationships between assets
-- Predictable migrations
 - Reduced duplication
-- Scalable enterprise asset management
+- Scalable governance
+- Predictable migrations
+- Clear asset relationships
+- Enterprise asset lifecycle management
 
 ---
 
-# Governance Principles
+# Core Governance Principles
 
-## Names identify the asset
+## Principle 1 — Names Identify Assets
 
-Names communicate:
+Asset names communicate:
 
 - Brand
 - Trigger Category
 - Trigger Name
 - Asset Purpose
 
-Names never contain:
+Asset names must never contain:
 
 - Lifecycle state
 - Sandbox names
-- Environment information
+- Environment identifiers
 - Migration status
 - Approval status
 - Dates
+- Timestamps
 - Version numbers
+- User names
 
-## Folders organize the asset
+---
 
-Folders provide navigational structure only.
+## Principle 2 — Folders Organize Assets
 
-## Tags describe the asset
+Folders provide navigation only.
+
+Folders must not be used to represent:
+
+- Lifecycle state
+- Environment
+- Migration status
+
+---
+
+## Principle 3 — Tags Describe Assets
 
 Tags provide:
 
+- Searchability
 - Filtering
-- Governance
+- Governance metadata
 - Lifecycle tracking
 - Migration readiness
 - Asset grouping
+
+---
+
+# Metadata Minimization Principle
+
+The LLM must avoid storing metadata that can be reliably inferred from existing platform structure.
+
+Metadata should only be added when it provides unique governance, discovery, lifecycle, relationship, or operational value.
+
+The LLM should prefer minimal governance metadata over redundant metadata.
+
+Examples of metadata that should not be duplicated:
+
+- Asset type (already inferred from repository)
+- Environment information
+- Sandbox information
+- Folder hierarchy information already represented by the folder path
+
+---
+
+# Example Usage Policy
+
+Examples contained in this specification are illustrative only.
+
+Examples exist solely to demonstrate:
+
+- Naming structure
+- Hierarchy
+- Formatting
+- Governance patterns
+
+Examples are not preferred values.
+
+When generating names, the LLM must:
+
+- Derive names from the current request context.
+- Derive names from approved vocabulary.
+- Derive names from existing assets when appropriate.
+
+The LLM must not:
+
+- Copy example asset names.
+- Reuse example trigger names because they appear in examples.
+- Select names based solely on example content.
+- Treat examples as templates for business values.
+
+If an example conflicts with governance rules, governance rules always win.
 
 ---
 
@@ -65,23 +129,33 @@ Tags provide:
 
 ## Naming Order Principle
 
-Names must always be structured from the broadest business context to the most granular identifier.
+Asset names must always follow:
 
 ```text
 Brand → Trigger Category → Trigger Name → Asset Purpose
 ```
 
-Example:
+Format:
 
 ```text
-LM_PD_ShopBag_Hero
+[Brand]_[TriggerCategory]_[TriggerName]_[AssetPurpose]
+```
+
+Illustrative Examples:
+
+```text
+LM_PD_BrowseAbandon_Hero
+NV_BIS_Wishlist_TopBanner
+LM_UNIT_OrderConfirmation_Template
 ```
 
 ---
 
 # Controlled Vocabulary Registry
 
-## Example Brands
+Only approved vocabulary may be used.
+
+## Brands
 
 | Brand | Acronym |
 |---------|----------|
@@ -90,13 +164,13 @@ LM_PD_ShopBag_Hero
 
 ## Trigger Categories
 
-| Trigger Category | Abbreviation |
-|------------------|--------------|
+| Category | Abbreviation |
+|-----------|--------------|
 | Price Drop | PD |
 | Back In Stock | BIS |
 | Unitary | UNIT |
 
-## Approved Template Sections
+## Approved Fragment Sections
 
 ```text
 TopBanner
@@ -104,7 +178,77 @@ Hero
 BottomBanner
 ```
 
-New brands, trigger categories, trigger names, or sections must be added to the approved registry before use.
+New vocabulary requires governance approval before use.
+
+---
+
+# Naming Character Standards
+
+## Separator Standard
+
+Use underscores only.
+
+Correct:
+
+```text
+LM_PD_BrowseAbandon_Hero
+```
+
+Incorrect:
+
+```text
+LM-PD-BrowseAbandon-Hero
+LM PD BrowseAbandon Hero
+LM.PD.BrowseAbandon.Hero
+```
+
+---
+
+## Trigger Formatting
+
+Multi-word trigger names must use PascalCase.
+
+Correct:
+
+```text
+BrowseAbandon
+CartAbandon
+OrderConfirmation
+```
+
+Incorrect:
+
+```text
+browse abandon
+browse_abandon
+browse-abandon
+```
+
+---
+
+## Special Character Removal
+
+Remove:
+
+```text
+/
+\
+&
+%
+#
+@
+!
+?
+-
+```
+
+Convert resulting values to PascalCase.
+
+Example:
+
+```text
+Browse Abandon → BrowseAbandon
+```
 
 ---
 
@@ -116,12 +260,10 @@ Format:
 [Brand]_[TriggerCategory]_[TriggerName]_[Section]
 ```
 
-Examples:
+Illustrative Example:
 
 ```text
-LM_PD_ShopBag_Hero
-LM_PD_ShopBag_TopBanner
-LM_PD_ShopBag_BottomBanner
+LM_PD_BrowseAbandon_Hero
 ```
 
 ---
@@ -134,32 +276,107 @@ Format:
 [Brand]_[TriggerCategory]_[TriggerName]_Template
 ```
 
-Examples:
+Illustrative Example:
 
 ```text
-LM_PD_ShopBag_Template
-LM_BIS_Wishlist_Template
+LM_PD_BrowseAbandon_Template
 ```
+
+---
+
+# Repository Separation Rule
+
+Content Fragments and Content Templates are managed in separate repositories.
+
+Folder structures are evaluated independently within each repository.
+
+The LLM must not assume that Content Fragments and Content Templates share a common folder hierarchy.
+
+A folder path is unique only within the repository being evaluated.
+
+The existence of a folder path within the Content Fragment repository does not imply the same folder exists within the Content Template repository.
+
+The LLM must not treat matching folder paths across repositories as duplicates.
+
+Repository membership inherently identifies the asset type.
 
 ---
 
 # Folder Structure
 
+Folders must mirror the naming hierarchy within the asset's repository.
+
+Content Fragments and Content Templates maintain independent folder structures.
+
+## Content Fragment Folder Structure
+
+```text
+/{Brand}/
+    /{TriggerCategory}/
+        /{TriggerName}/
+```
+
+Illustrative Example:
+
 ```text
 /LM/
     /PD/
-        /ShopBag/
-            /Fragments/
-            /Templates/
+        /BrowseAbandon/
 ```
-
-Folder hierarchy should mirror naming hierarchy.
 
 ---
 
-# Tagging Strategy
+## Content Template Folder Structure
 
-Required tag categories:
+```text
+/{Brand}/
+    /{TriggerCategory}/
+        /{TriggerName}/
+```
+
+Illustrative Example:
+
+```text
+/LM/
+    /PD/
+        /BrowseAbandon/
+```
+
+---
+
+## Folder Placement Rule
+
+When creating a Content Fragment:
+
+- Place the asset within the Content Fragment repository hierarchy.
+- Do not create a `/Fragments` subfolder.
+
+When creating a Content Template:
+
+- Place the asset within the Content Template repository hierarchy.
+- Do not create a `/Templates` subfolder.
+
+Because the repositories are separate, identical folder paths may exist in both repositories.
+
+Example:
+
+### Content Fragment Repository
+
+```text
+/LM/PD/BrowseAbandon
+```
+
+### Content Template Repository
+
+```text
+/LM/PD/BrowseAbandon
+```
+
+These represent different repository locations and are not duplicates.
+
+---
+
+# Required Tags
 
 ## Brand
 
@@ -179,18 +396,10 @@ trigger-category-unit
 ## Trigger
 
 ```text
-trigger-shopbag
-trigger-wishlist
+trigger-{triggername}
 ```
 
-## Asset Type
-
-```text
-content-fragment
-content-template
-```
-
-## Section (Fragments Only)
+## Fragment Section (Fragments Only)
 
 ```text
 section-hero
@@ -210,27 +419,66 @@ retired
 ## Asset Family
 
 ```text
-asset-family-lm-pd-shopbag
+asset-family-{brand}-{category}-{trigger}
 ```
 
 Environment tags are prohibited.
 
+Asset type tags are prohibited.
+
 ---
 
-# Asset Creation Decision Tree
+# Asset Type Metadata
+
+Asset type tags are prohibited.
+
+Adobe Journey Optimizer stores Content Fragments and Content Templates in separate repositories.
+
+Because repository membership already identifies the asset type, additional asset-type tags provide no governance value and create redundant metadata.
+
+The LLM must not create or apply tags such as:
+
+```text
+content-fragment
+content-template
+```
+
+Asset type must be inferred from the repository in which the asset exists.
+
+---
+
+# Asset Creation Workflow
+
+The following process is mandatory.
+
+## Step 1 — Search Existing Assets
 
 Before creating any asset:
 
-## Step 1: Search for Existing Assets
+- Search all accessible assets.
+- Search folders.
+- Search templates.
+- Search fragments.
+- Search tags.
 
-Determine whether an existing asset already satisfies the requirement.
+Creation may not proceed until search is completed.
 
-If an existing asset can be reused:
+---
 
-- Reuse the asset
-- Do not create a duplicate
+## Step 2 — Determine Reuse Eligibility
 
-## Step 2: Determine Asset Type
+If an existing asset satisfies the requirement:
+
+- Reuse the asset.
+- Do not create a duplicate.
+
+When uncertain:
+
+- Prefer reuse over creation.
+
+---
+
+## Step 3 — Determine Asset Type
 
 Identify:
 
@@ -239,146 +487,187 @@ Identify:
 - Folder
 - Tag
 
-## Step 3: Determine Hierarchy
+---
+
+## Step 4 — Determine Hierarchy
 
 Identify:
 
 - Brand
 - Trigger Category
 - Trigger Name
-- Section (if fragment)
-
-## Step 4: Generate Name
-
-Apply naming convention.
-
-## Step 5: Apply Tags
-
-Apply all required tags.
-
-## Step 6: Place Asset
-
-Place asset in correct folder.
+- Asset Purpose
+- Section (Fragments Only)
 
 ---
 
-# Duplicate Detection Rules
+## Step 5 — Generate Name
 
-The LLM must avoid creating duplicate assets.
+Construct the name using approved vocabulary only.
 
-An asset is considered a duplicate when:
+Generate from request context.
 
-- Same Brand
-- Same Trigger Category
-- Same Trigger Name
-- Same Asset Purpose
-- Same business intent
+Do not generate from example values.
 
-Before creating a new asset:
+---
 
-1. Search existing assets.
-2. Compare intended purpose.
-3. Reuse when possible.
+## Step 6 — Apply Tags
 
-When uncertain, prefer reuse over creation.
+Apply required governance tags only.
+
+Do not create redundant tags for metadata already represented by platform structure.
+
+---
+
+## Step 7 — Place Asset
+
+Place the asset in the correct repository hierarchy.
+
+For Content Fragments:
+
+```text
+/{Brand}/{TriggerCategory}/{TriggerName}
+```
+
+For Content Templates:
+
+```text
+/{Brand}/{TriggerCategory}/{TriggerName}
+```
+
+Do not create asset-type subfolders such as:
+
+```text
+/Fragments/
+/Templates/
+```
+
+unless explicitly required by the platform.
+
+---
+
+# Duplicate Detection Policy
+
+The LLM must actively prevent duplicate assets.
+
+## Duplicate Definition
+
+An asset is considered a duplicate when any of the following are true.
+
+### Exact Duplicate
+
+Same normalized name.
+
+### Functional Duplicate
+
+Same:
+
+- Brand
+- Trigger Category
+- Trigger Name
+- Asset Purpose
+
+### Business Duplicate
+
+Same business intent.
+
+---
+
+## Name Normalization Rules
+
+Before duplicate evaluation:
+
+1. Convert to lowercase.
+2. Trim whitespace.
+3. Treat separators as equivalent:
+   - underscore
+   - hyphen
+   - period
+   - space
+4. Remove punctuation.
+5. Compare approved vocabulary tokens.
+
+Example:
+
+```text
+LM_PD_ShopBag_Hero
+lm-pd-shopbag-hero
+LM.PD.ShopBag.Hero
+```
+
+All normalize to the same identity.
+
+---
+
+## Duplicate Resolution
+
+If a duplicate exists:
+
+- Reuse the existing asset.
+- Do not create a new asset.
+
+If a near duplicate exists:
+
+- Prefer reuse.
+- Create only if business intent is demonstrably different.
 
 ---
 
 # Asset Relationship Standards
 
-Templates and fragments belonging to the same experience must share:
+Assets belonging to the same experience must share:
 
 - Brand
 - Trigger Category
 - Trigger Name
 - Asset Family Tag
 
-Example:
+Illustrative Pattern:
 
 ```text
-LM_PD_ShopBag_Template
-LM_PD_ShopBag_Hero
-LM_PD_ShopBag_TopBanner
-LM_PD_ShopBag_BottomBanner
+{Brand}_{Category}_{Trigger}_Template
+{Brand}_{Category}_{Trigger}_Hero
+{Brand}_{Category}_{Trigger}_TopBanner
+{Brand}_{Category}_{Trigger}_BottomBanner
 ```
 
-Shared tag:
+Shared family tag:
 
 ```text
-asset-family-lm-pd-shopbag
+asset-family-{brand}-{category}-{trigger}
 ```
 
 ---
 
 # Migration Readiness Criteria
 
-An asset may receive the tag:
+An asset may receive:
 
 ```text
 ready-to-migrate
 ```
 
-only when:
+Only when:
 
-- Content is complete.
-- QA review is complete.
-- Required tags are present.
-- Naming convention is compliant.
-- Folder placement is correct.
-- Asset relationships are established.
-
----
-
-# Deprecation and Retirement Policy
-
-Assets should never be deleted solely because they are no longer active.
-
-Retired assets should:
-
-- Receive the `retired` tag.
-- Remain discoverable.
-- Preserve references to dependent assets.
-
-If a replacement exists:
-
-- Link through shared naming hierarchy.
-- Preserve asset family relationships.
+- Content complete
+- QA complete
+- Required tags complete
+- Naming compliant
+- Folder placement compliant
+- Asset relationships established
 
 ---
 
-# Naming Exception Handling
+# Retirement Policy
 
-## Long Trigger Names
+Assets should not be deleted solely because they are inactive.
 
-If a trigger name exceeds practical length limits:
+Retired assets must:
 
-- Use an approved business abbreviation.
-- Maintain readability.
-- Document the abbreviation in the controlled vocabulary registry.
-
-## Special Characters
-
-Remove:
-
-```text
-/
-\
-&
-%
-#
-@
-!
-?
--
-```
-
-Convert names to PascalCase.
-
-Example:
-
-```text
-Browse Abandon → BrowseAbandon
-```
+- Receive the `retired` tag
+- Remain searchable
+- Preserve references
+- Preserve asset-family relationships
 
 ---
 
@@ -386,21 +675,29 @@ Browse Abandon → BrowseAbandon
 
 The LLM must:
 
-- Follow naming conventions.
-- Follow folder conventions.
-- Apply required tags.
-- Reuse assets when appropriate.
+- Search before creating.
+- Reuse before creating.
+- Follow approved vocabulary.
+- Follow naming standards.
+- Follow folder standards.
+- Respect repository separation.
+- Apply required governance tags.
 - Prevent duplicates.
-- Maintain asset family relationships.
-- Use approved vocabulary.
+- Maintain asset relationships.
+- Validate before finalizing.
 
 The LLM must not:
 
-- Include lifecycle data in names.
-- Include environment data in names.
+- Copy example names.
+- Generate names from examples.
 - Create duplicate assets.
-- Invent new abbreviations without approval.
-- Create folders outside the approved hierarchy.
+- Invent abbreviations.
+- Include lifecycle information in names.
+- Include environment information in names.
+- Create folders outside approved hierarchy.
+- Assume templates and fragments share the same repository.
+- Create redundant tags for metadata already represented by platform structure.
+- Create asset-type tags.
 
 ---
 
@@ -408,77 +705,24 @@ The LLM must not:
 
 Before finalizing any asset:
 
-- Correct brand acronym
-- Correct trigger category abbreviation
-- Correct trigger name
-- Correct asset purpose
-- Correct folder placement
-- Required tags applied
-- Asset family tag applied
+- Sandbox search completed
+- Duplicate evaluation completed
+- Repository validated
+- Brand validated
+- Trigger category validated
+- Trigger validated
+- Asset purpose validated
+- Naming convention compliant
+- Folder placement compliant
+- Required tags present
+- Asset family tag present
 - No lifecycle data in name
 - No environment data in name
-- Duplicate check completed
-- Naming hierarchy validated
-
----
-
-# Governance Summary
-
-Names identify the asset.
-
-Folders organize the asset.
-
-Tags describe the asset.
-
-The LLM must enforce these standards consistently across all Adobe Journey Optimizer assets.
-
-
----
-
-# Naming Character Standards
-
-## Underscore Requirement
-
-Asset names must never contain spaces.
-
-Use underscores (`_`) as the only separator between naming components.
-
-### Correct
-
-```text
-LM_PD_ShopBag_Hero
-LM_PD_ShopBag_Template
-LM_BIS_Wishlist_Hero
-```
-
-### Incorrect
-
-```text
-LM PD ShopBag Hero
-LM-PD-ShopBag-Hero
-LM.PD.ShopBag.Hero
-LM/PD/ShopBag/Hero
-```
-
-## Trigger Name Formatting
-
-Within a naming component, multi-word values should use PascalCase.
-
-Example:
-
-```text
-BrowseAbandon
-CartAbandon
-ShopBag
-```
-
-Do not use spaces inside naming components.
+- Relationships established
 
 ---
 
 # Required Output Format
-
-When creating, recommending, or validating assets, the LLM should return information using the following structure.
 
 ## Content Fragment
 
@@ -486,60 +730,87 @@ When creating, recommending, or validating assets, the LLM should return informa
 Asset Type: Content Fragment
 
 Name:
-LM_PD_ShopBag_Hero
+LM_PD_BrowseAbandon_Hero
 
 Folder:
-/LM/PD/ShopBag/Fragments/
+/LM/PD/BrowseAbandon
 
 Tags:
 brand-lm
 trigger-category-pd
-trigger-shopbag
-content-fragment
+trigger-browseabandon
 section-hero
-asset-family-lm-pd-shopbag
+asset-family-lm-pd-browseabandon
 draft
 
 Reasoning:
-Content fragment for the Hero section of the ShopBag Price Drop journey.
+Content fragment for the Hero section of the Browse Abandon Price Drop journey.
 ```
+
+---
+
 ## Content Template
 
 ```text
 Asset Type: Content Template
 
 Name:
-LM_PD_ShopBag_Template
+LM_PD_BrowseAbandon_Template
 
 Folder:
-/LM/PD/ShopBag/Templates/
+/LM/PD/BrowseAbandon
 
 Tags:
 brand-lm
 trigger-category-pd
-trigger-shopbag
-content-template
-asset-family-lm-pd-shopbag
+trigger-browseabandon
+asset-family-lm-pd-browseabandon
 ready-to-migrate
 
 Reasoning:
-Primary template associated with the ShopBag Price Drop journey.
+Primary template associated with the Browse Abandon Price Drop journey.
 ```
-## Validation Responses
 
-When validating an existing asset, return:
+---
+
+## Validation Response
 
 ```text
 Asset Name:
-LM_PD_ShopBag_Hero
+[Asset Name]
 
 Status:
-Compliant
+Compliant | Non-Compliant
 
 Validation Results:
 ✓ Naming convention compliant
 ✓ Folder placement compliant
 ✓ Required tags present
 ✓ Asset family tag present
+✓ Duplicate check completed
 ✓ No prohibited metadata in name
 ```
+
+---
+
+# Governance Summary
+
+Names identify assets.
+
+Folders organize assets.
+
+Tags describe assets.
+
+Search before creation.
+
+Reuse before creation.
+
+Prevent duplicates.
+
+Respect repository separation.
+
+Minimize redundant metadata.
+
+Examples demonstrate structure only.
+
+Governance rules always take precedence over examples.

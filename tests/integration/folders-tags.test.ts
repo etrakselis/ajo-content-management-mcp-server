@@ -112,11 +112,36 @@ describe('folder tools', () => {
     expect(res.error?.message).toMatch(/Did you mean folderType "fragment"/);
   });
 
-  test('delete_folder enriches a "Children ... already exist" 422 with a propagation-lag retry hint (Issue 2.2)', async () => {
-    m.deleteFolder.mockRejectedValue(new Error('Children for this folder already exist'));
-    const res = await handleDeleteFolder({ folderType: 'content-template', folderId: FOLDER_ID }) as { success: boolean; error?: { message: string } };
-    expect(res.success).toBe(false);
-    expect(res.error?.message).toMatch(/propagation lag|wait a moment and retry/i);
+  test('delete_folder retries a children-exist 422 and succeeds once propagation catches up (Issue 2)', async () => {
+    jest.useFakeTimers();
+    try {
+      m.deleteFolder
+        .mockRejectedValueOnce(new Error('Children for this folder already exist'))
+        .mockResolvedValueOnce({});
+      const p = handleDeleteFolder({ folderType: 'content-template', folderId: FOLDER_ID }) as Promise<Envelope>;
+      await jest.advanceTimersByTimeAsync(600); // clear the first (~500ms) backoff
+      const res = await p;
+      expect(res.success).toBe(true);
+      expect(m.deleteFolder).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('delete_folder still fails with a propagation-lag hint after exhausting retries (Issue 2.2)', async () => {
+    jest.useFakeTimers();
+    try {
+      m.deleteFolder.mockRejectedValue(new Error('Children for this folder already exist'));
+      const p = handleDeleteFolder({ folderType: 'content-template', folderId: FOLDER_ID }) as Promise<{ success: boolean; error?: { message: string } }>;
+      await jest.advanceTimersByTimeAsync(4000); // exhaust 500+1000+2000 backoffs
+      const res = await p;
+      expect(res.success).toBe(false);
+      expect(res.error?.message).toMatch(/propagation lag|wait a moment and retry/i);
+      // Initial attempt + 3 retries.
+      expect(m.deleteFolder).toHaveBeenCalledTimes(4);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('list_subfolders and validate_folder pass through the upstream payload', async () => {

@@ -25,11 +25,49 @@ function visualDesignerHtmlOf(fragment?: Record<string, unknown>): unknown {
   return fragment?.content;
 }
 
+// The two fields of an html fragment hold structurally DIFFERENT HTML, and mixing
+// them up is accepted by the API but breaks silently (fails to embed, or opens in
+// Compatibility mode). These non-blocking advisories catch the unambiguous mistakes
+// at write time. (The missing-content-version case on wysiwyg-content is already
+// covered by compatibilityModeWarning via visualDesignerHtmlOf.) Matched literally:
+// \bacr-component\b does NOT match acr-tmp-component, so the two classes are distinct.
+function dualFieldShapeWarnings(fragment?: Record<string, unknown>): string[] {
+  const warnings: string[] = [];
+  const content = typeof fragment?.content === 'string' ? fragment.content : '';
+  const ec = fragment?.editorContext as Record<string, unknown> | undefined;
+  const wysiwyg = typeof ec?.['wysiwyg-content'] === 'string' ? ec['wysiwyg-content'] as string : '';
+
+  // fragment.content must be the LIGHTWEIGHT render snippet: acr-tmp-component, no
+  // full-document shell. Full-doc markers or a standalone acr-component class mean
+  // the wrong (wysiwyg) shape was placed here.
+  if (content) {
+    if (/<!doctype|<head[\s>]|<html[\s>]|acr-container|acr-structure/i.test(content)) {
+      warnings.push(
+        'fragment.content looks like a FULL Visual Designer document (it contains <!DOCTYPE>/<head>/<html>/acr-container/acr-structure). ' +
+        'It must be the LIGHTWEIGHT render snippet (acr-fragment is-locked has-html-params wrapper + acr-tmp-component, no document shell); ' +
+        'put the full document in editorContext["wysiwyg-content"] instead. See get_visual_designer_requirements.');
+    }
+    if (/\bacr-component\b/.test(content)) {
+      warnings.push(
+        'fragment.content uses the class "acr-component" — the lightweight render snippet must use "acr-tmp-component". ' +
+        'Using acr-component here makes the fragment fail to embed in templates. See get_visual_designer_requirements.');
+    }
+  }
+  // editorContext["wysiwyg-content"] is the FULL document and must use acr-component.
+  if (wysiwyg && /\bacr-tmp-component\b/.test(wysiwyg)) {
+    warnings.push(
+      'editorContext["wysiwyg-content"] uses "acr-tmp-component" — the full Visual Designer document must use "acr-component" ' +
+      '(acr-tmp-component belongs only in the lightweight fragment.content snippet). See get_visual_designer_requirements.');
+  }
+  return warnings;
+}
+
 function fragmentWarnings(data: { type?: string; fragment?: Record<string, unknown> }): string[] {
   const warnings: string[] = [];
   const compat = data.type === 'html' ? compatibilityModeWarning(visualDesignerHtmlOf(data.fragment)) : null;
   if (compat) warnings.push(compat);
   warnings.push(...malformedFragmentWarnings(data.fragment));
+  if (data.type === 'html') warnings.push(...dualFieldShapeWarnings(data.fragment));
   return warnings;
 }
 
@@ -316,6 +354,8 @@ Example usage (Expression fragment — tenant-custom field):
 }
 
 Personalization path rooting: standard XDM profile attributes use the "profile." prefix (e.g. {{profile.person.name.firstName}}); tenant-custom attributes sit under "profile._tenantId." (e.g. {{profile._acssandboxustwo.loyaltyTier}}). Do NOT root standard XDM fields (person, homeAddress, etc.) under the tenant namespace — only attributes your org added in a custom field group belong there. Use the 'discover-personalization-paths' prompt, or call list_xdm_union_schemas → get_xdm_union_schema (full=false) → get_xdm_field_group on each ref, to confirm real attribute paths. For the AJO-native expression SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
+
+DUPLICATE CHECK (before creating): to avoid a duplicate, check for an existing fragment by name with ONE server-side filtered list call — list_content_fragments({ property: ["name==<exact name>"] }) for an exact match, or ["name~^<prefix>"] to see whether any asset in a family already exists — rather than listing everything and scanning client-side (name, type, channels, createdAt, createdBy are server-filterable; ~^ is case-insensitive starts-with).
 
 ORGANIZATION: pass tagIds to tag the new fragment and parentFolderId to file it into a folder. tagIds goes in the create body directly; parentFolderId is applied by the server via an automatic follow-up step (the AJO create body does not accept it). For a fragment folder the folderType is "fragment" (create one with create_folder). If folder placement fails the create still succeeds (see warnings) and can be retried with patch_content_fragment.
 

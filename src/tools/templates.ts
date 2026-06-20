@@ -294,6 +294,8 @@ Example usage (push notification template):
   "template": { "title": "Big Sale!", "message": "50% off today only" }
 }
 
+DUPLICATE CHECK (before creating): to avoid a duplicate, check for an existing template by name with ONE server-side filtered list call — list_content_templates({ property: ["name==<exact name>"] }) for an exact match, or ["name~^<prefix>"] to see whether any asset in a family already exists — rather than listing everything and scanning client-side (~^ is case-insensitive starts-with).
+
 ORGANIZATION: pass tagIds to tag the new template and parentFolderId to file it into a folder. tagIds goes in the create body directly; parentFolderId is applied by the server via an automatic follow-up step (the AJO create body does not accept it). For a content-template folder the folderType is "content-template" (create one with create_folder). If folder placement fails the create still succeeds (see warnings) and can be retried with patch_content_template.
 
 Returns: { success: true, id: "<uuid>", location: "/templates/<uuid>", etag: "<etag>", warnings?: [...] }

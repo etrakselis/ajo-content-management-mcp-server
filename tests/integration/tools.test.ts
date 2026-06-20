@@ -658,6 +658,37 @@ describe('Fragment Tools Integration', () => {
     expect(result.warnings?.some(w => w.includes('data-fragment-id="ajo:PLACEHOLDER_HERO"') && w.includes('"ajo:f-bad"'))).toBe(true);
   });
 
+  test('create_content_fragment warns when fragment.content uses acr-component instead of acr-tmp-component (Issue 5)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-c', location: '/fragments/f-c', etag: '"v1"' });
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content: '<div class="acr-fragment acr-component" data-component-id="text"></div>' }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings?.some(w => w.includes('must use "acr-tmp-component"'))).toBe(true);
+  });
+
+  test('create_content_fragment warns when fragment.content is a full document, not the lightweight snippet (Issue 5)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-d', location: '/fragments/f-d', etag: '"v1"' });
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content: '<!DOCTYPE html><html><head></head><body><div class="acr-container"></div></body></html>' }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings?.some(w => w.includes('FULL Visual Designer document'))).toBe(true);
+  });
+
+  test('create_content_fragment warns when editorContext["wysiwyg-content"] uses acr-tmp-component (Issue 5)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-w', location: '/fragments/f-w', etag: '"v1"' });
+    const wysiwyg = '<!DOCTYPE html><html><head><meta name="content-version" content="3"></head><body data-has-html-params><div class="acr-container"><div class="acr-structure"><div class="acr-fragment acr-tmp-component"></div></div></div></body></html>';
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content: '<div class="acr-fragment is-locked has-html-params"><div class="acr-tmp-component"></div></div>', editorContext: { 'wysiwyg-content': wysiwyg } }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings?.some(w => w.includes('editorContext["wysiwyg-content"] uses "acr-tmp-component"'))).toBe(true);
+  });
+
   test('create_content_fragment warns on a prefix-less {{ fragment }} helper id (#3)', async () => {
     mockClient.createFragment.mockResolvedValue({ id: 'f-10', location: '/fragments/f-10', etag: '"v1"' });
     const bareUuid = '301c64ce-4085-4e86-8afc-254854d3c34c';

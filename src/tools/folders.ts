@@ -32,6 +32,11 @@ const FOLDER_HINT =
 const FOLDER_TYPE_PROP = { type: 'string' as const, description: 'The onboarded object-family noun the folder holds (NOT free-form). For AJO content: "fragment" (content fragments) or "content-template" (content templates) — note the fragment noun is "fragment", not "content-fragment". Unknown nouns return 422 "not onboarded". Required.' };
 const FOLDER_ID_PROP = { type: 'string' as const, description: 'The folder ID (UUID). The virtual id "root" addresses the top-level folder of a folderType (e.g. for list_subfolders).' };
 
+// Deleting a parent right after a child can 422 "Children for this folder already
+// exist" because the child delete hasn't propagated yet (folder deletes are
+// eventually consistent). This matches that specific upstream message.
+const CHILDREN_EXIST_RE = /children for this folder already exist/i;
+
 // Enrich opaque upstream folder errors with actionable guidance.
 function folderError(err: unknown) {
   const e = buildError(err);
@@ -43,14 +48,21 @@ function folderError(err: unknown) {
       e.message += ` Did you mean folderType "fragment"? (The content-fragment folder noun is just "fragment".)`;
     }
   }
-  // Deleting a parent right after a child can 422 because the child delete hasn't
-  // propagated yet (folder deletes are eventually consistent) — tell the caller to retry.
-  if (/children for this folder already exist/i.test(e.message)) {
+  // If a children-exist 422 still surfaces after the internal retries below, the lag
+  // didn't clear in time (or the folder really isn't empty) — tell the caller to retry.
+  if (CHILDREN_EXIST_RE.test(e.message)) {
     e.message += ` If you just deleted a child folder, this is usually a propagation lag rather than a real ` +
       `blocker — wait a moment and retry the parent delete.`;
   }
   return e;
 }
+
+// Backoff schedule for the eventual-consistency retry on folder delete. The lag is
+// typically sub-second, so one retry usually suffices; a genuinely non-empty folder
+// still fails after exhausting these (a few seconds later).
+const FOLDER_DELETE_RETRY_BACKOFFS_MS = [500, 1000, 2000];
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+const isChildrenExistLag = (err: unknown): boolean => CHILDREN_EXIST_RE.test(buildError(err).message);
 
 // ─── create_folder ─────────────────────────────────────────────────────────────
 
@@ -200,13 +212,26 @@ export async function handleDeleteFolder(args: unknown) {
   return withTelemetry('delete_folder', async () => {
     const parsed = DeleteFolderSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
-    try {
-      const data = await deleteFolder(parsed.data.folderType, parsed.data.folderId);
-      // Coerce an empty/non-object body (an empty-body 200 surfaces as "") to {} so the
-      // result matches the object-typed outputSchema — see handleDeleteTag.
-      return { success: true, data: data && typeof data === 'object' ? data : {} };
-    } catch (err) {
-      return { success: false, error: folderError(err) };
+    // Folder deletes are eventually consistent: deleting a parent right after its
+    // children can 422 "Children for this folder already exist" purely because the
+    // child deletes haven't propagated. The lag is typically sub-second, so retry
+    // that specific error with short backoff to absorb it — a leaf→root teardown
+    // then works in one pass. Any other error fails immediately (no retry).
+    let lastErr: unknown;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const data = await deleteFolder(parsed.data.folderType, parsed.data.folderId);
+        // Coerce an empty/non-object body (an empty-body 200 surfaces as "") to {} so the
+        // result matches the object-typed outputSchema — see handleDeleteTag.
+        return { success: true, data: data && typeof data === 'object' ? data : {} };
+      } catch (err) {
+        lastErr = err;
+        if (attempt < FOLDER_DELETE_RETRY_BACKOFFS_MS.length && isChildrenExistLag(err)) {
+          await sleep(FOLDER_DELETE_RETRY_BACKOFFS_MS[attempt]);
+          continue;
+        }
+        return { success: false, error: folderError(lastErr) };
+      }
     }
   });
 }
