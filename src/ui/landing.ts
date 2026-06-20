@@ -26,8 +26,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     header {
       background: var(--adobe-dark);
-      padding: 0 40px;
-      height: 36px;
+      padding: 16px 48px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -35,22 +34,21 @@ export const landingPageHtml = `<!DOCTYPE html>
       top: 0;
       z-index: 100;
     }
-    .logo {
-      display: flex;
-      align-items: center;
-      gap: 10px;
+    .logo-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 3px;
+      display: block;
+      object-fit: contain;
+      position: absolute;
+      left: 48px;
+    }
+    .logo-text {
       color: white;
       font-size: 20px;
       font-weight: 600;
       letter-spacing: -0.01em;
       line-height: 1;
-    }
-    .logo-mark {
-      width: 22px;
-      height: 22px;
-      border-radius: 3px;
-      display: block;
-      object-fit: contain;
     }
     .badge {
       font-size: 11px;
@@ -288,7 +286,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     .btn-primary {
       width: 100%;
       height: 44px;
-      background: var(--adobe-red);
+      background: #C0392B;
       color: white;
       border: none;
       border-radius: 6px;
@@ -304,6 +302,37 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
     .btn-primary:hover:not(:disabled) { opacity: 0.88; }
+    @keyframes btnBreathe {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(192,57,43,0), 0 2px 6px rgba(0,0,0,0.12); }
+      50%       { box-shadow: 0 0 0 7px rgba(192,57,43,0.3), 0 6px 28px rgba(192,57,43,0.45); }
+    }
+    .btn-primary.btn-breathing:not(:disabled) {
+      animation: btnBreathe 2.5s ease-in-out infinite;
+    }
+    @property --card-angle {
+      syntax: '<angle>';
+      initial-value: 0deg;
+      inherits: false;
+    }
+    @keyframes traceCard {
+      to { --card-angle: 360deg; }
+    }
+    .card-trace {
+      position: relative;
+    }
+    .card-trace::after {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border-radius: 9px;
+      padding: 1px;
+      background: conic-gradient(from var(--card-angle), transparent 80%, #FA0F00 88%, transparent 95%);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      animation: traceCard 2s linear infinite;
+      pointer-events: none;
+    }
     .status-panel {
       display: none;
       background: var(--surface);
@@ -396,7 +425,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     .org-fallback.show { display: flex; }
     .reset-notice {
       display: none;
-      margin-bottom: 24px;
+      margin-bottom: 12px;
       padding: 14px 16px;
       background: rgba(230,134,25,0.08);
       border: 1px solid rgba(230,134,25,0.35);
@@ -407,6 +436,48 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     .reset-notice.show { display: block; }
     .reset-notice strong { font-weight: 700; }
+    .client-restart-notice {
+      display: none;
+      margin-bottom: 24px;
+      padding: 14px 16px;
+      background: rgba(201,37,45,0.06);
+      border: 1px solid rgba(201,37,45,0.35);
+      border-radius: 8px;
+      font-size: 13px;
+      color: #C9252D;
+      line-height: 1.55;
+    }
+    .client-restart-notice.show { display: block; }
+    .client-restart-notice strong { font-weight: 700; }
+    .config-change-notice {
+      display: none;
+      margin-top: 14px;
+      padding: 12px 14px;
+      background: rgba(201,37,45,0.06);
+      border: 1px solid rgba(201,37,45,0.35);
+      border-radius: 6px;
+      font-size: 13px;
+      color: #C9252D;
+      line-height: 1.55;
+    }
+    .config-change-notice.show { display: block; }
+    .config-change-notice strong { font-weight: 700; }
+    .config-change-notice .dismiss-btn,
+    .client-restart-notice .dismiss-btn {
+      display: block;
+      margin-top: 10px;
+      padding: 4px 12px;
+      background: #E8E8E8;
+      border: 1px solid #D0D0D0;
+      border-radius: 4px;
+      cursor: pointer;
+      color: #555;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: inherit;
+    }
+    .config-change-notice .dismiss-btn:hover,
+    .client-restart-notice .dismiss-btn:hover { background: #DADADA; }
     .org-fallback-note {
       font-size: 12px;
       color: var(--adobe-warn);
@@ -495,11 +566,9 @@ export const landingPageHtml = `<!DOCTYPE html>
 </head>
 <body>
   <header>
+    <img class="logo-mark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAABL1BMVEUAAADjHADqDwDqEQDrFADrDwDqEQDqEADqDwD/AADqEQDpDwDqEQDrEADrFADqEADqEADnEADpEADqDwD/AADqEADqEADfAADrEQDqEADqEADrEADqEADqEADqEADrEQDqEADsDgDqEADpEAD/AADsEwDqEADqEADwDwDqEADqEQDqEADpCwDpDwDqEADrFADpEADqEQD/AADqEADqEQDbAADqEADqEAD/AADoEADoDwDpEADpEADqEADqEADrDQDpEADqDgDrEADqEADoEQDnDADqEADqEADrEAD/AADqEADqEADuEQDpEQDrEQDqEADpEADqEADqDwDqDgDqDwDrEADpDwDqDwDqDwDrEADuEQDqEADoDwDqEQDqDwDpEADrDQDrEADqEADqEAD///8XdvSxAAAAY3RSTlMACYeIDWRszNYBPUSorxn6/CCAhgXk6whZX8S878owS5I2neEDKf6hEfV7+Bd2+xpdegLeqgfq4gRPQ45SutwnvSVzwCwVlPCiBunzDzuKbdX0dyTXu0WVVLAe5SFKhaQmfW7io+08AAAAAWJLR0Rkwtq4CQAAAAlwSFlzAAAA6AAAAOgBhtX2rwAAAAd0SU1FB+gIFBUtLabQ30cAAAEtSURBVDjLrZJXQ8IwFIUjRQQRRUXcewKKW3Erbhy4wAEimv//H0y4p22Slic9L733nC+jSRj7T7UELFKwCdDKoVAToM0GwhHfvJ07ivoCHS4Q88s7u1wg3u0D9HBFvd480acCyX4PMMA1DXqAIQqGR+g7auZjGDk+gWLSAKbInp6ZnaNqXs8XUmSnnbUyixqwRG52mbEVrLGq5mvrZG6IenOL6u2cAuxg1K5s9tDsK8ABWYeNWzzCNo/d/ARWntpTTHHmAPj3zLl+qBd2Hrwk4wr9dYH6m1sYIYy4s0fcwyhSG3mg9vFJKi82+ow9vdDTi+r3KOcpoS43gJgOvArrDfW7zD/iOpBMMJar4OlVBWBxQ5/CrKEOiKMvmMCXMq14enXL1Ldc+AdNnf1Zv9MjogPfmGNPAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI0LTA4LTIwVDIxOjQ1OjQ1KzAwOjAwMdr8AwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNC0wOC0yMFQyMTo0NTo0NSswMDowMECHRL8AAAAZdEVYdFNvZnR3YXJlAHd3dy5pbmtzY2FwZS5vcmeb7jwaAAAAV3pUWHRSYXcgcHJvZmlsZSB0eXBlIGlwdGMAAHic4/IMCHFWKCjKT8vMSeVSAAMjCy5jCxMjE0uTFAMTIESANMNkAyOzVCDL2NTIxMzEHMQHy4BIoEouAOoXEXTyQjWVAAAAAElFTkSuQmCC" alt="ET AJO Content MCP logo" />
     <div class="header-actions">
-      <div class="logo">
-        <img class="logo-mark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAABL1BMVEUAAADjHADqDwDqEQDrFADrDwDqEQDqEADqDwD/AADqEQDpDwDqEQDrEADrFADqEADqEADnEADpEADqDwD/AADqEADqEADfAADrEQDqEADqEADrEADqEADqEADqEADrEQDqEADsDgDqEADpEAD/AADsEwDqEADqEADwDwDqEADqEQDqEADpCwDpDwDqEADrFADpEADqEQD/AADqEADqEQDbAADqEADqEAD/AADoEADoDwDpEADpEADqEADqEADrDQDpEADqDgDrEADqEADoEQDnDADqEADqEADrEAD/AADqEADqEADuEQDpEQDrEQDqEADpEADqEADqDwDqDgDqDwDrEADpDwDqDwDqDwDrEADuEQDqEADoDwDqEQDqDwDpEADrDQDrEADqEADqEAD///8XdvSxAAAAY3RSTlMACYeIDWRszNYBPUSorxn6/CCAhgXk6whZX8S878owS5I2neEDKf6hEfV7+Bd2+xpdegLeqgfq4gRPQ45SutwnvSVzwCwVlPCiBunzDzuKbdX0dyTXu0WVVLAe5SFKhaQmfW7io+08AAAAAWJLR0Rkwtq4CQAAAAlwSFlzAAAA6AAAAOgBhtX2rwAAAAd0SU1FB+gIFBUtLabQ30cAAAEtSURBVDjLrZJXQ8IwFIUjRQQRRUXcewKKW3Erbhy4wAEimv//H0y4p22Slic9L733nC+jSRj7T7UELFKwCdDKoVAToM0GwhHfvJ07ivoCHS4Q88s7u1wg3u0D9HBFvd480acCyX4PMMA1DXqAIQqGR+g7auZjGDk+gWLSAKbInp6ZnaNqXs8XUmSnnbUyixqwRG52mbEVrLGq5mvrZG6IenOL6u2cAuxg1K5s9tDsK8ABWYeNWzzCNo/d/ARWntpTTHHmAPj3zLl+qBd2Hrwk4wr9dYH6m1sYIYy4s0fcwyhSG3mg9vFJKi82+ow9vdDTi+r3KOcpoS43gJgOvArrDfW7zD/iOpBMMJar4OlVBWBxQ5/CrKEOiKMvmMCXMq14enXL1Ldc+AdNnf1Zv9MjogPfmGNPAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI0LTA4LTIwVDIxOjQ1OjQ1KzAwOjAwMdr8AwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNC0wOC0yMFQyMTo0NTo0NSswMDowMECHRL8AAAAZdEVYdFNvZnR3YXJlAHd3dy5pbmtzY2FwZS5vcmeb7jwaAAAAV3pUWHRSYXcgcHJvZmlsZSB0eXBlIGlwdGMAAHic4/IMCHFWKCjKT8vMSeVSAAMjCy5jCxMjE0uTFAMTIESANMNkAyOzVCDL2NTIxMzEHMQHy4BIoEouAOoXEXTyQjWVAAAAAElFTkSuQmCC" alt="ET AJO Content MCP logo" />
-        <span class="logo-text">ET AJO Content MCP</span>
-      </div>
+      <span class="logo-text">ET AJO Content MCP</span>
       <a class="btn-about" href="https://github.com/etrakselis/ajo_content_mgmt_mcp" target="_blank" rel="noopener noreferrer">
         <svg viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.604-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836a9.59 9.59 0 012.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
@@ -516,7 +585,11 @@ export const landingPageHtml = `<!DOCTYPE html>
     </div>
 
     <div class="reset-notice" id="resetNotice">
-      <strong>The MCP server was restarted</strong> and is no longer configured (this happens when the container is rebuilt or restarted). Any connected clients were disconnected. Re-upload your credentials and start the server again to reconnect. Don't forget to restart the desktop client(s) too, since they'll lose connection to the MCP server when it restarts.
+      <strong>The MCP server was restarted</strong> and is no longer configured (this happens when the container is rebuilt or restarted). Re-upload your credentials and start the server again to reconnect.
+    </div>
+    <div class="client-restart-notice" id="clientRestartNotice">
+      <strong>Restart your MCP client.</strong> A client was connected when this server went down. Once you've restarted the server here, you must also restart your MCP client (Claude Desktop, Claude Code, Cursor, etc.) so it can reinitialize the connection — the previous session cannot be recovered automatically.
+      <button class="dismiss-btn" onclick="document.getElementById('clientRestartNotice').classList.remove('show')">Dismiss</button>
     </div>
 
     <!-- Step 1: Credentials -->
@@ -675,6 +748,12 @@ export const landingPageHtml = `<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- Shown after re-activation when clients were connected under the previous config -->
+      <div class="config-change-notice" id="configChangeNotice">
+        <strong>Restart your MCP client(s).</strong> The server configuration changed since clients last connected. Previously connected clients (Claude Desktop, Claude Code, Cursor, etc.) must be restarted to pick up the updated settings.
+        <button class="dismiss-btn" onclick="document.getElementById('configChangeNotice').classList.remove('show')">Dismiss</button>
+      </div>
+
       <!-- Organization name — revealed only if tenant namespace can't be auto-detected -->
       <div class="org-fallback" id="orgFallback">
         <div class="org-fallback-note">
@@ -732,6 +811,8 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     // ─── Connected-client polling ──────────────────────────────────────────────
     let clientPollTimer = null;
+    let pollFailCount = 0;
+    let prevClientCount = 0;
     const KNOWN_CLIENTS = {
       'claude-ai': 'Claude Desktop',
       'claude-code': 'Claude Code',
@@ -751,9 +832,15 @@ export const landingPageHtml = `<!DOCTYPE html>
     function renderClients(clients) {
       const list = document.getElementById('clientsList');
       if (!clients || !clients.length) {
+        prevClientCount = 0;
         list.innerHTML = '<div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>';
         return;
       }
+      hadConnectedClients = true;
+      if (clients.length > prevClientCount) {
+        setTimeout(() => document.getElementById('statusPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+      }
+      prevClientCount = clients.length;
       list.innerHTML = clients.map(c =>
         '<div class="client-row">' +
           '<span class="client-dot"></span>' +
@@ -767,15 +854,21 @@ export const landingPageHtml = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/connected-clients');
         const data = await res.json();
+        pollFailCount = 0;
         // If the server reports it's no longer configured while this page still
         // shows "active", the container was restarted/rebuilt and lost its state.
         // Reset the page so the UI matches reality.
         if (data.configured === false) { handleServerReset(); return; }
         renderClients(data.clients);
-      } catch { /* transient (e.g. mid-restart) — keep last render until next poll */ }
+      } catch {
+        // After 3 consecutive network failures (~9 s) treat the server as gone.
+        if (++pollFailCount >= 3) handleServerReset();
+      }
     }
 
     function startClientPolling() {
+      pollFailCount = 0;
+      prevClientCount = 0;
       pollClients();
       if (clientPollTimer) clearInterval(clientPollTimer);
       clientPollTimer = setInterval(pollClients, 3000);
@@ -824,6 +917,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     // Allow swapping in a different credentials file without reloading the page
     document.getElementById('replaceFileBtn').addEventListener('click', () => {
       credentials = null;
+      hadConnectedClients = false;
       fileInput.value = '';
       document.getElementById('fileAccepted').classList.remove('show');
       dropzone.style.display = '';
@@ -835,6 +929,8 @@ export const landingPageHtml = `<!DOCTYPE html>
     // Reset everything that activation produced, back to the pre-launch state
     function resetActivationUI() {
       needsOrg = false;
+      document.getElementById('clientRestartNotice').classList.remove('show');
+      document.getElementById('configChangeNotice').classList.remove('show');
       stopClientPolling();
       renderClients([]);
       const btn = document.getElementById('startBtn');
@@ -852,6 +948,8 @@ export const landingPageHtml = `<!DOCTYPE html>
     // page to the initial upload state and explain why, since the credentials and
     // sandbox the server held are gone and must be provided again.
     function handleServerReset() {
+      const clientsWereConnected = hadConnectedClients;
+      hadConnectedClients = false;
       resetActivationUI();
       resetSandboxUI();
       credentials = null;
@@ -864,10 +962,12 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('namingConventionEditor').style.display = 'none';
       document.getElementById('namingConventionMarkdown').value = DEFAULT_NAMING_MD;
       document.getElementById('resetNotice').classList.add('show');
+      if (clientsWereConnected) document.getElementById('clientRestartNotice').classList.add('show');
       checkReady();
     }
 
     let needsOrg = false;
+    let hadConnectedClients = false;
     const startBtn = document.getElementById('startBtn');
 
     // ─── Sandbox discovery ─────────────────────────────────────────────────────
@@ -1028,6 +1128,9 @@ export const landingPageHtml = `<!DOCTYPE html>
       const hasSandbox = !!getSandboxName();
       const hasEmail = isAuthorEmailValid();
       const writeOn = document.getElementById('writeToggle').checked;
+      const steps = document.querySelectorAll('.step');
+      const wasHidden = {};
+      steps.forEach(s => { wasHidden[s.id] = s.classList.contains('hidden'); });
       document.getElementById('step2').classList.toggle('hidden', !hasCreds);
       document.getElementById('step3').classList.toggle('hidden', !(hasCreds && hasSandbox));
       document.getElementById('step4').classList.toggle('hidden', !(hasCreds && hasSandbox && hasEmail));
@@ -1036,13 +1139,28 @@ export const landingPageHtml = `<!DOCTYPE html>
       // Renumber labels sequentially based on which steps are currently visible,
       // so the user always sees 1, 2, 3… with no gaps regardless of toggle state.
       let n = 0;
-      document.querySelectorAll('.step').forEach(function(section) {
+      steps.forEach(function(section) {
         if (!section.classList.contains('hidden')) {
           n++;
           const label = section.querySelector('.step-label');
           if (label) label.textContent = 'Step ' + n + ' — ' + section.dataset.stepName;
         }
       });
+      // Breathing animation on the activate button tracks step 6 visibility.
+      startBtn.classList.toggle('btn-breathing', !document.getElementById('step6').classList.contains('hidden'));
+
+      // Trace the first newly revealed step; if a step was hidden, fall back to the
+      // last still-visible step so the trace never gets stuck on a hidden card.
+      const newlyVisible = Array.from(steps).find(s => wasHidden[s.id] && !s.classList.contains('hidden'));
+      const newlyHidden  = Array.from(steps).find(s => !wasHidden[s.id] && s.classList.contains('hidden'));
+      if (newlyVisible) {
+        const lastVisible = Array.from(steps).filter(s => !s.classList.contains('hidden')).pop();
+        setTimeout(() => (lastVisible || newlyVisible).scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+        updateCardTrace(newlyVisible);
+      } else if (newlyHidden) {
+        const lastVisible = Array.from(steps).filter(s => !s.classList.contains('hidden')).pop();
+        updateCardTrace(lastVisible || null);
+      }
     }
 
     // Self-declared author email — required before launch. Validated only for
@@ -1066,6 +1184,13 @@ export const landingPageHtml = `<!DOCTYPE html>
       clearTimeout(emailSyncTimer);
       emailSyncTimer = setTimeout(syncSteps, 600);
     });
+
+    function updateCardTrace(step) {
+      document.querySelectorAll('.card').forEach(c => c.classList.remove('card-trace'));
+      if (!step || step.id === 'step6') return;
+      const cards = step.querySelectorAll('.card');
+      if (cards.length) cards[cards.length - 1].classList.add('card-trace');
+    }
 
     function checkReady() {
       startBtn.disabled = !credentials || !getSandboxName() || !isAuthorEmailValid();
@@ -1158,7 +1283,13 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('statusPanel').classList.add('show');
       setAccessModeDisplay(data.writesAllowed);
       document.getElementById('connInfo').classList.add('show');
+      updateCardTrace(null);
+      if (hadConnectedClients) {
+        document.getElementById('configChangeNotice').classList.add('show');
+        hadConnectedClients = false;
+      }
       startClientPolling();
+      setTimeout(() => document.getElementById('statusPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
 
       // Finalize the tenant identity in the banner above (it may have been
       // unknown until the user supplied an org name for the fallback).
@@ -1261,7 +1392,12 @@ export const landingPageHtml = `<!DOCTYPE html>
       });
 
       document.getElementById('namingConventionToggle').addEventListener('change', (e) => {
-        document.getElementById('namingConventionEditor').style.display = e.target.checked ? '' : 'none';
+        const editor = document.getElementById('namingConventionEditor');
+        editor.style.display = e.target.checked ? '' : 'none';
+        if (e.target.checked) setTimeout(() => {
+          const lastVisible = Array.from(document.querySelectorAll('.step')).filter(s => !s.classList.contains('hidden')).pop();
+          (lastVisible || editor).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 50);
         invalidate();
       });
 
@@ -1274,6 +1410,8 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     // The write toggle drives step visibility (naming convention only appears when
     // writes are on) and, once the server is active, flips the access mode live.
+    updateCardTrace(document.getElementById('step1'));
+
     document.getElementById('writeToggle').addEventListener('change', async (e) => {
       // Turning writes off makes naming convention irrelevant — clear it so the
       // user doesn't accidentally activate a convention they can't use.
