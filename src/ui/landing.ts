@@ -106,7 +106,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     .btn-about:hover { background: rgba(255,255,255,0.2); }
     .btn-about svg { width: 15px; height: 15px; opacity: 0.85; }
     main {
-      max-width: 720px;
+      max-width: 960px;
       margin: 0 auto;
       padding: 48px 24px 80px;
     }
@@ -126,7 +126,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       color: var(--adobe-mid);
       line-height: 1.6;
     }
-    .step { animation: stepReveal 0.35s ease both; }
+    .step { animation: stepReveal 0.35s ease both; scroll-margin-top: 70px; }
     .step.hidden { display: none; }
     .tenant-banner {
       display: flex;
@@ -302,6 +302,20 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
     .btn-primary:hover:not(:disabled) { opacity: 0.88; }
+    .btn-primary.btn-trace { position: relative; }
+    .btn-primary.btn-trace::before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border-radius: 7px;
+      padding: 1px;
+      background: conic-gradient(from var(--btn-angle), transparent 80%, #FA0F00 88%, transparent 95%);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      animation: traceBorder 2s linear infinite;
+      pointer-events: none;
+    }
     @keyframes btnBreathe {
       0%, 100% { box-shadow: 0 0 0 0 rgba(192,57,43,0), 0 2px 6px rgba(0,0,0,0.12); }
       50%       { box-shadow: 0 0 0 7px rgba(192,57,43,0.3), 0 6px 28px rgba(192,57,43,0.45); }
@@ -527,6 +541,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       display: block;
     }
     .md-editor::placeholder { color: #9A9A9A; }
+    .md-editor.md-editor-tall { min-height: calc(100vh - 510px); }
     .md-editor:focus { border-color: var(--adobe-red); }
     .md-dropzone-wrap.drag-over .md-editor { border-color: var(--adobe-red); background: #1F1F1F; }
     .md-drop-overlay {
@@ -790,7 +805,7 @@ export const landingPageHtml = `<!DOCTYPE html>
         <div class="clients-list" id="clientsList">
           <div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>
         </div>
-        <p class="clients-hint">Connecting another client (Claude Code, Cursor, Codex…)? See the <strong>README</strong> on GitHub for per-client setup.</p>
+        <p class="clients-hint">See the <a href="https://github.com/etrakselis/ajo_content_mgmt_mcp#client-connection-guide" target="_blank" rel="noopener noreferrer" style="color:var(--adobe-red);text-decoration:none;font-weight:600"><strong>README</strong></a> on GitHub for (Claude Code/Desktop, Cursor, Codex…) connection guide for per-client setup instructions.</p>
       </div>
     </div>
   </main>
@@ -929,6 +944,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     // Reset everything that activation produced, back to the pre-launch state
     function resetActivationUI() {
       needsOrg = false;
+      serverActive = false;
       document.getElementById('clientRestartNotice').classList.remove('show');
       document.getElementById('configChangeNotice').classList.remove('show');
       stopClientPolling();
@@ -937,6 +953,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       btn.innerHTML = 'Start MCP Server';
       btn.style.background = '';
       btn.disabled = false;
+      btn.classList.remove('btn-trace', 'btn-breathing');
       document.getElementById('statusPanel').classList.remove('show');
       document.getElementById('connInfo').classList.remove('show');
       document.getElementById('orgFallback').classList.remove('show');
@@ -968,6 +985,7 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     let needsOrg = false;
     let hadConnectedClients = false;
+    let serverActive = false;
     const startBtn = document.getElementById('startBtn');
 
     // ─── Sandbox discovery ─────────────────────────────────────────────────────
@@ -1220,7 +1238,16 @@ export const landingPageHtml = `<!DOCTYPE html>
       return res.json();
     }
 
+    async function deactivate() {
+      startBtn.disabled = true;
+      startBtn.innerHTML = spinner('Deactivating…');
+      try { await postJson('/api/deactivate', {}); } catch { /* reset UI regardless */ }
+      resetActivationUI();
+      checkReady();
+    }
+
     startBtn.addEventListener('click', async () => {
+      if (serverActive) { deactivate(); return; }
       const sandbox = getSandboxName();
       const org = document.getElementById('orgInput').value.trim();
       document.getElementById('errorMsg').classList.remove('show');
@@ -1302,9 +1329,10 @@ export const landingPageHtml = `<!DOCTYPE html>
         showTenantBanner('Not auto-detected', true);
       }
 
-      startBtn.disabled = true;
-      startBtn.innerHTML = '✓ Server Active';
-      startBtn.style.background = 'var(--adobe-success)';
+      serverActive = true;
+      startBtn.disabled = false;
+      startBtn.innerHTML = 'Deactivate Server';
+      startBtn.style.background = 'var(--adobe-mid)';
     }
 
     function setAccessModeDisplay(writesAllowed) {
@@ -1394,9 +1422,9 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('namingConventionToggle').addEventListener('change', (e) => {
         const editor = document.getElementById('namingConventionEditor');
         editor.style.display = e.target.checked ? '' : 'none';
+        document.getElementById('namingConventionMarkdown').classList.toggle('md-editor-tall', !!e.target.checked);
         if (e.target.checked) setTimeout(() => {
-          const lastVisible = Array.from(document.querySelectorAll('.step')).filter(s => !s.classList.contains('hidden')).pop();
-          (lastVisible || editor).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          document.getElementById('step5').scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 50);
         invalidate();
       });

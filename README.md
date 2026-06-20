@@ -12,7 +12,7 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 4. [Prerequisites](#prerequisites)
 5. [Build & Run](#build--run)
 6. [Configuration](#configuration)
-7. [MCP Connection Examples](#mcp-connection-examples)
+7. [Client Connection Guide](#client-connection-guide)
 8. [Available Tools — Detailed](#available-tools--detailed)
 9. [MCP Resources](#mcp-resources)
 10. [MCP Prompts](#mcp-prompts)
@@ -465,7 +465,7 @@ These reflect the email entered at the most recent setup; reconnect the client a
 
 ---
 
-## MCP Connection Examples
+## Client Connection Guide
 
 > **Prerequisite:** finish [Build & Run](#build--run) and [Configuration](#configuration) first. There is **one** long-lived container (started by `docker compose up -d`) that you configure once at `http://localhost:3000`. Every client below connects to that same running server at `http://localhost:3000/mcp` — no client starts its own container, so the configuration you entered is shared by all of them and survives client restarts.
 

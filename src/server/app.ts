@@ -729,6 +729,13 @@ export function createExpressApp(): express.Application {
     return res.json({ success: true, writesAllowed: getWritesAllowed() });
   });
 
+  app.post('/api/deactivate', csrfGuard, (_req: Request, res: Response) => {
+    tokenManager.reset();
+    resetAdobeClient();
+    logger.info('Server deactivated via UI');
+    return res.json({ success: true });
+  });
+
   app.get('/api/status', (_req, res) => {
     res.json({
       configured: tokenManager.isConfigured(),
