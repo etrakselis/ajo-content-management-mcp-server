@@ -2,9 +2,9 @@ import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import {
   RESOURCE_URIS,
   CHANNEL_REFERENCE_TEXT,
-  ERROR_CODES_TEXT,
-  VISUAL_DESIGNER_REQUIREMENTS_TEXT
+  ERROR_CODES_TEXT
 } from './resources.js';
+import { getVisualDesignerRequirements } from './visual-designer-requirements.js';
 import { UI_BASE_URL } from '../tools/utils.js';
 
 export interface PromptDefinition {
@@ -318,7 +318,7 @@ Step 5 — Report outcome:
           }
         },
         embeddedResource(RESOURCE_URIS.channelReference, CHANNEL_REFERENCE_TEXT),
-        ...(isVisualEmail ? [embeddedResource(RESOURCE_URIS.visualDesignerRequirements, VISUAL_DESIGNER_REQUIREMENTS_TEXT)] : [])
+        ...(isVisualEmail ? [embeddedResource(RESOURCE_URIS.visualDesignerRequirements, getVisualDesignerRequirements())] : [])
       ];
     }
 

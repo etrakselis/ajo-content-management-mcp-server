@@ -1,4 +1,4 @@
-import { VISUAL_DESIGNER_REQUIREMENTS_TEXT } from '../mcp/resources.js';
+import { getVisualDesignerRequirements } from '../mcp/visual-designer-requirements.js';
 import { withTelemetry, buildOutputSchema } from './utils.js';
 
 // ─── get_visual_designer_requirements ─────────────────────────────────────────
@@ -42,6 +42,6 @@ Returns: { success: true, requirements: "<full spec text>" }`,
 
 export async function handleGetVisualDesignerRequirements(_args?: unknown) {
   return withTelemetry('get_visual_designer_requirements', async () => {
-    return { success: true, requirements: VISUAL_DESIGNER_REQUIREMENTS_TEXT };
+    return { success: true, requirements: getVisualDesignerRequirements() };
   });
 }

@@ -109,20 +109,26 @@ export function encodedToolResultSize(envelope: unknown): number {
   return Buffer.byteLength(JSON.stringify(toolResult), 'utf8');
 }
 
-// Scan a serialized content payload for data-fragment="..." references and split
-// them into well-formed embeds (a required ajo:/aem:/external: prefix + UUID) and
-// malformed ones (e.g. a bare UUID with no prefix). AJO accepts a malformed embed
-// at write time but it fails later at render ("Forbidden: fragment URI syntax is
-// incorrect"), so the server flags it. Scanning the JSON form (quotes escaped as
-// \") avoids having to know which per-channel field holds the HTML. De-duplicated;
-// the source prefix is preserved.
+// Scan a serialized content payload for fragment embeds and split them into
+// well-formed (a required ajo:/aem:/external: prefix + UUID) and malformed ones
+// (e.g. a bare UUID with no prefix). The embed mechanism is the Handlebars-style
+// helper {{ fragment id="ajo:<uuid>" name="..." mode="inline" }} placed in a
+// structure row's <th>; the older data-fragment="..." attribute on .acr-structure
+// is NOT a live reference — AJO strips it on save — so it is intentionally not
+// detected here. AJO accepts a malformed helper id at write time but it fails later
+// at render ("Forbidden: fragment URI syntax is incorrect"), so the server flags it.
+// Scanning the JSON form (quotes escaped as \") avoids having to know which
+// per-channel field holds the HTML. De-duplicated; the source prefix is preserved.
 const FRAGMENT_UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
-const DATA_FRAGMENT_VALUE_RE = /data-fragment=\\?"([^"\\]+)\\?"/g;
+// Match a {{ fragment ... id="<value>" ... }} helper and capture the id value.
+// [^{}] keeps each match within a single helper; the quotes around the id are
+// backslash-escaped in the JSON-serialized form, hence the optional \\? on each side.
+const FRAGMENT_HELPER_RE = /\{\{\s*fragment\b[^{}]*?\bid\s*=\s*\\?"([^"\\]+)\\?"[^{}]*?\}\}/g;
 const VALID_FRAGMENT_REF_RE = new RegExp(`^(ajo|aem|external):(${FRAGMENT_UUID})$`);
 
 export interface FragmentRef { reference: string; source: string; id: string; }
 
-export function scanDataFragments(data: unknown): { embedded: FragmentRef[]; malformed: string[] } {
+export function scanFragmentEmbeds(data: unknown): { embedded: FragmentRef[]; malformed: string[] } {
   let serialized: string;
   try {
     serialized = JSON.stringify(data) ?? '';
@@ -134,8 +140,8 @@ export function scanDataFragments(data: unknown): { embedded: FragmentRef[]; mal
   const seenEmbed = new Set<string>();
   const seenBad = new Set<string>();
   let m: RegExpExecArray | null;
-  DATA_FRAGMENT_VALUE_RE.lastIndex = 0;
-  while ((m = DATA_FRAGMENT_VALUE_RE.exec(serialized)) !== null) {
+  FRAGMENT_HELPER_RE.lastIndex = 0;
+  while ((m = FRAGMENT_HELPER_RE.exec(serialized)) !== null) {
     const value = m[1];
     const valid = VALID_FRAGMENT_REF_RE.exec(value);
     if (valid) {
@@ -148,11 +154,41 @@ export function scanDataFragments(data: unknown): { embedded: FragmentRef[]; mal
   return { embedded, malformed };
 }
 
-// Build warnings[] entries for any malformed (prefix-less) data-fragment embeds.
+// Build warnings[] entries for any malformed (prefix-less) fragment-helper ids.
 export function malformedFragmentWarnings(data: unknown): string[] {
-  return scanDataFragments(data).malformed.map(v =>
-    `data-fragment value "${v}" is missing a required ajo:/aem:/external: prefix; this embed will fail at render ` +
-    `(Forbidden: fragment URI syntax is incorrect). See get_visual_designer_requirements.`);
+  return scanFragmentEmbeds(data).malformed.map(v =>
+    `fragment helper id "${v}" is missing a required ajo:/aem:/external: prefix; this embed will fail at render ` +
+    `(Forbidden: fragment URI syntax is incorrect). Use {{ fragment id="ajo:<uuid>" name="..." mode="inline" }} — ` +
+    `see get_visual_designer_requirements.`);
+}
+
+// Reserved sentinel a caller may put in a fragment's OWN data-fragment-id when
+// authoring its render snippet. The fragment's real UUID isn't known until after
+// create, so the server rewrites "ajo:SELF" to the assigned id post-create — making
+// correct authoring a single step (see handleCreateContentFragment).
+export const SELF_FRAGMENT_SENTINEL = 'ajo:SELF';
+
+// Distinct data-fragment-id values found in a fragment payload (the self-reference
+// on the acr-fragment wrapper). Scans the JSON form so it is agnostic to which
+// sub-field — content / editorContext["wysiwyg-content"] — holds the markup. This
+// is the fragment's OWN id; it is unrelated to the {{ fragment }} embed helper that
+// references OTHER fragments (scanFragmentEmbeds).
+const DATA_FRAGMENT_ID_RE = /data-fragment-id=\\?"([^"\\]+)\\?"/g;
+export function scanSelfFragmentIds(data: unknown): string[] {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(data) ?? '';
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  DATA_FRAGMENT_ID_RE.lastIndex = 0;
+  while ((m = DATA_FRAGMENT_ID_RE.exec(serialized)) !== null) {
+    if (!seen.has(m[1])) { seen.add(m[1]); out.push(m[1]); }
+  }
+  return out;
 }
 
 // JSON-Patch paths whose target member may not exist yet on a content object

@@ -7,7 +7,7 @@ import {
   ListTemplatesSchema, CreateTemplateSchema, GetTemplateSchema,
   UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, scanDataFragments, malformedFragmentWarnings, normalizeMetadataPatches, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, scanFragmentEmbeds, malformedFragmentWarnings, normalizeMetadataPatches, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
 
 // Pull the email HTML out of a template payload for the native-format check. The
 // "content" shape carries it at template.html.body (an object); the legacy "html"
@@ -25,7 +25,7 @@ function emailHtmlOf(data: { channels?: string[]; templateType?: string; templat
 }
 
 // Non-fatal advisories for a template write that still succeeds: Compatibility-mode
-// HTML (email) plus any prefix-less data-fragment embeds anywhere in the body.
+// HTML (email) plus any prefix-less {{ fragment }} helper embeds anywhere in the body.
 function templateWarnings(data: { channels?: string[]; templateType?: string; template?: Record<string, unknown> }): string[] {
   const warnings: string[] = [];
   const compat = compatibilityModeWarning(emailHtmlOf(data));
@@ -62,7 +62,7 @@ const TEMPLATE_CONTENT_SCHEMA = {
     headers: { type: 'object', description: 'Custom email headers (key-value), email content variant.' },
     editorContext: { type: 'object', description: 'Opaque editor metadata (key-value). Optional for email/landingpage/inapp.' },
     // shared: html is a STRING for templateType "html"/landingpage, but an OBJECT { body } for the email-variant-detail and in-app shapes — see the per-channel guide above.
-    html: { description: 'HTML content. A STRING for templateType "html" and landingpage. An OBJECT { body: "<html>" } for the email "content" variant.' },
+    html: { description: 'HTML content. A STRING for templateType "html" and landingpage. An OBJECT { body: "<html>" } for the email "content" variant. EMAIL ONLY: this HTML imports into the Visual Email Designer — to stay drag-and-drop editable (NOT Compatibility mode) it MUST be in native Visual Designer format: a <head> carrying the content-version meta tag, acr-* component classes, and the required structure/component nesting. Call get_visual_designer_requirements FIRST and reproduce that exact structure — do not write generic email HTML (generic HTML still saves but opens in Compatibility mode and locks the user out of the visual editor). (Landing-page HTML has no such requirement.)' },
     // push (push-variant-detail)
     pushType: { type: 'string', enum: ['message', 'silent'], description: 'Push type (push channel). Default "message".' },
     title: { type: 'string', description: 'Push notification title, or — for sms with messageType "mms" — the mms subject/title.' },
@@ -131,6 +131,21 @@ const EMAIL_TEMPLATE_SHAPE_RULES = [
 ];
 
 const TEMPLATE_CONDITIONAL_RULES = [...CODE_CHANNEL_REQUIRES_SUBTYPE, ...EMAIL_TEMPLATE_SHAPE_RULES];
+
+// Embed-by-reference guidance, surfaced on both create_ and update_ template
+// descriptions (the point where the model authors the body). Without it, models
+// tend to paste a fragment's HTML inline, which silently breaks the live link:
+// an inlined copy is a static snapshot, so later edits to the fragment never
+// propagate to the template. Kept in one place so the two descriptions never drift.
+const FRAGMENT_EMBED_NOTE =
+  '⚠ EMBED FRAGMENTS BY REFERENCE — NEVER INLINE THEIR CONTENT: To include a content fragment in this template, reference ' +
+  'it with the fragment helper tag — {{ fragment id="ajo:<fragmentId>" name="<fragmentName>" mode="inline" }} — placed in ' +
+  'the <th> of the structure row that should hold it (call get_visual_designer_requirements for the exact nesting; get the ' +
+  'id/name from list_content_fragments / get_content_fragment). Do NOT copy or paste the fragment\'s HTML into the template ' +
+  'body — an inlined copy is a STATIC SNAPSHOT that breaks the live link, so later edits to the fragment will NOT propagate. ' +
+  'Do NOT use a data-fragment="..." attribute on .acr-structure — AJO STRIPS it on save and the reference is lost. Only the ' +
+  '{{ fragment }} helper creates a live, propagating reference; a name-based {{fragmentName}} is a personalization ' +
+  'expression, not a fragment embed.';
 
 // Organization fields shared by create_ and update_ (see the fragment tools for the
 // same pattern). tagIds/labels are real runtime write-model fields the published
@@ -251,6 +266,8 @@ Channel → templateType → template shape (channels must have exactly 1 value)
   template type (it returns the exact structure/component catalog and required
   <head> you must reproduce).
 
+${FRAGMENT_EMBED_NOTE}
+
 Example usage (email template — DEFAULT, with subject line):
 {
   "name": "Welcome Email",
@@ -346,7 +363,7 @@ export const getContentTemplateDefinition = {
     etag: ETAG_FIELD,
     embeddedFragments: {
       type: 'array',
-      description: 'Fragments embedded inline in the template body via data-fragment="(ajo|aem|external):<uuid>", derived by the server. This reflects inline embeds that the upstream data.referencedFragments array does NOT capture — use this to confirm what a template references. Empty when none are embedded.',
+      description: 'Fragments embedded in the template body via the {{ fragment id="(ajo|aem|external):<uuid>" ... }} helper, derived by the server. This reflects helper embeds that the upstream data.referencedFragments array does NOT capture — use this to confirm what a template references. Empty when none are embedded.',
       items: {
         type: 'object',
         properties: {
@@ -359,7 +376,7 @@ export const getContentTemplateDefinition = {
     invalidFragmentReferences: {
       type: 'array',
       items: { type: 'string' },
-      description: 'Present only when the body contains data-fragment values missing a required ajo:/aem:/external: prefix (e.g. a bare UUID). These are broken embeds that will fail at render — fix them by adding the prefix. Absent when all embeds are well-formed.'
+      description: 'Present only when the body contains {{ fragment }} helper ids missing a required ajo:/aem:/external: prefix (e.g. a bare UUID). These are broken embeds that will fail at render — fix them by adding the prefix. Absent when all embeds are well-formed.'
     }
   }),
   description: `Fetch a single content template by ID from Adobe Journey Optimizer.
@@ -368,8 +385,8 @@ Example usage: { "templateId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 
 Returns: { success: true, data: { id, name, templateType, channels, template, createdAt, modifiedAt, ... }, etag: "...", embeddedFragments: [{ reference, source, id }], invalidFragmentReferences?: ["<bad value>"] }
 The etag is required for update (PUT/PATCH) operations.
-NOTE on fragment references: the upstream data.referencedFragments only lists formally-registered references and is empty for inline data-fragment="(ajo|aem|external):<uuid>" embeds. The server-derived embeddedFragments array DOES capture those inline embeds — use it (not referencedFragments) to confirm what a template embeds. If invalidFragmentReferences is present, the body has data-fragment values missing the required ajo:/aem:/external: prefix; those embeds are broken and will fail at render.
-ONLY data-fragment="(ajo|aem|external):<uuid>" embeds are trackable. Name-based references like {{fragmentName}} are personalization expressions, NOT fragment embeds — they are intentionally NOT reflected in embeddedFragments/referencedFragments, so an empty array does not mean a name-based reference is broken. To embed a fragment in a verifiable way, use the data-fragment="ajo:<uuid>" syntax.`,
+NOTE on fragment references: the upstream data.referencedFragments only lists formally-registered references and is empty for {{ fragment }} helper embeds. The server-derived embeddedFragments array DOES capture those helper embeds — use it (not referencedFragments) to confirm what a template embeds. If invalidFragmentReferences is present, the body has {{ fragment }} helper ids missing the required ajo:/aem:/external: prefix; those embeds are broken and will fail at render.
+ONLY {{ fragment id="(ajo|aem|external):<uuid>" ... }} helper embeds are trackable (and are the live, propagating reference mechanism). A data-fragment="..." attribute on .acr-structure is NOT a live reference — AJO strips it on save — and a name-based {{fragmentName}} is a personalization expression, not a fragment embed; neither is reflected in embeddedFragments/referencedFragments. To embed a fragment in a verifiable, propagating way, use the {{ fragment id="ajo:<uuid>" name="..." mode="inline" }} helper.`,
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
@@ -388,7 +405,7 @@ export async function handleGetContentTemplate(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const result = await getTemplate(parsed.data.templateId);
-      const { embedded, malformed } = scanDataFragments(result.data);
+      const { embedded, malformed } = scanFragmentEmbeds(result.data);
       return {
         success: true,
         ...result,
@@ -440,6 +457,8 @@ Channel → templateType → template shape (channels must have exactly 1 value)
   tool to get the full mandatory spec BEFORE constructing any HTML for this
   template type (it returns the exact structure/component catalog and required
   <head> you must reproduce).
+
+${FRAGMENT_EMBED_NOTE}
 
 PERSONALIZATION: if you are adding or changing {{ }} / {%= %} expressions, call get_personalization_syntax for the
   AJO-native syntax (and discover-personalization-paths / list_xdm_field_groups for the real attribute paths) — never

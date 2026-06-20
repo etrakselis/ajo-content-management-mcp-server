@@ -14,7 +14,7 @@ import { join } from 'path';
 
 // Compiled location is dist/ui, and the build copies src/reference → dist/reference,
 // so the asset sits one level up in a sibling reference/ directory.
-const DEFAULT_PATH = join(__dirname, '..', 'reference', 'ajo_content_asset_governance_rules.md');
+const DEFAULT_PATH = join(__dirname, '..', 'reference', 'ajo-content-asset-governance-rules.md');
 
 let cache: string | null = null;
 

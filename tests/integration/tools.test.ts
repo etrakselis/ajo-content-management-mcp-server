@@ -207,14 +207,15 @@ describe('Template Tools Integration', () => {
     expect(result.embeddedFragments).toEqual([]);
   });
 
-  test('get_content_template derives embeddedFragments from inline data-fragment embeds (P2)', async () => {
+  test('get_content_template derives embeddedFragments from {{ fragment }} helper embeds (P2)', async () => {
     const uuid1 = 'b6d70a45-a149-453b-85ba-809a5d40066d';
     const uuid2 = 'c7e81b56-b25a-564c-96cb-91ab6e51177e';
+    const helper = (ref: string) => `{{ fragment id="${ref}" name="F" mode="inline" }}`;
     mockClient.getTemplate.mockResolvedValue({
       data: {
         id: VALID_UUID,
         templateType: 'content',
-        template: { html: { body: `<div data-fragment="ajo:${uuid1}"></div><span data-fragment="aem:${uuid2}"></span><p data-fragment="ajo:${uuid1}"></p>` } },
+        template: { html: { body: `<th>${helper(`ajo:${uuid1}`)}</th><th>${helper(`aem:${uuid2}`)}</th><th>${helper(`ajo:${uuid1}`)}</th>` } },
         referencedFragments: []
       },
       etag: '"abc"'
@@ -229,10 +230,10 @@ describe('Template Tools Integration', () => {
     ]);
   });
 
-  test('get_content_template surfaces prefix-less data-fragment values as invalidFragmentReferences (#3)', async () => {
+  test('get_content_template surfaces prefix-less {{ fragment }} helper ids as invalidFragmentReferences (#3)', async () => {
     const bareUuid = '301c64ce-4085-4e86-8afc-254854d3c34c';
     mockClient.getTemplate.mockResolvedValue({
-      data: { id: VALID_UUID, templateType: 'content', template: { html: { body: `<div data-fragment="${bareUuid}"></div>` } } },
+      data: { id: VALID_UUID, templateType: 'content', template: { html: { body: `<th>{{ fragment id="${bareUuid}" name="F" mode="inline" }}</th>` } } },
       etag: '"abc"'
     });
     const result = await handleGetContentTemplate({ templateId: VALID_UUID }) as {
@@ -242,16 +243,16 @@ describe('Template Tools Integration', () => {
     expect(result.invalidFragmentReferences).toEqual([bareUuid]);
   });
 
-  test('create_content_template warns when a data-fragment value lacks an ajo:/aem:/external: prefix (#3)', async () => {
+  test('create_content_template warns when a {{ fragment }} helper id lacks an ajo:/aem:/external: prefix (#3)', async () => {
     mockClient.createTemplate.mockResolvedValue({ id: 'df1', location: '/templates/df1', etag: '"v1"' });
     const bareUuid = '301c64ce-4085-4e86-8afc-254854d3c34c';
-    const nativeHtml = `<html><head><meta name="content-version" content="1"></head><body><div class="acr-structure" data-fragment="${bareUuid}"></div></body></html>`;
+    const nativeHtml = `<html><head><meta name="content-version" content="1"></head><body><div class="acr-structure"><th>{{ fragment id="${bareUuid}" name="F" mode="inline" }}</th></div></body></html>`;
     const result = await handleCreateContentTemplate({
       name: 'Embed', templateType: 'content', channels: ['email'],
       template: { subject: 'Hi', html: { body: nativeHtml } }
     }) as { success: boolean; warnings?: string[] };
     expect(result.success).toBe(true);
-    // native HTML → no compat warning; but the bare-UUID embed → a malformed-ref warning.
+    // native HTML → no compat warning; but the bare-UUID helper id → a malformed-ref warning.
     expect(result.warnings?.some(w => w.includes('missing a required ajo:/aem:/external: prefix'))).toBe(true);
   });
 
@@ -610,12 +611,59 @@ describe('Fragment Tools Integration', () => {
     expect(result.warnings?.[0]).toMatch(/Compatibility mode/);
   });
 
-  test('create_content_fragment warns on a prefix-less data-fragment embed (#3)', async () => {
+  test('create_content_fragment does NOT warn when the dual-field wysiwyg-content is compliant (even if content is a lightweight snippet)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-dual', location: '/fragments/f-dual', etag: '"v1"' });
+    // content = lightweight embeddable snippet (no <head>/content-version, by design);
+    // editorContext["wysiwyg-content"] = full Visual Designer doc (has content-version + acr-*).
+    const snippet = '<div class="acr-fragment is-locked has-html-params" data-fragment-id="ajo:b6d70a45-a149-453b-85ba-809a5d40066d"><div class="acr-tmp-component"></div></div>';
+    const wysiwyg = '<!DOCTYPE html><html><head><meta name="content-version" content="3.3"></head><body class id="acr-body" data-has-html-params><div class="acr-container"><div class="acr-structure"><div class="acr-fragment acr-component"></div></div></div></body></html>';
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content: snippet, editorContext: { 'wysiwyg-content': wysiwyg } }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    // The compliance check must target wysiwyg-content, so no Compatibility-mode warning.
+    expect(result.warnings?.some(w => /Compatibility mode/.test(w))).toBeFalsy();
+  });
+
+  test('create_content_fragment rewrites the data-fragment-id="ajo:SELF" sentinel to the assigned id via a follow-up PUT', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-self', location: '/fragments/f-self', etag: '"v1"' });
+    mockClient.updateFragment.mockResolvedValue({ success: true, etag: '"v2"' });
+    const result = await handleCreateContentFragment({
+      name: 'Hero', type: 'html', channels: ['email'],
+      fragment: { content: '<div class="acr-fragment is-locked has-html-params" data-fragment-id="ajo:SELF"></div>' }
+    }) as { success: boolean; warnings?: string[]; etag?: string };
+    expect(result.success).toBe(true);
+    // The follow-up PUT carries the rewritten self-reference.
+    expect(mockClient.updateFragment).toHaveBeenCalledTimes(1);
+    const selfCall = mockClient.updateFragment.mock.calls[0];
+    expect(selfCall[0]).toBe('f-self');
+    const payload = selfCall[1] as { fragment: { content: string } };
+    expect(payload.fragment.content).toContain('data-fragment-id="ajo:f-self"');
+    expect(payload.fragment.content).not.toContain('ajo:SELF');
+    // Sentinel correctly handled → no self-reference mismatch warning; new etag chained through.
+    expect(result.warnings?.some(w => w.includes('id does not exist'))).toBeFalsy();
+    expect(result.etag).toBe('"v2"');
+  });
+
+  test('create_content_fragment warns (and does NOT auto-rewrite) when data-fragment-id is a wrong literal, not the sentinel', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-bad', location: '/fragments/f-bad', etag: '"v1"' });
+    const result = await handleCreateContentFragment({
+      name: 'Hero', type: 'html', channels: ['email'],
+      fragment: { content: '<div class="acr-fragment is-locked has-html-params" data-fragment-id="ajo:PLACEHOLDER_HERO"></div>' }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    // Only the explicit sentinel is auto-rewritten — a wrong literal is left alone and flagged.
+    expect(mockClient.updateFragment).not.toHaveBeenCalled();
+    expect(result.warnings?.some(w => w.includes('data-fragment-id="ajo:PLACEHOLDER_HERO"') && w.includes('"ajo:f-bad"'))).toBe(true);
+  });
+
+  test('create_content_fragment warns on a prefix-less {{ fragment }} helper id (#3)', async () => {
     mockClient.createFragment.mockResolvedValue({ id: 'f-10', location: '/fragments/f-10', etag: '"v1"' });
     const bareUuid = '301c64ce-4085-4e86-8afc-254854d3c34c';
     const result = await handleCreateContentFragment({
       name: 'Banner', type: 'html', channels: ['email'],
-      fragment: { content: `<div data-fragment="${bareUuid}"></div>` }
+      fragment: { content: `<th>{{ fragment id="${bareUuid}" name="F" mode="inline" }}</th>` }
     }) as { success: boolean; warnings?: string[] };
     expect(result.success).toBe(true);
     expect(result.warnings?.some(w => w.includes('missing a required ajo:/aem:/external: prefix'))).toBe(true);
@@ -673,6 +721,21 @@ describe('Fragment Tools Integration', () => {
     const payload = mockClient.updateFragment.mock.calls[0][1] as Record<string, unknown>;
     expect(payload).not.toHaveProperty('parentFolderId');
     expect(payload).toHaveProperty('tagIds', [TAG_UUID]);
+  });
+
+  test('update_content_fragment rewrites the ajo:SELF sentinel in-place (no follow-up write)', async () => {
+    mockClient.updateFragment.mockResolvedValue({ success: true, etag: '"v2"' });
+    const result = await handleUpdateContentFragment({
+      fragmentId: VALID_UUID, etag: '"v1"', name: 'Hero', type: 'html', channels: ['email'],
+      fragment: { content: '<div class="acr-fragment is-locked has-html-params" data-fragment-id="ajo:SELF"></div>' }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    // It's already a PUT, so the sentinel is rewritten in the same call — no extra write.
+    expect(mockClient.updateFragment).toHaveBeenCalledTimes(1);
+    const payload = mockClient.updateFragment.mock.calls[0][1] as { fragment: { content: string } };
+    expect(payload.fragment.content).toContain(`data-fragment-id="ajo:${VALID_UUID}"`);
+    expect(payload.fragment.content).not.toContain('ajo:SELF');
+    expect(result.warnings?.some(w => w.includes('id does not exist'))).toBeFalsy();
   });
 
   test('patch_content_fragment normalizes replace→add for /parentFolderId, leaves /name as replace (Issue 2)', async () => {

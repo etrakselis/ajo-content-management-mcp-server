@@ -9,16 +9,68 @@ import {
   UpdateFragmentSchema, PatchFragmentSchema, PublishFragmentSchema,
   GetLiveFragmentSchema, GetPublicationStatusSchema, ArchiveFragmentSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, malformedFragmentWarnings, normalizeMetadataPatches, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, malformedFragmentWarnings, scanSelfFragmentIds, normalizeMetadataPatches, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
 
 // Non-fatal advisories for a fragment write that still succeeds: Compatibility-mode
-// HTML (email html fragments) plus any prefix-less data-fragment embeds in the body.
+// HTML (email html fragments) plus any prefix-less {{ fragment }} helper embeds in the body.
+// Which field carries the Visual Designer document for the compliance check. In
+// the dual-field shape the full document lives in editorContext["wysiwyg-content"];
+// fragment.content is intentionally a lightweight render snippet with NO
+// <head>/content-version, so checking it would false-positive on a valid fragment.
+// Prefer wysiwyg-content when present; fall back to content for single-field fragments.
+function visualDesignerHtmlOf(fragment?: Record<string, unknown>): unknown {
+  const editorContext = fragment?.editorContext as Record<string, unknown> | undefined;
+  const wysiwyg = editorContext?.['wysiwyg-content'];
+  if (typeof wysiwyg === 'string' && wysiwyg.trim()) return wysiwyg;
+  return fragment?.content;
+}
+
 function fragmentWarnings(data: { type?: string; fragment?: Record<string, unknown> }): string[] {
   const warnings: string[] = [];
-  const compat = data.type === 'html' ? compatibilityModeWarning(data.fragment?.content) : null;
+  const compat = data.type === 'html' ? compatibilityModeWarning(visualDesignerHtmlOf(data.fragment)) : null;
   if (compat) warnings.push(compat);
   warnings.push(...malformedFragmentWarnings(data.fragment));
   return warnings;
+}
+
+// A fragment's render snippet must self-reference the fragment's OWN id via
+// data-fragment-id="ajo:<uuid>". Since that UUID isn't known until after create, a
+// caller authors the sentinel data-fragment-id="ajo:SELF" and the server rewrites
+// it to the real ref here. Only the explicit sentinel is rewritten (any other wrong
+// value is surfaced as a warning, never silently changed). Returns a new fragment
+// object plus whether a rewrite occurred. Targets the two string fields that carry
+// the wrapper: fragment.content and editorContext["wysiwyg-content"].
+function applySelfReference(
+  fragment: Record<string, unknown> | undefined,
+  ref: string
+): { fragment: Record<string, unknown>; changed: boolean } {
+  const frag: Record<string, unknown> = { ...(fragment ?? {}) };
+  let changed = false;
+  const rewrite = (v: unknown): unknown => {
+    if (typeof v !== 'string' || !v.includes('data-fragment-id="ajo:SELF"')) return v;
+    changed = true;
+    return v.replace(/data-fragment-id="ajo:SELF"/g, `data-fragment-id="${ref}"`);
+  };
+  if (typeof frag.content === 'string') frag.content = rewrite(frag.content);
+  const ec = frag.editorContext as Record<string, unknown> | undefined;
+  if (ec && typeof ec['wysiwyg-content'] === 'string') {
+    const next = rewrite(ec['wysiwyg-content']);
+    if (next !== ec['wysiwyg-content']) frag.editorContext = { ...ec, 'wysiwyg-content': next };
+  }
+  return { fragment: frag, changed };
+}
+
+// Warn about any data-fragment-id self-reference that doesn't match this fragment's
+// own ref (and isn't the auto-rewritten sentinel). Such a fragment renders but fails
+// to resolve in the Visual Email Designer ("id does not exist" when the block is
+// clicked). Scans the post-rewrite fragment, so a correctly-used sentinel is silent.
+function selfReferenceWarnings(fragment: Record<string, unknown> | undefined, ref: string): string[] {
+  return scanSelfFragmentIds(fragment)
+    .filter(v => v !== ref)
+    .map(v =>
+      `fragment.content declares data-fragment-id="${v}" but this fragment's id is "${ref}". It renders but will ` +
+      `NOT resolve in the Visual Email Designer (clicking the block shows "id does not exist"). Set ` +
+      `data-fragment-id="${ref}" — or, on create, use the sentinel data-fragment-id="ajo:SELF" and the server sets it for you.`);
 }
 
 // ─── Shared input-schema fragments ──────────────────────────────────────────
@@ -29,14 +81,14 @@ function fragmentWarnings(data: { type?: string; fragment?: Record<string, unkno
 // verbatim by both create_ and update_ so the two never drift.
 const FRAGMENT_CONTENT_SCHEMA = {
   type: 'object' as const,
-  description: 'Content payload. Shape depends on `type`: html → { "content": "<html>...", editorContext? }; expression → { "expression": "..." }.',
+  description: 'Content payload. Shape depends on `type`: html → { "content": "<html>...", editorContext? }; expression → { "expression": "..." }. For an email html fragment that must embed into templates AND stay drag-and-drop editable, use the DUAL-FIELD shape: "content" is the lightweight embeddable render snippet, and editorContext["wysiwyg-content"] is the FULL Visual Designer document. Call get_visual_designer_requirements for the exact shape of each field.',
   oneOf: [
     {
       title: 'HTML fragment content',
       required: ['content'],
       properties: {
-        content: { type: 'string', description: 'HTML markup. Required when type is "html".' },
-        editorContext: { type: 'object', description: 'Opaque editor metadata (key-value). Optional.' }
+        content: { type: 'string', description: 'HTML markup. Required when type is "html". For an email html fragment this is the LIGHTWEIGHT render snippet, NOT a full document: a <div class="acr-fragment is-locked has-html-params" data-fragment-id="ajo:SELF"> wrapper using acr-tmp-component (NOT acr-component), with NO <!DOCTYPE>/<head>/acr-container/acr-structure. SELF-REFERENCE: data-fragment-id must be the fragment\'s OWN id, which does not exist until after creation — so set it to the literal sentinel "ajo:SELF" and the server rewrites it to the real id automatically on create/update. (A wrong value renders but fails to resolve in the Visual Email Designer — "id does not exist" — so the server warns if it isn\'t the assigned id.) The full Visual Designer document (with <head> + content-version meta) goes in editorContext["wysiwyg-content"], not here. Call get_visual_designer_requirements FIRST for the exact shape of both fields; do not paste generic email HTML.' },
+        editorContext: { type: 'object', description: 'Editor metadata. For an email html fragment, put the FULL native Visual Designer document in editorContext["wysiwyg-content"] (the <!DOCTYPE html> … document with the verbatim <head>, <body … data-has-html-params>, and acr-component nesting). This is the field the drag-and-drop editor uses and the one the server checks for Visual Designer compliance — the top-level "content" stays the lightweight embeddable snippet. See get_visual_designer_requirements.' }
       }
     },
     {
@@ -304,6 +356,30 @@ export async function handleCreateContentFragment(args: unknown) {
       const payload = { ...rest, source: rest.source ?? { origin: 'ajo' as const } };
       const result = await createFragment(payload) as { id: string; location?: string; etag?: string };
       const warnings = fragmentWarnings(parsed.data);
+      const assignedRef = `ajo:${result.id}`;
+
+      // Self-reference: the fragment's own UUID is only known now, so a caller can
+      // author data-fragment-id="ajo:SELF" and we rewrite it to the real ref via a
+      // follow-up PUT (content isn't PATCHable). The create already committed, so a
+      // failed rewrite degrades to a warning — never a false-negative on the create.
+      const selfRef = applySelfReference(parsed.data.fragment as Record<string, unknown> | undefined, assignedRef);
+      if (selfRef.changed) {
+        try {
+          let etag = result.etag;
+          if (!etag) etag = (await getFragment(result.id)).etag;
+          if (!etag) throw new Error('could not resolve the post-create etag');
+          const corrected = await updateFragment(result.id, { ...payload, fragment: selfRef.fragment }, etag) as { etag?: string };
+          if (corrected.etag) result.etag = corrected.etag;
+        } catch (err) {
+          warnings.push(
+            `Fragment created (id ${result.id}) but rewriting data-fragment-id="ajo:SELF" to "${assignedRef}" failed: ${buildError(err).message} ` +
+            `Retry with update_content_fragment, setting data-fragment-id="${assignedRef}" in fragment.content.`
+          );
+        }
+      }
+      // Flag any non-sentinel self-reference that doesn't match the assigned id.
+      warnings.push(...selfReferenceWarnings(selfRef.fragment, assignedRef));
+
       if (parentFolderId != null) {
         // The create already committed; if only the folder step fails we still return
         // success (with a warning + retry hint) — never a false-negative on a write.
@@ -449,10 +525,16 @@ export async function handleUpdateContentFragment(args: unknown) {
     // separately and preserved across a content replace. To MOVE a fragment, use
     // patch_content_fragment (/parentFolderId). tagIds/labels stay in the body.
     const { fragmentId, etag, parentFolderId: _parentFolderId, ...rest } = parsed.data;
-    const payload = { ...rest, source: rest.source ?? { origin: 'ajo' as const } };
+    // The fragment id is known here, so rewrite the data-fragment-id="ajo:SELF"
+    // self-reference sentinel to the real ref in-place — this is already a PUT, so
+    // no follow-up write is needed (unlike create).
+    const assignedRef = `ajo:${fragmentId}`;
+    const selfRef = applySelfReference(rest.fragment as Record<string, unknown> | undefined, assignedRef);
+    const payload = { ...rest, ...(selfRef.changed ? { fragment: selfRef.fragment } : {}), source: rest.source ?? { origin: 'ajo' as const } };
     try {
       const result = await updateFragment(fragmentId, payload, etag);
       const warnings = fragmentWarnings(parsed.data);
+      warnings.push(...selfReferenceWarnings(selfRef.fragment, assignedRef));
       return { ...result, success: true, ...(warnings.length ? { warnings } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };

@@ -18,7 +18,8 @@ import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, get
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
-import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_TEMPLATE_DESCRIPTORS, parseFragmentUri, parseTemplateUri, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT, VISUAL_DESIGNER_REQUIREMENTS_TEXT } from './resources.js';
+import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_TEMPLATE_DESCRIPTORS, parseFragmentUri, parseTemplateUri, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT } from './resources.js';
+import { getVisualDesignerRequirements } from './visual-designer-requirements.js';
 import { logger } from '../telemetry/index.js';
 import { recordAudit } from '../telemetry/audit.js';
 import { UI_BASE_URL } from '../tools/utils.js';
@@ -873,7 +874,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
 
     if (uri === RESOURCE_URIS.visualDesignerRequirements) {
       return {
-        contents: [{ uri, mimeType: 'text/plain', text: VISUAL_DESIGNER_REQUIREMENTS_TEXT }]
+        contents: [{ uri, mimeType: 'text/plain', text: getVisualDesignerRequirements() }]
       };
     }
 
