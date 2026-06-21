@@ -763,12 +763,12 @@ export const landingPageHtml = `<!DOCTYPE html>
     <section class="step hidden" id="step5" data-step-name="Naming Convention (optional)">
     <div class="step-label">Step 5 — Naming Convention</div>
     <div class="card">
-      <h2>Content naming convention</h2>
-      <p>Optionally define naming rules for content templates, fragments, folders, and tags. When enforcement is on, the connected LLM will follow these rules automatically whenever it creates or names any of those. Write your convention in markdown — the LLM reads it directly.</p>
+      <h2>Naming convention & asset organizational structure</h2>
+      <p>Optionally define naming rules and organizational structure for content templates, fragments, folders, and tags. When enforcement is on, the connected LLM will follow these rules automatically whenever it creates or names any of those. Write your convention in markdown — the LLM reads it directly.</p>
       <label class="toggle-row" for="namingConventionToggle" style="cursor:pointer;margin-bottom:0">
         <span class="toggle-text">
-          <span class="toggle-title">Enforce naming convention</span>
-          <span class="hint">When on, the LLM must follow the rules below when naming new content templates, fragments, folders, and tags.</span>
+          <span class="toggle-title">Enforce the rules</span>
+          <span class="hint">When on, the LLM must follow the rules below for new content templates, fragments, folders, and tags.</span>
         </span>
         <span class="switch">
           <input type="checkbox" id="namingConventionToggle" />

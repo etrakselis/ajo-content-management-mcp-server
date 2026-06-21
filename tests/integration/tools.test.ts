@@ -111,6 +111,20 @@ describe('get_server_context', () => {
     expect(result.success).toBe(false);
     expect(result.error.code).toBe('NOT_CONFIGURED');
   });
+
+  test('exposes the naming convention only when enforcement is enabled', async () => {
+    mockClient.isClientConfigured.mockReturnValue(true);
+    // Enabled → surfaced.
+    mockClient.getConfiguredNamingConvention.mockReturnValue({ enabled: true, markdown: '# Rules' });
+    let result = await handleGetServerContext({}) as { data: Record<string, unknown> };
+    expect(result.data.namingConvention).toEqual({ enabled: true, markdown: '# Rules' });
+    // Disabled → never leaked (the operator chose not to enforce it).
+    mockClient.getConfiguredNamingConvention.mockReturnValue({ enabled: false, markdown: '# Secret rules' });
+    result = await handleGetServerContext({}) as { data: Record<string, unknown> };
+    expect(result.data).not.toHaveProperty('namingConvention');
+    // Restore the default — jest.clearAllMocks() doesn't reset mockReturnValue.
+    mockClient.getConfiguredNamingConvention.mockReturnValue(undefined);
+  });
 });
 
 // ─── Visual Designer Requirements Tool ────────────────────────────────────────

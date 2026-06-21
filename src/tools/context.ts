@@ -107,7 +107,9 @@ export async function handleGetServerContext(_args?: unknown) {
         ...(orgName ? { orgName } : {}),
         writeAccess: getWritesAllowed(),
         configured: true,
-        ...(namingConvention ? { namingConvention } : {}),
+        // Only surface the convention when enforcement is ON — never expose rules the
+        // operator chose not to enforce (defense-in-depth; disabled configs aren't stored).
+        ...(namingConvention?.enabled ? { namingConvention } : {}),
         tools: toolCatalog,
         resources: RESOURCE_ACCESS_CATALOG
       }

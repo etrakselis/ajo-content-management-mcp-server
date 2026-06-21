@@ -121,6 +121,11 @@ function parseNamingConvention(raw: unknown): ParsedNamingConvention {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: true, value: undefined };
   const obj = raw as Record<string, unknown>;
   if (typeof obj.enabled !== 'boolean') return { ok: true, value: undefined };
+  // Enforcement OFF → store NOTHING. The landing page always submits the editor's
+  // content (the default rules are pre-filled), so persisting it when disabled would
+  // leak the rules to the connected LLM (e.g. via get_server_context) even though the
+  // operator chose not to enforce them. Disabled == no convention configured.
+  if (!obj.enabled) return { ok: true, value: undefined };
   const markdown = typeof obj.markdown === 'string' ? obj.markdown : '';
   if (markdown.length > MAX_CONVENTION_MARKDOWN_LEN) {
     return {
@@ -129,7 +134,7 @@ function parseNamingConvention(raw: unknown): ParsedNamingConvention {
         `The limit is ${MAX_CONVENTION_MARKDOWN_LEN.toLocaleString()} characters — shorten it and try again.`
     };
   }
-  return { ok: true, value: { enabled: obj.enabled, markdown } };
+  return { ok: true, value: { enabled: true, markdown } };
 }
 
 // Self-declared author email. We require a syntactically valid address but make

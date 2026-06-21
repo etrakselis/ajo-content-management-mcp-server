@@ -41,6 +41,7 @@ Asset names communicate:
 
 Asset names must never contain:
 
+- Asset type designators (such as `Template` or `Fragment`)
 - Lifecycle state
 - Sandbox names
 - Environment identifiers
@@ -50,6 +51,8 @@ Asset names must never contain:
 - Timestamps
 - Version numbers
 - User names
+
+The asset type is always implied by the repository the asset lives in. Because Content Fragments and Content Templates are stored in separate repositories, restating the type in the name (for example, by appending `_Template` or `_Fragment`) adds no information and is prohibited.
 
 ---
 
@@ -88,7 +91,7 @@ The LLM should prefer minimal governance metadata over redundant metadata.
 
 Examples of metadata that should not be duplicated:
 
-- Asset type (already inferred from repository)
+- Asset type (already inferred from repository — must not appear in names or tags)
 - Environment information
 - Sandbox information
 - Folder hierarchy information already represented by the folder path
@@ -141,13 +144,17 @@ Format:
 [Brand]_[TriggerCategory]_[TriggerName]_[AssetPurpose]
 ```
 
+The Asset Purpose token applies to **Content Fragments**, where it is the approved Section (for example, `Hero`). **Content Templates omit the Asset Purpose token**: a template is named with Brand, Trigger Category, and Trigger Name only, because the template represents the whole experience and its type is already implied by its repository.
+
 Illustrative Examples:
 
 ```text
 LM_PD_BrowseAbandon_Hero
 NV_BIS_Wishlist_TopBanner
-LM_UNIT_OrderConfirmation_Template
+LM_UNIT_OrderConfirmation
 ```
+
+(The third example is a Content Template — three tokens, no purpose suffix and no `_Template` designator.)
 
 ---
 
@@ -266,21 +273,27 @@ Illustrative Example:
 LM_PD_BrowseAbandon_Hero
 ```
 
+Do not append a `_Fragment` designator. The final token is the approved Section, and the Content Fragment repository already establishes that the asset is a fragment.
+
 ---
 
 # Content Template Naming
 
+A Content Template represents an entire experience. Its asset type is already established by the Content Template repository it lives in, so the name must not restate it.
+
 Format:
 
 ```text
-[Brand]_[TriggerCategory]_[TriggerName]_Template
+[Brand]_[TriggerCategory]_[TriggerName]
 ```
 
 Illustrative Example:
 
 ```text
-LM_PD_BrowseAbandon_Template
+LM_PD_BrowseAbandon
 ```
+
+Do not append a `_Template` suffix. Do not append any Asset Purpose / Section token. A Content Template name contains exactly three tokens: Brand, Trigger Category, and Trigger Name.
 
 ---
 
@@ -298,7 +311,7 @@ The existence of a folder path within the Content Fragment repository does not i
 
 The LLM must not treat matching folder paths across repositories as duplicates.
 
-Repository membership inherently identifies the asset type.
+Repository membership inherently identifies the asset type. Because the repository already identifies the asset type, the type must never be repeated in the asset name or as a tag.
 
 ---
 
@@ -376,6 +389,44 @@ These represent different repository locations and are not duplicates.
 
 ---
 
+# Template Composition Standard
+
+A Content Template must be assembled exclusively from embedded Content Fragments.
+
+The LLM must never place raw or inline HTML directly inside a Content Template. The template is an assembly layer: it references fragments and defines their arrangement, but holds no markup of its own.
+
+## Required Decomposition Process
+
+When the LLM is given HTML for an experience, it must:
+
+1. Analyze the HTML and identify its logical, reusable regions (for example: top banner, hero, body, bottom banner).
+2. Split the HTML along those logical boundaries.
+3. Create (or reuse) one Content Fragment per region, placing the corresponding HTML inside that fragment.
+4. Name and tag each fragment per the standards in this document, using the approved Section vocabulary for the fragment's purpose.
+5. Embed the resulting Content Fragments into the Content Template by reference.
+
+## Why Composition Is Required
+
+- Fragments are independently reusable across templates and journeys.
+- A fragment can be updated once and reflected everywhere it is embedded.
+- Templates stay lightweight and free of duplicated markup.
+- Content ownership and QA happen at the fragment level.
+
+## Decomposition Guidance
+
+- Map each visually or functionally distinct region to its own fragment.
+- Prefer the approved Section vocabulary (`TopBanner`, `Hero`, `BottomBanner`) when a region matches one of those purposes.
+- Reuse an existing fragment when one already satisfies the region (search and reuse rules still apply).
+- If a region does not map cleanly to an existing approved Section, request governance approval for new Section vocabulary rather than inventing a name or falling back to inline HTML.
+
+## Prohibited
+
+- Inline or raw HTML placed directly inside a Content Template.
+- A Content Template that embeds zero fragments.
+- HTML duplicated across a template and the fragments it embeds.
+
+---
+
 # Required Tags
 
 ## Brand
@@ -432,15 +483,24 @@ Asset type tags are prohibited.
 
 Asset type tags are prohibited.
 
+Asset type designators in names are also prohibited.
+
 Adobe Journey Optimizer stores Content Fragments and Content Templates in separate repositories.
 
-Because repository membership already identifies the asset type, additional asset-type tags provide no governance value and create redundant metadata.
+Because repository membership already identifies the asset type, additional asset-type tags provide no governance value and create redundant metadata, and asset-type suffixes in names (such as `_Template` or `_Fragment`) provide no information.
 
 The LLM must not create or apply tags such as:
 
 ```text
 content-fragment
 content-template
+```
+
+The LLM must not append name suffixes such as:
+
+```text
+_Template
+_Fragment
 ```
 
 Asset type must be inferred from the repository in which the asset exists.
@@ -509,6 +569,8 @@ Generate from request context.
 
 Do not generate from example values.
 
+Do not append asset-type designators (`_Template`, `_Fragment`). A Content Fragment name ends in its approved Section; a Content Template name ends in the Trigger Name.
+
 ---
 
 ## Step 6 — Apply Tags
@@ -543,6 +605,12 @@ Do not create asset-type subfolders such as:
 ```
 
 unless explicitly required by the platform.
+
+---
+
+## Step 8 — Compose Templates From Fragments
+
+When the asset being produced is a Content Template, the LLM must not place HTML directly in the template. It must instead follow the Template Composition Standard: split the provided HTML into logical regions, store that HTML inside Content Fragments, and embed those fragments into the template by reference. A compliant template contains embedded fragments and no inline markup.
 
 ---
 
@@ -625,11 +693,13 @@ Assets belonging to the same experience must share:
 Illustrative Pattern:
 
 ```text
-{Brand}_{Category}_{Trigger}_Template
-{Brand}_{Category}_{Trigger}_Hero
-{Brand}_{Category}_{Trigger}_TopBanner
-{Brand}_{Category}_{Trigger}_BottomBanner
+{Brand}_{Category}_{Trigger}            (Content Template)
+{Brand}_{Category}_{Trigger}_Hero       (Content Fragment)
+{Brand}_{Category}_{Trigger}_TopBanner  (Content Fragment)
+{Brand}_{Category}_{Trigger}_BottomBanner (Content Fragment)
 ```
+
+The Content Template embeds the related fragments; it does not contain their markup directly.
 
 Shared family tag:
 
@@ -655,6 +725,7 @@ Only when:
 - Naming compliant
 - Folder placement compliant
 - Asset relationships established
+- For templates: composed only of embedded fragments, with no inline HTML
 
 ---
 
@@ -684,6 +755,8 @@ The LLM must:
 - Apply required governance tags.
 - Prevent duplicates.
 - Maintain asset relationships.
+- Compose Content Templates only from embedded Content Fragments.
+- Split provided HTML across Content Fragments and embed those fragments into the template.
 - Validate before finalizing.
 
 The LLM must not:
@@ -692,12 +765,14 @@ The LLM must not:
 - Generate names from examples.
 - Create duplicate assets.
 - Invent abbreviations.
+- Append asset-type designators such as `_Template` or `_Fragment` to asset names.
 - Include lifecycle information in names.
 - Include environment information in names.
 - Create folders outside approved hierarchy.
 - Assume templates and fragments share the same repository.
 - Create redundant tags for metadata already represented by platform structure.
 - Create asset-type tags.
+- Insert raw or inline HTML directly into a Content Template.
 
 ---
 
@@ -713,12 +788,14 @@ Before finalizing any asset:
 - Trigger validated
 - Asset purpose validated
 - Naming convention compliant
+- No asset-type designator in name
 - Folder placement compliant
 - Required tags present
 - Asset family tag present
 - No lifecycle data in name
 - No environment data in name
 - Relationships established
+- For templates: composed only of embedded fragments (no inline HTML)
 
 ---
 
@@ -755,10 +832,15 @@ Content fragment for the Hero section of the Browse Abandon Price Drop journey.
 Asset Type: Content Template
 
 Name:
-LM_PD_BrowseAbandon_Template
+LM_PD_BrowseAbandon
 
 Folder:
 /LM/PD/BrowseAbandon
+
+Embedded Fragments:
+LM_PD_BrowseAbandon_TopBanner
+LM_PD_BrowseAbandon_Hero
+LM_PD_BrowseAbandon_BottomBanner
 
 Tags:
 brand-lm
@@ -768,7 +850,10 @@ asset-family-lm-pd-browseabandon
 ready-to-migrate
 
 Reasoning:
-Primary template associated with the Browse Abandon Price Drop journey.
+Primary template for the Browse Abandon Price Drop journey. The name carries no
+asset-type suffix because the Content Template repository already implies the
+type. The template contains no inline HTML; it embeds the TopBanner, Hero, and
+BottomBanner fragments, which hold the markup.
 ```
 
 ---
@@ -784,11 +869,13 @@ Compliant | Non-Compliant
 
 Validation Results:
 ✓ Naming convention compliant
+✓ No asset-type designator in name
 ✓ Folder placement compliant
 ✓ Required tags present
 ✓ Asset family tag present
 ✓ Duplicate check completed
 ✓ No prohibited metadata in name
+✓ Template composed only of embedded fragments (templates only)
 ```
 
 ---
@@ -800,6 +887,10 @@ Names identify assets.
 Folders organize assets.
 
 Tags describe assets.
+
+Asset type is implied by the repository — never put it in a name or a tag.
+
+Templates embed fragments — never inline HTML.
 
 Search before creation.
 
