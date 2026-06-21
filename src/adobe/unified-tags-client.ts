@@ -60,12 +60,15 @@ export interface TagListParams {
   sortOrder?: 'asc' | 'desc';
 }
 
-const tagListParams = (p: TagListParams): Record<string, unknown> => ({
+export const tagListParams = (p: TagListParams): Record<string, unknown> => ({
   ...(p.start !== undefined ? { start: p.start } : {}),
   ...(p.limit !== undefined ? { limit: p.limit } : {}),
   ...(p.property ? { property: p.property } : {}),
   ...(p.sortBy ? { sortBy: p.sortBy } : {}),
-  ...(p.sortOrder ? { sortOrder: p.sortOrder } : {})
+  // The Unified Tags API NPEs ("String.equals because sortOrder is null") when
+  // sortBy is sent without a sortOrder. Default to 'asc' so a caller can sort by a
+  // field without having to also remember the direction.
+  ...(p.sortBy ? { sortOrder: p.sortOrder ?? 'asc' } : (p.sortOrder ? { sortOrder: p.sortOrder } : {}))
 });
 
 // ── Folders ───────────────────────────────────────────────────────────────────

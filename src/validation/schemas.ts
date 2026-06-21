@@ -160,7 +160,9 @@ export const CreateTemplateSchema = z.object({
   parentFolderId: z.string().uuid().nullable().optional(),
   tagIds: TagIdsSchema,
   labels: LabelsSchema,
-  template: z.record(z.unknown()).optional()
+  template: z.record(z.unknown()).optional(),
+  // Dry-run: validate + return warnings without persisting. Not sent to AJO.
+  validateOnly: z.boolean().optional()
 }).superRefine(checkTemplateSubType).superRefine(checkTemplateContentShape);
 
 export const GetTemplateSchema = z.object({
@@ -240,7 +242,9 @@ export const CreateFragmentSchema = z.object({
   parentFolderId: z.string().uuid().nullable().optional(),
   tagIds: TagIdsSchema,
   labels: LabelsSchema,
-  fragment: z.record(z.unknown())
+  fragment: z.record(z.unknown()),
+  // Dry-run: validate + return warnings without persisting. Not sent to AJO.
+  validateOnly: z.boolean().optional()
 }).superRefine(checkFragmentContentShape);
 
 export const GetFragmentSchema = z.object({
@@ -291,16 +295,55 @@ export const ListFragmentsSchema = PaginationSchema;
 
 // ─── Credentials File Schema ──────────────────────────────────────────────────
 
+// Legacy export: a flat list of { key, value } pairs (CLIENT_SECRET, API_KEY, …).
 export const CredentialValueSchema = z.object({
   key: z.string(),
   value: z.union([z.string(), z.array(z.string())]),
   enabled: z.boolean().optional()
 });
 
-export const CredentialsFileSchema = z.object({
+export const LegacyCredentialsFileSchema = z.object({
   values: z.array(CredentialValueSchema),
   name: z.string().optional()
 });
+
+// Current Adobe Developer Console project export: the OAuth server-to-server
+// credential lives under project.workspace.details.credentials[], and the IMS
+// org id under project.org.ims_org_id. Unknown keys are passed through so we are
+// resilient to the rest of the (large) export shape changing over time.
+export const OAuthServerToServerSchema = z.object({
+  client_id: z.string(),
+  client_secrets: z.array(z.string()).optional(),
+  technical_account_id: z.string().optional(),
+  technical_account_email: z.string().optional(),
+  scopes: z.array(z.string()).optional()
+}).passthrough();
+
+export const ProjectCredentialSchema = z.object({
+  integration_type: z.string().optional(),
+  oauth_server_to_server: OAuthServerToServerSchema.optional()
+}).passthrough();
+
+export const ProjectCredentialsFileSchema = z.object({
+  project: z.object({
+    name: z.string().optional(),
+    title: z.string().optional(),
+    org: z.object({
+      ims_org_id: z.string().optional()
+    }).passthrough().optional(),
+    workspace: z.object({
+      details: z.object({
+        credentials: z.array(ProjectCredentialSchema).optional()
+      }).passthrough().optional()
+    }).passthrough().optional()
+  }).passthrough()
+});
+
+// Accept both the current project export and the legacy flat key/value export.
+export const CredentialsFileSchema = z.union([
+  ProjectCredentialsFileSchema,
+  LegacyCredentialsFileSchema
+]);
 
 // ─── Schema Registry (XDM) ──────────────────────────────────────────────────
 

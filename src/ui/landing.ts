@@ -188,6 +188,8 @@ export const landingPageHtml = `<!DOCTYPE html>
     .tenant-banner-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--adobe-mid); }
     .tenant-banner-value { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 15px; font-weight: 600; color: var(--adobe-dark); word-break: break-all; }
     .tenant-banner.warn .tenant-banner-value { font-family: var(--font-display); color: var(--adobe-warn); }
+    .tenant-banner-sub { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.06); }
+    .tenant-banner-org { font-size: 14px; font-weight: 600; color: var(--adobe-dark); word-break: break-word; }
     @keyframes stepReveal {
       from { opacity: 0; transform: translateY(10px); }
       to { opacity: 1; transform: translateY(0); }
@@ -263,6 +265,9 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     .file-accepted.show { display: flex; }
     .file-accepted svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .file-accepted-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+    #fileName { font-weight: 600; }
+    .file-desc { font-size: 12px; font-weight: 400; color: var(--adobe-mid); }
     .field-group { display: flex; flex-direction: column; gap: 6px; }
     label { font-size: 13px; font-weight: 500; }
     input[type="text"], input[type="email"] {
@@ -673,7 +678,10 @@ export const landingPageHtml = `<!DOCTYPE html>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <path d="M20 6L9 17l-5-5"/>
         </svg>
-        <span id="fileName">File loaded</span>
+        <span class="file-accepted-text">
+          <span id="fileName">File loaded</span>
+          <span class="file-desc" id="fileDescription" style="display:none"></span>
+        </span>
         <button class="replace-btn" id="replaceFileBtn" type="button">Replace</button>
       </div>
     </div>
@@ -691,6 +699,10 @@ export const landingPageHtml = `<!DOCTYPE html>
       <div class="tenant-banner-text">
         <span class="tenant-banner-label">Tenant namespace</span>
         <span class="tenant-banner-value" id="tenantValue">—</span>
+        <div class="tenant-banner-sub" id="tenantOrgRow" style="display:none">
+          <span class="tenant-banner-label">Organization</span>
+          <span class="tenant-banner-org" id="orgValue">—</span>
+        </div>
       </div>
     </div>
 
@@ -731,6 +743,10 @@ export const landingPageHtml = `<!DOCTYPE html>
     <section class="step hidden" id="step3" data-step-name="Author">
     <div class="step-label">Step 3 — Author</div>
     <div class="card">
+      <div class="conn-row" id="techAcctRow" style="display:none; margin-bottom:16px;">
+        <span class="conn-key">Technical account ID</span>
+        <span class="conn-val" id="techAcctValue"></span>
+      </div>
       <div class="field-group">
         <label for="authorEmailInput">Your email <span class="required-mark">*</span></label>
         <input type="email" id="authorEmailInput" placeholder="you@company.com" autocomplete="email" />
@@ -860,6 +876,11 @@ export const landingPageHtml = `<!DOCTYPE html>
   <script>
     let credentials = null;
     let serverUrl = window.location.origin;
+    // Identity details parsed from the uploaded project export. The tenant
+    // namespace is detected server-side; the org name comes straight from the file.
+    let projectOrgName = '';
+    let detectedTenant = '';
+    let tenantIsWarn = false;
 
     // The naming-convention editor is pre-filled (server-injected) with the default
     // governance rules. Capture that initial value so a server-reset can restore it
@@ -965,9 +986,35 @@ export const landingPageHtml = `<!DOCTYPE html>
           credentials = JSON.parse(e.target.result);
           document.getElementById('resetNotice').classList.remove('show');
           document.getElementById('fileAccepted').classList.add('show');
-          // Prefer the credential set's own name (top-level "name" in the export); fall back to the filename
-          const credName = (typeof credentials.name === 'string' && credentials.name.trim()) ? credentials.name.trim() : file.name;
+          // Prefer the project's name (current export: project.title/project.name),
+          // then the legacy top-level "name", then fall back to the filename.
+          const projName = credentials.project && (credentials.project.title || credentials.project.name);
+          const credName =
+            (typeof projName === 'string' && projName.trim()) ? projName.trim()
+            : (typeof credentials.name === 'string' && credentials.name.trim()) ? credentials.name.trim()
+            : file.name;
           document.getElementById('fileName').textContent = credName ;
+
+          // Surface the rest of the project identity straight from the file:
+          // description (next to the title), org name (in the tenant banner) and
+          // the OAuth technical account id (in Step 3, above the author email).
+          const project = credentials.project || {};
+          const descEl = document.getElementById('fileDescription');
+          const desc = typeof project.description === 'string' ? project.description.trim() : '';
+          descEl.textContent = desc;
+          descEl.style.display = desc ? '' : 'none';
+
+          projectOrgName = (project.org && typeof project.org.name === 'string') ? project.org.name.trim() : '';
+          detectedTenant = '';
+          renderIdentityBanner();
+
+          const oauth = project.workspace && project.workspace.details && Array.isArray(project.workspace.details.credentials)
+            ? (project.workspace.details.credentials.find(c => c && c.oauth_server_to_server) || {}).oauth_server_to_server
+            : null;
+          const techAcctId = oauth && typeof oauth.technical_account_id === 'string' ? oauth.technical_account_id.trim() : '';
+          document.getElementById('techAcctValue').textContent = techAcctId;
+          document.getElementById('techAcctRow').style.display = techAcctId ? '' : 'none';
+
           dropzone.style.display = 'none';
           discoverSandboxes();
         } catch {
@@ -1087,14 +1134,33 @@ export const landingPageHtml = `<!DOCTYPE html>
       el.style.display = '';
     }
 
-    // Tenant identity banner shown between Step 1 and Step 2.
-    function showTenantBanner(text, isWarn) {
-      document.getElementById('tenantValue').textContent = text;
-      document.getElementById('tenantBanner').classList.toggle('warn', !!isWarn);
-      document.getElementById('tenantBanner').style.display = '';
+    // Identity banner (tenant namespace + organization) shown between Step 1 and
+    // Step 2. Both values are optional: the banner appears as soon as either is
+    // known — the org name comes from the uploaded file, the tenant namespace is
+    // detected server-side once sandboxes are discovered.
+    function renderIdentityBanner() {
+      const banner = document.getElementById('tenantBanner');
+      const hasOrg = !!projectOrgName;
+      if (!detectedTenant && !hasOrg) { banner.style.display = 'none'; return; }
+      document.getElementById('tenantValue').textContent = detectedTenant || 'Detecting…';
+      document.getElementById('orgValue').textContent = projectOrgName;
+      document.getElementById('tenantOrgRow').style.display = hasOrg ? '' : 'none';
+      banner.classList.toggle('warn', !!tenantIsWarn);
+      banner.style.display = '';
     }
+    // Fully clear the project identity (banner, description, tech account) —
+    // used when credentials are removed or lost.
     function hideTenantBanner() {
+      detectedTenant = '';
+      tenantIsWarn = false;
+      projectOrgName = '';
+      document.getElementById('tenantOrgRow').style.display = 'none';
       document.getElementById('tenantBanner').style.display = 'none';
+      const desc = document.getElementById('fileDescription');
+      desc.textContent = '';
+      desc.style.display = 'none';
+      document.getElementById('techAcctValue').textContent = '';
+      document.getElementById('techAcctRow').style.display = 'none';
     }
 
     // Return Step 2 to its initial state (used when credentials are removed/lost).
@@ -1145,7 +1211,10 @@ export const landingPageHtml = `<!DOCTYPE html>
       }
       setSandboxMode('loading');
       showSandboxNote('');
-      hideTenantBanner();
+      // Keep the org name visible while the tenant namespace is re-detected.
+      detectedTenant = '';
+      tenantIsWarn = false;
+      renderIdentityBanner();
       checkReady();
 
       let data;
@@ -1158,7 +1227,7 @@ export const landingPageHtml = `<!DOCTYPE html>
 
       // Surface the tenant identity as soon as it's known (detected server-side
       // from a discovered sandbox; org-wide so it applies to any selection).
-      if (data.tenantNamespace) showTenantBanner(data.tenantNamespace, false);
+      if (data.tenantNamespace) { detectedTenant = data.tenantNamespace; tenantIsWarn = false; renderIdentityBanner(); }
 
       if (!data.success) {
         let msg;
@@ -1417,13 +1486,17 @@ export const landingPageHtml = `<!DOCTYPE html>
       // Finalize the tenant identity in the banner above (it may have been
       // unknown until the user supplied an org name for the fallback).
       if (data.tenantNamespace) {
-        showTenantBanner(data.tenantNamespace, false);
+        detectedTenant = data.tenantNamespace;
+        tenantIsWarn = false;
         document.getElementById('orgFallback').classList.remove('show');
       } else if (org) {
-        showTenantBanner(org + ' (manual)', false);
+        detectedTenant = org + ' (manual)';
+        tenantIsWarn = false;
       } else {
-        showTenantBanner('Not auto-detected', true);
+        detectedTenant = 'Not auto-detected';
+        tenantIsWarn = true;
       }
+      renderIdentityBanner();
 
       serverActive = true;
       updateProgress();

@@ -126,6 +126,9 @@ export function getPromptMessages(
 
 Do NOT assume or invent attribute paths like {{profile.person.firstName}}. Every customer configures custom field groups under their own tenant namespace, so the actual paths must be looked up. Here is the correct lookup sequence:
 
+Step 0 — Decide WHAT/WHEN to personalize:
+  Call get_personalization_guidance first. It gives the strategy for this content — identifying every dynamic value, resolving each value's data source (profile vs. journey context vs. event payload vs. dataset lookup), detecting collections that require iteration, and a coverage checklist. Use it to build the list of attributes you then need to find paths for below.
+
 Step 1 — Find custom field groups:
   Call list_xdm_field_groups with container "tenant" to list all customer-defined field groups. These are where non-standard personalization attributes live.
 

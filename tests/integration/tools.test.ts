@@ -60,6 +60,7 @@ import {
 
 import { handleGetServerContext } from '../../src/tools/context';
 import { handleGetVisualDesignerRequirements } from '../../src/tools/visual-designer';
+import { handleGetPersonalizationGuidance } from '../../src/tools/personalization';
 
 import * as client from '../../src/adobe/client';
 
@@ -145,6 +146,24 @@ describe('get_visual_designer_requirements', () => {
   });
 });
 
+// ─── Personalization Guidance Tool ────────────────────────────────────────────
+
+describe('get_personalization_guidance', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('returns the full guidance without requiring configuration', async () => {
+    // Pure static reference — must work even when the server is not configured.
+    mockClient.isClientConfigured.mockReturnValue(false);
+    const result = await handleGetPersonalizationGuidance({}) as { success: boolean; guidance: string };
+    expect(result.success).toBe(true);
+    expect(typeof result.guidance).toBe('string');
+    // Spot-check distinctive section markers from the guidance asset.
+    expect(result.guidance).toContain('Data Source Resolution');
+    expect(result.guidance).toContain('Dynamic Collection Detection');
+    expect(result.guidance).toContain('Required Validation Checklist');
+  });
+});
+
 // ─── Template Tools ───────────────────────────────────────────────────────────
 
 describe('Template Tools Integration', () => {
@@ -194,6 +213,18 @@ describe('Template Tools Integration', () => {
     }) as { success: boolean; id: string };
     expect(result.success).toBe(true);
     expect(result.id).toBe('abc-123');
+  });
+
+  test('create_content_template validateOnly returns validated WITHOUT persisting (Issue 4b dry-run)', async () => {
+    const result = await handleCreateContentTemplate({
+      name: 'Email Template', templateType: 'content', channels: ['email'],
+      template: { subject: 'Hi', html: { body: '<html>Hi</html>' } },
+      validateOnly: true
+    }) as { success: boolean; validated?: boolean; id?: string };
+    expect(result.success).toBe(true);
+    expect(result.validated).toBe(true);
+    expect(result.id).toBeUndefined();
+    expect(mockClient.createTemplate).not.toHaveBeenCalled();
   });
 
   test('create_content_template surfaces API errors', async () => {
@@ -357,15 +388,20 @@ describe('Template Tools Integration', () => {
     expect(result.etag).toBe('"v2"');
   });
 
-  test('update_content_template strips parentFolderId from the PUT body (Issue 1)', async () => {
-    mockClient.updateTemplate.mockResolvedValue({ success: true });
+  test('update_content_template strips parentFolderId from the PUT body but routes it via a follow-up PATCH (Issue 1/3)', async () => {
+    const FOLDER = '05472be1-a554-40a7-ac03-67b31d62f61f';
+    mockClient.updateTemplate.mockResolvedValue({ success: true, etag: '"v2"' });
+    mockClient.patchTemplate.mockResolvedValue({ success: true, etag: '"v3"' });
     await handleUpdateContentTemplate({
       templateId: VALID_UUID, etag: '"v1"', name: 'T', templateType: 'html', channels: ['email'],
-      template: { html: '<html>x</html>' }, parentFolderId: '05472be1-a554-40a7-ac03-67b31d62f61f', tagIds: ['b4d081a7-fe4b-4c24-9491-2a246902c9ab']
+      template: { html: '<html>x</html>' }, parentFolderId: FOLDER, tagIds: ['b4d081a7-fe4b-4c24-9491-2a246902c9ab']
     });
+    // PUT body excludes parentFolderId (rejected by the write model) but keeps tagIds.
     const payload = mockClient.updateTemplate.mock.calls[0][1] as Record<string, unknown>;
     expect(payload).not.toHaveProperty('parentFolderId');
     expect(payload).toHaveProperty('tagIds', ['b4d081a7-fe4b-4c24-9491-2a246902c9ab']);
+    // Folder placement applied via follow-up PATCH (consistent with create).
+    expect(mockClient.patchTemplate).toHaveBeenCalledWith(VALID_UUID, [{ op: 'add', path: '/parentFolderId', value: FOLDER }], '"v2"');
   });
 
   // delete
@@ -703,6 +739,39 @@ describe('Fragment Tools Integration', () => {
     expect(result.warnings?.some(w => w.includes('editorContext["wysiwyg-content"] uses "acr-tmp-component"'))).toBe(true);
   });
 
+  test('create_content_fragment does NOT dual-field-warn on the mandated CSS that references both classes (Issue 1 false positive)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-ok', location: '/fragments/f-ok', etag: '"v1"' });
+    // Compliant: content is the lightweight snippet (acr-tmp-component on live markup);
+    // wysiwyg is the full doc (acr-component on live markup). BOTH carry the mandated CSS
+    // whose selectors name .acr-structure / .acr-component / .acr-tmp-component — those must
+    // be ignored (they're inside <style>/MSO-comment blocks, not the markup).
+    const content = '<!--[if gte mso 9]><style acrite-mso-css="true">.acr-structure{margin:0}.acr-component,.acr-tmp-component{margin:0}</style><![endif]-->' +
+      '<div class="acr-fragment is-locked has-html-params"><div class="acr-tmp-component" data-tmp-component-id="text"><div class="text-container">Hi</div></div></div>';
+    const wysiwyg = '<!DOCTYPE html><html><head><meta name="content-version" content="3"><style data-name="default">.acr-structure{margin:0}.acr-component,.acr-tmp-component{margin:0}</style></head>' +
+      '<body class id="acr-body" data-has-html-params><div class="acr-container"><div class="acr-structure"><div class="acr-fragment acr-component" data-component-id="text"></div></div></div></body></html>';
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content, editorContext: { 'wysiwyg-content': wysiwyg } }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    // No dual-field / compat warnings on fully-compliant content.
+    const noise = (result.warnings ?? []).filter(w => /acr-tmp-component|acr-component|FULL Visual Designer document|Compatibility mode/.test(w));
+    expect(noise).toEqual([]);
+  });
+
+  test('create_content_fragment validateOnly returns warnings WITHOUT persisting (Issue 4b dry-run)', async () => {
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content: '<div>plain</div>' }, // generic HTML → compat warning
+      validateOnly: true
+    }) as { success: boolean; validated?: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.validated).toBe(true);
+    expect(mockClient.createFragment).not.toHaveBeenCalled();
+    // The same compatibility-mode warning a real create would have produced.
+    expect(result.warnings?.some(w => /Compatibility mode/.test(w))).toBe(true);
+  });
+
   test('create_content_fragment warns on a prefix-less {{ fragment }} helper id (#3)', async () => {
     mockClient.createFragment.mockResolvedValue({ id: 'f-10', location: '/fragments/f-10', etag: '"v1"' });
     const bareUuid = '301c64ce-4085-4e86-8afc-254854d3c34c';
@@ -757,15 +826,19 @@ describe('Fragment Tools Integration', () => {
     expect(mockClient.patchFragment).not.toHaveBeenCalled(); // tagIds need no follow-up step
   });
 
-  test('update_content_fragment strips parentFolderId from the PUT body but keeps tagIds (Issue 1/3)', async () => {
-    mockClient.updateFragment.mockResolvedValue({ success: true });
+  test('update_content_fragment strips parentFolderId from the PUT body but routes it via a follow-up PATCH (Issue 1/3)', async () => {
+    mockClient.updateFragment.mockResolvedValue({ success: true, etag: '"v2"' });
+    mockClient.patchFragment.mockResolvedValue({ success: true, etag: '"v3"' });
     await handleUpdateContentFragment({
       fragmentId: VALID_UUID, etag: '"v1"', name: 'F', type: 'html', channels: ['email'],
       fragment: { content: '<div>x</div>' }, parentFolderId: FOLDER_UUID, tagIds: [TAG_UUID]
     });
+    // PUT body excludes parentFolderId (rejected by the write model) but keeps tagIds.
     const payload = mockClient.updateFragment.mock.calls[0][1] as Record<string, unknown>;
     expect(payload).not.toHaveProperty('parentFolderId');
     expect(payload).toHaveProperty('tagIds', [TAG_UUID]);
+    // Folder placement applied via follow-up PATCH (consistent with create).
+    expect(mockClient.patchFragment).toHaveBeenCalledWith(VALID_UUID, [{ op: 'add', path: '/parentFolderId', value: FOLDER_UUID }], '"v2"');
   });
 
   test('update_content_fragment rewrites the ajo:SELF sentinel in-place (no follow-up write)', async () => {

@@ -149,7 +149,17 @@ DIFFERENT shapes. Do NOT put a full Visual Designer document in fragment.content
    (<body class id="acr-body" data-has-html-params>). It uses acr-component
    (NOT acr-tmp-component).
 
+⚠ SAME COMPONENT, DIFFERENT CLASS PER FIELD — the COMPONENT CATALOG below is written
+from the wysiwyg-content perspective (acr-component). When you paste a component shell
+into fragment.content, flip acr-component → acr-tmp-component. Nothing else about the
+shell changes. Example (a text component):
+   • wysiwyg-content: <div class="acr-fragment acr-component" data-component-id="text" ...>
+   • fragment.content: <div class="acr-fragment acr-tmp-component" data-tmp-component-id="text" ...>
+(Note the catalog's class CSS selector lists BOTH names — ".acr-component, .acr-tmp-component" —
+that is mandated CSS, not a license to use acr-component in content.)
+
 ━━━ COMPONENT CATALOG (9 content types — use ONLY these values) ━━━━━━━━━━━━
+[Classes below show the wysiwyg-content form (acr-component); in fragment.content use acr-tmp-component — see the dual-field note above.]
 
 Component      | data-component-id | MSO wrapper
 Text           | text              | No

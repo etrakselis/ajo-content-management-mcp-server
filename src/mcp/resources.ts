@@ -15,6 +15,7 @@ export const RESOURCE_URIS = {
   errorCodes: 'ajo://error-codes',
   visualDesignerRequirements: 'ajo://visual-designer-requirements',
   personalizationSyntax: 'ajo://personalization-syntax',
+  personalizationGuidance: 'ajo://personalization-guidance',
   // Browsable collections: name→id directories so a human/client can find a
   // specific object by name, then drill into ajo://fragment/{id} or
   // ajo://template/{id}. Solves the discovery half that the templated
@@ -144,6 +145,12 @@ export const RESOURCE_ACCESS_CATALOG: ResourceAccessEntry[] = [
     title: 'AJO Personalization Syntax Library',
     description: 'AJO-native personalization syntax to embed in template/fragment bodies: expression language, helper functions, operators, contextual-data iteration, dataset lookup. Served by category to keep responses small.',
     access: 'Call the get_personalization_syntax tool (no argument for the index + category menu, then a "category" for each section). This is SYNTAX only — get real attribute paths via the discover-personalization-paths prompt or list_xdm_field_groups / get_xdm_union_schema.'
+  },
+  {
+    uri: RESOURCE_URIS.personalizationGuidance,
+    title: 'AJO Personalization Guidance (when & what to personalize)',
+    description: 'Strategy guidance for personalizing content: discovery process, data-source resolution order, detecting collections that need iteration, what to personalize (fields, URLs, images, dates), conditional content, and a coverage/validation checklist. The "what/when" layer — pairs with the syntax library (how) and the XDM schema tools (which paths).',
+    access: 'Call the get_personalization_guidance tool for the full guidance. Recommended flow: get_personalization_guidance (what/when) → discover paths (list_xdm_* / discover-personalization-paths) → get_personalization_syntax (how).'
   },
   {
     uri: RESOURCE_URIS.fragments,

@@ -52,7 +52,7 @@ const TAG_LIST_PROPS = {
   limit: { type: 'number' as const, description: 'Max items per page (1-1000).' },
   property: { type: ['string', 'array'] as const, items: { type: 'string' as const }, description: 'Filter attribute(s), e.g. "tagCategoryId=<id>", "name", or "archived". A string or array of strings. NOT FIQL (that grammar is only for the content list tools).' },
   sortBy: { type: 'string' as const, description: 'Sort field: name | createdAt | modifiedAt.' },
-  sortOrder: { type: 'string' as const, enum: ['asc', 'desc'], description: 'Sort direction.' }
+  sortOrder: { type: 'string' as const, enum: ['asc', 'desc'], description: 'Sort direction. Optional — defaults to "asc" when sortBy is set, so you can pass sortBy on its own.' }
 };
 
 // ─── list_tag_categories ───────────────────────────────────────────────────────

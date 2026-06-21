@@ -27,8 +27,10 @@ type ParsedConfigRequest =
   | { ok: false; status: number; error: string };
 
 /**
- * Validate an uploaded credentials file and map its `values` array into a
- * normalized AdobeCredentials object. Shared by every endpoint that needs to
+ * Validate an uploaded credentials file and map it into a normalized
+ * AdobeCredentials object. Accepts the current Adobe Developer Console project
+ * export (credentials nested under project.workspace.details.credentials) as
+ * well as the legacy flat `values` array. Shared by every endpoint that needs to
  * act on uploaded credentials so they all apply identical validation rules.
  */
 function extractCredentials(credentials: unknown): ExtractedCredentials {
@@ -46,17 +48,41 @@ function extractCredentials(credentials: unknown): ExtractedCredentials {
   }
 
   const creds: Partial<AdobeCredentials> = {};
-  for (const val of parsed.data.values) {
-    if (!val.enabled && val.enabled !== undefined) continue;
-    const key = val.key as keyof AdobeCredentials;
-    if (key === 'SCOPES') {
-      (creds as Record<string, unknown>)[key] = Array.isArray(val.value)
-        ? val.value
-        : String(val.value).split(',').map(s => s.trim());
-    } else {
-      (creds as Record<string, unknown>)[key] = Array.isArray(val.value)
-        ? val.value.join(',')
-        : String(val.value);
+
+  if ('project' in parsed.data) {
+    // Current Adobe Developer Console project export. The login credentials are
+    // unchanged — only their location within the file moved — so map them out of
+    // the nested project structure into the same normalized AdobeCredentials.
+    const project = parsed.data.project;
+    const oauth = project.workspace?.details?.credentials
+      ?.find(c => c.oauth_server_to_server)?.oauth_server_to_server;
+    if (!oauth) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'No oauth_server_to_server credential found in the project file. ' +
+          'Export an OAuth Server-to-Server credential from the Adobe Developer Console.'
+      };
+    }
+    creds.API_KEY = oauth.client_id;
+    if (oauth.client_secrets?.[0]) creds.CLIENT_SECRET = oauth.client_secrets[0];
+    if (oauth.technical_account_id) creds.TECHNICAL_ACCOUNT_ID = oauth.technical_account_id;
+    if (oauth.scopes) creds.SCOPES = oauth.scopes;
+    if (project.org?.ims_org_id) creds.IMS_ORG = project.org.ims_org_id;
+  } else {
+    // Legacy flat key/value export.
+    for (const val of parsed.data.values) {
+      if (!val.enabled && val.enabled !== undefined) continue;
+      const key = val.key as keyof AdobeCredentials;
+      if (key === 'SCOPES') {
+        (creds as Record<string, unknown>)[key] = Array.isArray(val.value)
+          ? val.value
+          : String(val.value).split(',').map(s => s.trim());
+      } else {
+        (creds as Record<string, unknown>)[key] = Array.isArray(val.value)
+          ? val.value.join(',')
+          : String(val.value);
+      }
     }
   }
 

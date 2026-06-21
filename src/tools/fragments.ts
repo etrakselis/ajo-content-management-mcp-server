@@ -31,30 +31,46 @@ function visualDesignerHtmlOf(fragment?: Record<string, unknown>): unknown {
 // at write time. (The missing-content-version case on wysiwyg-content is already
 // covered by compatibilityModeWarning via visualDesignerHtmlOf.) Matched literally:
 // \bacr-component\b does NOT match acr-tmp-component, so the two classes are distinct.
+
+// Strip <style> blocks and HTML comments before scanning for component/shell class
+// names. The mandated Visual Designer CSS — copied verbatim into BOTH fields (the
+// named <head> <style> blocks in wysiwyg-content, and the MSO `acrite-mso-css`
+// <style> inside an `<!--[if mso]>` comment in fragment.content) — contains
+// selectors like `.acr-structure`, `.acr-component, .acr-tmp-component`. Scanning the
+// raw HTML therefore false-positives on the required CSS itself rather than on the
+// actual component markup. Inspecting only live markup avoids that.
+function liveMarkupOnly(html: string): string {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, ' ')                  // HTML/MSO conditional comments (the acrite-mso-css <style> lives here)
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ');  // named <head> <style> blocks
+}
+
 function dualFieldShapeWarnings(fragment?: Record<string, unknown>): string[] {
   const warnings: string[] = [];
   const content = typeof fragment?.content === 'string' ? fragment.content : '';
   const ec = fragment?.editorContext as Record<string, unknown> | undefined;
   const wysiwyg = typeof ec?.['wysiwyg-content'] === 'string' ? ec['wysiwyg-content'] as string : '';
+  const contentMarkup = liveMarkupOnly(content);
+  const wysiwygMarkup = liveMarkupOnly(wysiwyg);
 
   // fragment.content must be the LIGHTWEIGHT render snippet: acr-tmp-component, no
   // full-document shell. Full-doc markers or a standalone acr-component class mean
   // the wrong (wysiwyg) shape was placed here.
   if (content) {
-    if (/<!doctype|<head[\s>]|<html[\s>]|acr-container|acr-structure/i.test(content)) {
+    if (/<!doctype|<head[\s>]|<html[\s>]|acr-container|acr-structure/i.test(contentMarkup)) {
       warnings.push(
         'fragment.content looks like a FULL Visual Designer document (it contains <!DOCTYPE>/<head>/<html>/acr-container/acr-structure). ' +
         'It must be the LIGHTWEIGHT render snippet (acr-fragment is-locked has-html-params wrapper + acr-tmp-component, no document shell); ' +
         'put the full document in editorContext["wysiwyg-content"] instead. See get_visual_designer_requirements.');
     }
-    if (/\bacr-component\b/.test(content)) {
+    if (/\bacr-component\b/.test(contentMarkup)) {
       warnings.push(
         'fragment.content uses the class "acr-component" — the lightweight render snippet must use "acr-tmp-component". ' +
         'Using acr-component here makes the fragment fail to embed in templates. See get_visual_designer_requirements.');
     }
   }
   // editorContext["wysiwyg-content"] is the FULL document and must use acr-component.
-  if (wysiwyg && /\bacr-tmp-component\b/.test(wysiwyg)) {
+  if (wysiwyg && /\bacr-tmp-component\b/.test(wysiwygMarkup)) {
     warnings.push(
       'editorContext["wysiwyg-content"] uses "acr-tmp-component" — the full Visual Designer document must use "acr-component" ' +
       '(acr-tmp-component belongs only in the lightweight fragment.content snippet). See get_visual_designer_requirements.');
@@ -179,7 +195,7 @@ const PARENT_FOLDER_CREATE_PROP = {
 };
 const PARENT_FOLDER_UPDATE_PROP = {
   type: 'string' as const, format: 'uuid',
-  description: 'Ignored on update: folder placement is managed separately and is preserved across a content replace, and the AJO write model rejects this field. To MOVE the fragment, use patch_content_fragment with { op: "add", path: "/parentFolderId" }.'
+  description: 'Optional. Files/moves the fragment into this folder. The AJO PUT body does not accept it, so the server applies it via an automatic follow-up PATCH (same as create); if only that step fails the update still succeeds and the folder failure is returned as a warning. Omit to leave the current folder placement unchanged (it is preserved across a content replace).'
 };
 
 // ─── list_content_fragments ───────────────────────────────────────────────────
@@ -313,15 +329,15 @@ export const createContentFragmentDefinition = {
   name: 'create_content_fragment',
   title: 'Create Content Fragment',
   outputSchema: buildOutputSchema({
-    id: { type: 'string', description: 'UUID of the newly created fragment.' },
-    location: { type: 'string', description: 'Relative path of the new fragment, e.g. /fragments/<uuid>.' },
+    id: { type: 'string', description: 'UUID of the newly created fragment. Absent on a validateOnly dry run (nothing was created).' },
+    location: { type: 'string', description: 'Relative path of the new fragment, e.g. /fragments/<uuid>. Absent on a validateOnly dry run.' },
     etag: ETAG_FIELD,
+    validated: { type: 'boolean', description: 'Present and true only for a validateOnly dry run — confirms validation ran and nothing was persisted.' },
     warnings: WARNINGS_FIELD
   }),
-  description: `Create a new content fragment in Adobe Journey Optimizer.
-Fragments are reusable content blocks that can be embedded in campaigns and journeys.
+  description: `Create a new content fragment in Adobe Journey Optimizer. Fragments are reusable content blocks that can be embedded in campaigns and journeys.
 
-LIFECYCLE NOTE (plan cleanup accordingly): fragments have NO hard-delete — there is no REST delete endpoint. The only permanent removal is archive_content_fragment (archiving is the terminal state). Do not assume create/delete symmetry.
+⚠ NO HARD DELETE — GET IT RIGHT ON THE FIRST WRITE: fragments have NO REST delete endpoint; the only removal is archive_content_fragment, which is terminal. A botched create (wrong name or content) cannot be cleanly undone — only archived and worked around — and archived names still collide with new ones. So validate before committing: you can DRY-RUN by calling this tool with validateOnly: true, which runs the same input validation + Visual-Designer/dual-field checks and returns the warnings WITHOUT persisting anything. Do not assume create/delete symmetry.
 
 ⚠ VISUAL EMAIL DESIGNER REQUIREMENT (type "html", channel "email"):
   The HTML content must use AJO's native serialization format (acr-* class
@@ -353,7 +369,7 @@ Example usage (Expression fragment — tenant-custom field):
   "subType": "TEXT"
 }
 
-Personalization path rooting: standard XDM profile attributes use the "profile." prefix (e.g. {{profile.person.name.firstName}}); tenant-custom attributes sit under "profile._tenantId." (e.g. {{profile._acssandboxustwo.loyaltyTier}}). Do NOT root standard XDM fields (person, homeAddress, etc.) under the tenant namespace — only attributes your org added in a custom field group belong there. Use the 'discover-personalization-paths' prompt, or call list_xdm_union_schemas → get_xdm_union_schema (full=false) → get_xdm_field_group on each ref, to confirm real attribute paths. For the AJO-native expression SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
+Personalization (3-step flow): (1) call get_personalization_guidance to decide WHAT/WHEN to personalize (find every dynamic value, resolve its data source, detect collections that need iteration, review coverage). (2) Find WHICH real attribute paths exist: standard XDM profile attributes use the "profile." prefix (e.g. {{profile.person.name.firstName}}); tenant-custom attributes sit under "profile._tenantId." (e.g. {{profile._acssandboxustwo.loyaltyTier}}). Do NOT root standard XDM fields (person, homeAddress, etc.) under the tenant namespace — only attributes your org added in a custom field group belong there. Use the 'discover-personalization-paths' prompt, or call list_xdm_union_schemas → get_xdm_union_schema (full=false) → get_xdm_field_group on each ref, to confirm real attribute paths. (3) For HOW to write it — the AJO-native expression SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.) — call get_personalization_syntax (no arg for the index, then a category). Use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
 
 DUPLICATE CHECK (before creating): to avoid a duplicate, check for an existing fragment by name with ONE server-side filtered list call — list_content_fragments({ property: ["name==<exact name>"] }) for an exact match, or ["name~^<prefix>"] to see whether any asset in a family already exists — rather than listing everything and scanning client-side (name, type, channels, createdAt, createdBy are server-filterable; ~^ is case-insensitive starts-with).
 
@@ -377,7 +393,8 @@ The returned etag is immediately reusable for a follow-up update_content_fragmen
       parentFolderId: PARENT_FOLDER_CREATE_PROP,
       tagIds: TAG_IDS_SCHEMA,
       labels: LABELS_SCHEMA,
-      source: { type: 'object', description: 'Source metadata { origin: "ajo"|"external" }' }
+      source: { type: 'object', description: 'Source metadata { origin: "ajo"|"external" }' },
+      validateOnly: { type: 'boolean', description: 'Dry run. If true, the server runs all input + Visual-Designer/dual-field validation and returns the warnings WITHOUT creating the fragment (nothing is persisted). Use this to catch issues before committing — fragments have no hard delete.' }
     }
   }
 };
@@ -387,12 +404,19 @@ export async function handleCreateContentFragment(args: unknown) {
   return withTelemetry('create_content_fragment', async () => {
     const parsed = CreateFragmentSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
+    // Dry run: report the warnings the write would produce, without persisting.
+    // (Self-reference vs. assigned id can't be checked until an id exists; the
+    // ajo:SELF sentinel handles that on the real create.)
+    if (parsed.data.validateOnly) {
+      return { success: true, validated: true, warnings: fragmentWarnings(parsed.data) };
+    }
     try {
       // parentFolderId is advertised on create (the OpenAPI spec defines it) but the
       // runtime model rejects it in the create body, so strip it and apply it as a
       // follow-up PATCH below. tagIds/labels DO go in the create body (the runtime
-      // accepts them) — they flow through ...rest.
-      const { parentFolderId, ...rest } = parsed.data;
+      // accepts them) — they flow through ...rest. validateOnly is a control flag, not
+      // part of the payload, so it's stripped here too.
+      const { parentFolderId, validateOnly: _validateOnly, ...rest } = parsed.data;
       const payload = { ...rest, source: rest.source ?? { origin: 'ajo' as const } };
       const result = await createFragment(payload) as { id: string; location?: string; etag?: string };
       const warnings = fragmentWarnings(parsed.data);
@@ -560,21 +584,37 @@ export async function handleUpdateContentFragment(args: unknown) {
   return withTelemetry('update_content_fragment', async () => {
     const parsed = UpdateFragmentSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
-    // Strip parentFolderId from the PUT body: it is NOT part of the runtime write
-    // model (rejected as an unrecognized field), and folder placement is managed
-    // separately and preserved across a content replace. To MOVE a fragment, use
-    // patch_content_fragment (/parentFolderId). tagIds/labels stay in the body.
-    const { fragmentId, etag, parentFolderId: _parentFolderId, ...rest } = parsed.data;
+    // parentFolderId is NOT part of the runtime PUT body (rejected as an unrecognized
+    // field), so strip it from the payload — but, like create, honor it via a
+    // follow-up PATCH instead of silently ignoring it, so re-filing works the same
+    // way everywhere. tagIds/labels stay in the body.
+    const { fragmentId, etag, parentFolderId, ...rest } = parsed.data;
     // The fragment id is known here, so rewrite the data-fragment-id="ajo:SELF"
     // self-reference sentinel to the real ref in-place — this is already a PUT, so
-    // no follow-up write is needed (unlike create).
+    // no follow-up write is needed for that part (unlike create).
     const assignedRef = `ajo:${fragmentId}`;
     const selfRef = applySelfReference(rest.fragment as Record<string, unknown> | undefined, assignedRef);
     const payload = { ...rest, ...(selfRef.changed ? { fragment: selfRef.fragment } : {}), source: rest.source ?? { origin: 'ajo' as const } };
     try {
-      const result = await updateFragment(fragmentId, payload, etag);
+      const result = await updateFragment(fragmentId, payload, etag) as { success: boolean; etag?: string };
       const warnings = fragmentWarnings(parsed.data);
       warnings.push(...selfReferenceWarnings(selfRef.fragment, assignedRef));
+      // Folder placement: applied via a follow-up PATCH (same as create). The content
+      // replace already committed, so a failed move degrades to a warning + retry hint.
+      if (parentFolderId != null) {
+        try {
+          let folderEtag = result.etag;
+          if (!folderEtag) folderEtag = (await getFragment(fragmentId)).etag;
+          if (!folderEtag) throw new Error('could not resolve the post-update etag');
+          const patched = await patchFragment(fragmentId, [{ op: 'add', path: '/parentFolderId', value: parentFolderId }], folderEtag) as { etag?: string };
+          if (patched.etag) result.etag = patched.etag;
+        } catch (err) {
+          warnings.push(
+            `Fragment updated (id ${fragmentId}) but filing it into folder ${parentFolderId} failed: ${buildError(err).message} ` +
+            `Retry with patch_content_fragment: { "op": "add", "path": "/parentFolderId", "value": "${parentFolderId}" }.`
+          );
+        }
+      }
       return { ...result, success: true, ...(warnings.length ? { warnings } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };

@@ -2,6 +2,7 @@ import {
   getPersonalizationIndex, getPersonalizationCategory,
   PERSONALIZATION_CATEGORY_SLUGS, PERSONALIZATION_CATEGORIES
 } from '../mcp/personalization-syntax.js';
+import { getPersonalizationGuidance } from '../mcp/personalization-guidance.js';
 import { withTelemetry, buildOutputSchema } from './utils.js';
 
 // ─── get_personalization_syntax ───────────────────────────────────────────────
@@ -85,5 +86,48 @@ export async function handleGetPersonalizationSyntax(args?: unknown) {
         }
       };
     }
+  });
+}
+
+// ─── get_personalization_guidance ─────────────────────────────────────────────
+// Delivers the AJO personalization scenarios/strategy guidance — the "when/what to
+// personalize" rules an agent applies while authoring content (discovery process,
+// data-source resolution order, collection/iteration detection, URL/image/date
+// handling, coverage review). This is the judgment layer; it pairs with:
+//   • get_personalization_syntax — HOW to write the expression
+//   • list_xdm_* / get_xdm_*      — WHICH real attribute paths exist
+// Like get_visual_designer_requirements it's a single static blob served as a tool
+// (the channel clients like Claude Desktop can reach on their own).
+
+export const getPersonalizationGuidanceDefinition = {
+  name: 'get_personalization_guidance',
+  title: 'Get AJO Personalization Guidance (when & what to personalize)',
+  outputSchema: buildOutputSchema({
+    guidance: { type: 'string', description: 'The complete AJO personalization scenarios/strategy guidance (discovery process, data-source resolution, iteration rules, coverage review, validation checklist).' }
+  }),
+  description: `Return the AJO personalization STRATEGY guidance: WHEN and WHAT to personalize while creating content (as opposed to the syntax of how to write it).
+
+Call this BEFORE authoring a content template or fragment that may contain dynamic content, so you systematically find every personalization opportunity rather than hardcoding values. It covers: the discovery process, data-source resolution order (profile → journey context → event payload → dataset lookup), detecting collections that require iteration, what to personalize (customer/transaction/event/offer fields, URLs, images, dates), conditional content, and a final coverage/validation checklist.
+
+This is the "what/when" layer. It pairs with two other tools:
+- get_personalization_syntax — the SYNTAX (HOW to write {{ }} / {%= %} expressions, helpers, loops).
+- list_xdm_field_groups / get_xdm_union_schema (or the discover-personalization-paths prompt) — the real attribute PATHS available in this sandbox.
+
+Recommended flow when creating content: get_personalization_guidance (decide what/when) → discover the real paths (schema tools) → get_personalization_syntax (write it correctly).
+
+Example usage: {}
+
+Returns: { success: true, guidance: "<full guidance text>" }`,
+  annotations: { readOnlyHint: true, openWorldHint: false },
+  inputSchema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    properties: {}
+  }
+};
+
+export async function handleGetPersonalizationGuidance(_args?: unknown) {
+  return withTelemetry('get_personalization_guidance', async () => {
+    return { success: true, guidance: getPersonalizationGuidance() };
   });
 }

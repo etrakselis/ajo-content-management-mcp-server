@@ -166,7 +166,7 @@ const PARENT_FOLDER_CREATE_PROP = {
 };
 const PARENT_FOLDER_UPDATE_PROP = {
   type: 'string' as const, format: 'uuid',
-  description: 'Ignored on update: folder placement is managed separately and preserved across a content replace, and the AJO write model rejects this field. To MOVE the template, use patch_content_template with { op: "add", path: "/parentFolderId" }.'
+  description: 'Optional. Files/moves the template into this folder. The AJO PUT body does not accept it, so the server applies it via an automatic follow-up PATCH (same as create); if only that step fails the update still succeeds and the folder failure is returned as a warning. Omit to leave the current folder placement unchanged (it is preserved across a content replace).'
 };
 
 // ─── list_content_templates ───────────────────────────────────────────────────
@@ -218,9 +218,10 @@ export const createContentTemplateDefinition = {
   name: 'create_content_template',
   title: 'Create Content Template',
   outputSchema: buildOutputSchema({
-    id: { type: 'string', description: 'UUID of the newly created template.' },
-    location: { type: 'string', description: 'Relative path of the new template, e.g. /templates/<uuid>.' },
+    id: { type: 'string', description: 'UUID of the newly created template. Absent on a validateOnly dry run (nothing was created).' },
+    location: { type: 'string', description: 'Relative path of the new template, e.g. /templates/<uuid>. Absent on a validateOnly dry run.' },
     etag: ETAG_FIELD,
+    validated: { type: 'boolean', description: 'Present and true only for a validateOnly dry run — confirms validation ran and nothing was persisted.' },
     warnings: WARNINGS_FIELD
   }),
   description: `Create a new content template in Adobe Journey Optimizer.
@@ -284,7 +285,7 @@ Example usage (legacy "html" email design template — no subject; use only when
   "template": { "html": "<html>Hello {{profile.person.name.firstName}}</html>" }
 }
 
-Personalization path rooting: standard XDM profile attributes use the "profile." prefix (e.g. {{profile.person.name.firstName}}); tenant-custom attributes sit under "profile._tenantId." (e.g. {{profile._acssandboxustwo.loyaltyTier}}). Do NOT root standard XDM fields (person, homeAddress, etc.) under the tenant namespace — only attributes your org added in a custom field group belong there. Use the 'discover-personalization-paths' prompt, or call list_xdm_union_schemas → get_xdm_union_schema (full=false) → get_xdm_field_group on each ref, to confirm real attribute paths. For the AJO-native expression SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.), call get_personalization_syntax (no arg for the index, then a category). Use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
+Personalization (3-step flow): (1) call get_personalization_guidance to decide WHAT/WHEN to personalize (find every dynamic value, resolve its data source, detect collections that need iteration, review coverage). (2) Find WHICH real attribute paths exist: standard XDM profile attributes use the "profile." prefix (e.g. {{profile.person.name.firstName}}); tenant-custom attributes sit under "profile._tenantId." (e.g. {{profile._acssandboxustwo.loyaltyTier}}). Do NOT root standard XDM fields (person, homeAddress, etc.) under the tenant namespace — only attributes your org added in a custom field group belong there. Use the 'discover-personalization-paths' prompt, or call list_xdm_union_schemas → get_xdm_union_schema (full=false) → get_xdm_field_group on each ref, to confirm real attribute paths. (3) For HOW to write it — the AJO-native expression SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.) — call get_personalization_syntax (no arg for the index, then a category). Use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
 
 Example usage (push notification template):
 {
@@ -316,7 +317,8 @@ The returned etag is immediately reusable for a follow-up update_content_templat
       parentFolderId: PARENT_FOLDER_CREATE_PROP,
       tagIds: TAG_IDS_SCHEMA,
       labels: LABELS_SCHEMA,
-      source: { type: 'object', description: 'Source/origin metadata { origin: "ajo"|"aem"|"external" }' }
+      source: { type: 'object', description: 'Source/origin metadata { origin: "ajo"|"aem"|"external" }' },
+      validateOnly: { type: 'boolean', description: 'Dry run. If true, the server runs all input + Visual-Designer validation and returns the warnings WITHOUT creating the template (nothing is persisted). Use this to catch issues before committing.' }
     }
   }
 };
@@ -326,11 +328,16 @@ export async function handleCreateContentTemplate(args: unknown) {
   return withTelemetry('create_content_template', async () => {
     const parsed = CreateTemplateSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
+    // Dry run: report the warnings the write would produce, without persisting.
+    if (parsed.data.validateOnly) {
+      return { success: true, validated: true, warnings: templateWarnings(parsed.data) };
+    }
     try {
       // parentFolderId is advertised on create (per the OpenAPI spec) but rejected by
       // the runtime model in the create body, so strip it and apply it via a follow-up
       // PATCH below. tagIds/labels stay in the body (the runtime accepts them).
-      const { parentFolderId, ...payload } = parsed.data;
+      // validateOnly is a control flag, not part of the payload — stripped here too.
+      const { parentFolderId, validateOnly: _validateOnly, ...payload } = parsed.data;
       const result = await createTemplate(payload) as { id: string; location?: string; etag?: string };
       const warnings = templateWarnings(parsed.data);
       if (parentFolderId != null) {
@@ -523,14 +530,30 @@ export async function handleUpdateContentTemplate(args: unknown) {
   return withTelemetry('update_content_template', async () => {
     const parsed = UpdateTemplateSchema.safeParse(args);
     if (!parsed.success) return validationError(parsed.error);
-    // Strip parentFolderId from the PUT body: it is NOT part of the runtime write
-    // model (it would be rejected as an unrecognized field), and folder placement is
-    // managed separately and preserved across a content replace. To MOVE a template,
-    // use patch_content_template (/parentFolderId). tagIds/labels stay in the body.
-    const { templateId, etag, parentFolderId: _parentFolderId, ...payload } = parsed.data;
+    // parentFolderId is NOT part of the runtime PUT body (rejected as an unrecognized
+    // field), so strip it from the payload — but, like create, honor it via a
+    // follow-up PATCH instead of silently ignoring it, so re-filing works the same way
+    // everywhere. tagIds/labels stay in the body.
+    const { templateId, etag, parentFolderId, ...payload } = parsed.data;
     try {
-      const result = await updateTemplate(templateId, payload, etag);
+      const result = await updateTemplate(templateId, payload, etag) as { success: boolean; etag?: string };
       const warnings = templateWarnings(parsed.data);
+      // Folder placement: applied via a follow-up PATCH (same as create). The content
+      // replace already committed, so a failed move degrades to a warning + retry hint.
+      if (parentFolderId != null) {
+        try {
+          let folderEtag = result.etag;
+          if (!folderEtag) folderEtag = (await getTemplate(templateId)).etag;
+          if (!folderEtag) throw new Error('could not resolve the post-update etag');
+          const patched = await patchTemplate(templateId, [{ op: 'add', path: '/parentFolderId', value: parentFolderId }], folderEtag) as { etag?: string };
+          if (patched.etag) result.etag = patched.etag;
+        } catch (err) {
+          warnings.push(
+            `Template updated (id ${templateId}) but filing it into folder ${parentFolderId} failed: ${buildError(err).message} ` +
+            `Retry with patch_content_template: { "op": "add", "path": "/parentFolderId", "value": "${parentFolderId}" }.`
+          );
+        }
+      }
       return { ...result, success: true, ...(warnings.length ? { warnings } : {}) };
     } catch (err) {
       return { success: false, error: buildError(err) };

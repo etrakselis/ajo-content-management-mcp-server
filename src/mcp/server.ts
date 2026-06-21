@@ -20,6 +20,7 @@ import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
 import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_TEMPLATE_DESCRIPTORS, parseFragmentUri, parseTemplateUri, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT } from './resources.js';
 import { getVisualDesignerRequirements } from './visual-designer-requirements.js';
+import { getPersonalizationGuidance } from './personalization-guidance.js';
 import { logger } from '../telemetry/index.js';
 import { recordAudit } from '../telemetry/audit.js';
 import { UI_BASE_URL } from '../tools/utils.js';
@@ -82,7 +83,7 @@ import {
 // Server context — read-only; reports who/what this server is operating as
 import { getServerContextDefinition, handleGetServerContext, setToolCatalog } from '../tools/context.js';
 import { getVisualDesignerRequirementsDefinition, handleGetVisualDesignerRequirements } from '../tools/visual-designer.js';
-import { getPersonalizationSyntaxDefinition, handleGetPersonalizationSyntax } from '../tools/personalization.js';
+import { getPersonalizationSyntaxDefinition, handleGetPersonalizationSyntax, getPersonalizationGuidanceDefinition, handleGetPersonalizationGuidance } from '../tools/personalization.js';
 import { buildToolCatalog, formatToolCatalog } from './tool-catalog.js';
 import {
   CreateTemplateSchema, UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema,
@@ -138,7 +139,9 @@ const ALL_TOOLS = [
   // Visual Email Designer HTML spec — read-only reference
   getVisualDesignerRequirementsDefinition,
   // AJO personalization syntax library — read-only reference
-  getPersonalizationSyntaxDefinition
+  getPersonalizationSyntaxDefinition,
+  // AJO personalization scenarios/strategy guidance — read-only reference
+  getPersonalizationGuidanceDefinition
 ];
 
 // Catalog derived from the live tool list (so it never drifts). Registered into
@@ -162,6 +165,14 @@ const WRITE_TOOLS = new Set<string>([
 ]);
 
 const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
+
+// Create tools that accept a validateOnly flag (dry-run: validate + return warnings
+// without persisting). A dry-run performs no write, so it is treated as a non-write
+// in CallTool — it bypasses the read-only gate and the write-confirmation prompt.
+const VALIDATE_ONLY_TOOLS = new Set<string>(['create_content_template', 'create_content_fragment']);
+const isDryRunCreate = (name: string, args: unknown): boolean =>
+  VALIDATE_ONLY_TOOLS.has(name) &&
+  !!(args && typeof args === 'object' && (args as { validateOnly?: unknown }).validateOnly === true);
 
 // Zod schemas for every write tool, used to pre-validate args BEFORE the
 // write-confirmation gate. This way a malformed payload is rejected on the
@@ -383,7 +394,9 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   // Visual Email Designer HTML spec — read-only reference
   get_visual_designer_requirements: handleGetVisualDesignerRequirements,
   // AJO personalization syntax library — read-only reference
-  get_personalization_syntax: handleGetPersonalizationSyntax
+  get_personalization_syntax: handleGetPersonalizationSyntax,
+  // AJO personalization scenarios/strategy guidance — read-only reference
+  get_personalization_guidance: handleGetPersonalizationGuidance
 };
 
 export function createMcpServer(transport: TransportKind = 'http'): Server {
@@ -411,11 +424,13 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     `asks for; if a write is rejected with READ_ONLY_MODE, tell the user they can enable write access ` +
     `at ${UI_BASE_URL} and then retry — do not abandon the request.`;
 
-  const personalizationNote = ` When inserting personalization fields into a template or fragment, do NOT assume ` +
-    `default XDM paths like {{profile.person.firstName}}. Most customers define custom field groups under their ` +
-    `tenant namespace, so first look up the real attribute paths with the XDM schema tools ` +
-    `(list_xdm_field_groups / get_xdm_field_group, or get_xdm_union_schema for the full merged Profile view), ` +
-    `then build personalization expressions from the actual attribute locations you find.`;
+  const personalizationNote = ` When creating content that may contain dynamic values, personalization is a ` +
+    `three-step flow: (1) call get_personalization_guidance for WHEN/WHAT to personalize (scenarios, data-source ` +
+    `resolution, when to iterate over collections, coverage review); (2) look up WHICH real attribute paths exist ` +
+    `with the XDM schema tools (list_xdm_field_groups / get_xdm_field_group, or get_xdm_union_schema for the full ` +
+    `merged Profile view) — do NOT assume default paths like {{profile.person.firstName}}, since most customers ` +
+    `define custom field groups under their tenant namespace; (3) call get_personalization_syntax for HOW to write ` +
+    `the expression. Build personalization expressions from the actual attribute locations you find.`;
 
   const resourceNote = ` This server also exposes reference resources, but many clients (e.g. Claude ` +
     `Desktop) do not let the model read MCP resources directly — so call get_server_context for the resource ` +
@@ -677,9 +692,13 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
 
     emitLog('debug', `→ ${name}`, sessionId);
 
+    // A validateOnly create is a dry run — it persists nothing, so it's treated as a
+    // non-write: it skips the read-only gate and the write-confirmation prompt below.
+    const dryRun = isDryRunCreate(name, args);
+
     // Enforce read-only mode at execution time (defense in depth — independent of
     // whether the tool was advertised). Read live so it applies to existing sessions.
-    if (!getWritesAllowed() && isWriteTool(name)) {
+    if (!getWritesAllowed() && isWriteTool(name) && !dryRun) {
       emitLog('warning', `✗ ${name}: READ_ONLY_MODE`, sessionId);
       return toToolResult({
         success: false,
@@ -728,8 +747,8 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     }
 
     // Confirm the write target with the user before performing it (elicitation).
-    // No-op for reads and for clients without elicitation support.
-    if (isWriteTool(name)) {
+    // No-op for reads, dry-runs, and clients without elicitation support.
+    if (isWriteTool(name) && !dryRun) {
       const confirmation = await confirmWriteTarget(name, args, sessionId);
       if (!confirmation.proceed) {
         return toToolResult({
@@ -767,7 +786,9 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       // Audit trail: attribute every content write to the self-declared author.
       // Only writes reach here in non-read-only mode (read-only writes are
       // rejected above). Captures both successful and handler-rejected attempts.
-      if (isWriteTool(name)) {
+      // A validateOnly dry-run persists nothing, so it is NOT a content change and
+      // must not pollute the audit trail with a phantom create.
+      if (isWriteTool(name) && !dryRun) {
         const callArgs = (args ?? {}) as Record<string, unknown>;
         // The id arg varies by resource family; probe each known key in turn.
         const idKeys = ['fragmentId', 'templateId', 'folderId', 'tagCategoryId', 'tagId'];
@@ -875,6 +896,12 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     if (uri === RESOURCE_URIS.visualDesignerRequirements) {
       return {
         contents: [{ uri, mimeType: 'text/plain', text: getVisualDesignerRequirements() }]
+      };
+    }
+
+    if (uri === RESOURCE_URIS.personalizationGuidance) {
+      return {
+        contents: [{ uri, mimeType: 'text/plain', text: getPersonalizationGuidance() }]
       };
     }
 
