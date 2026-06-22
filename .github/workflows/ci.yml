@@ -37,3 +37,31 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  compose-drift:
+    name: Distribution bundle in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The bundle's docker-compose.yml is a deliberate standalone copy (different
+      # comments, no repo dependencies), so a byte diff would be noise. Instead we
+      # compare the *effective* config that `docker compose config` renders, with
+      # project-name/path-derived fields normalized away. Any real difference —
+      # image tag, ports, env, volumes, security options — fails the check.
+      - name: Compare effective compose config
+        run: |
+          normalize() {
+            local f="$1" dir base
+            dir="$(dirname "$(realpath "$f")")"
+            base="$(basename "$dir")"
+            docker compose -f "$f" config 2>/dev/null \
+              | grep -v '^name:' \
+              | sed "s#${dir}#<DIR>#g" \
+              | sed "s#${base}_default#<PROJ>_default#g"
+          }
+          if ! diff <(normalize docker-compose.yml) <(normalize distribution/docker-compose.yml); then
+            echo "::error file=distribution/docker-compose.yml::Bundle has drifted from the root docker-compose.yml (effective config differs). Sync the two files."
+            exit 1
+          fi
+          echo "distribution/docker-compose.yml is in sync with docker-compose.yml."
