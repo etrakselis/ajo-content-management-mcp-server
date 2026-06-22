@@ -304,9 +304,68 @@ These prompts ask the LLM to chain multiple tools together autonomously.
 
 ## Prerequisites
 
-The only thing you need to build and run the server is **Docker Desktop** — dependencies are installed and the code is compiled inside the container, so you don't need Node.js installed on your machine. The steps are the same whether you're on **macOS** or **Windows**.
+Two things before you start:
 
-### Docker Desktop
+1. **Adobe API credentials**, packaged as an environment file — this is what you upload in [Configuration](#configuration) Step 2, so set it up first.
+2. **Docker Desktop**, to build and run the server. Dependencies are installed and the code is compiled inside the container, so you don't need Node.js installed on your machine.
+
+The steps are the same whether you're on **macOS** or **Windows**.
+
+### 1. Adobe API credentials (the environment file)
+
+This step produces the environment file that [Configuration](#configuration) Step 2 expects. You set up the credentials in two places — the **Adobe Developer Console** (the API project) and **Adobe Journey Optimizer** (the matching user role) — and you do it **twice**, once for the non-production environments and once for an all-environments (including prod) set.
+
+> **You need admin access to both** the Adobe Developer Console and the AJO platform to complete this step. If you don't have it, ask your Adobe org administrator to either grant it or perform these steps for you.
+
+#### a. Create the API project (Adobe Developer Console)
+
+In the [Adobe Developer Console](https://developer.adobe.com/console), create a new API project. Give it a **name** and **description** that clearly communicate (1) that the project is for **non-production** environments and (2) its **scope** — reading, creating, updating, and deleting AJO content templates, fragments, tags, and folders. The name and description are reference-only, so make them descriptive enough that anyone can tell what the project is for at a glance.
+
+![Create the API project: name and description communicate non-prod environment and content-management scope](readme_images/create_api_project_step1.png)
+
+#### b. Add the two API services
+
+Use **Add to Project → API** to add **two** services to the project: **Experience Platform API** and **Adobe Journey Optimizer**. Both should appear under **Products & services** when you're done.
+
+![Add the Experience Platform API and Adobe Journey Optimizer services to the project](readme_images/create_api_project_step2.png)
+
+#### c. Name the credential to match the project
+
+When you add the Adobe Journey Optimizer service, choose **OAuth Server-to-Server** authentication and set the **Credential name** to **match the name of the API project** (e.g. `NonProd AJO Content Management`). Keeping the names aligned makes the credential easy to find later under **Users → API Credentials**.
+
+![Set the OAuth Server-to-Server credential name to match the API project name](readme_images/create_api_project_step3.png)
+
+#### d. Assign the product profile
+
+When prompted to assign a product profile, select the default **AEP-Default-All-Users** profile.
+
+![Select the AEP-Default-All-Users product profile](readme_images/create_api_project_step4.png)
+
+#### e. Create a second, all-environments project
+
+Repeat steps **a–d** to create a **second** API project that is identical to the first, except that its **name and description** indicate it is intended for **all environments, including production**. The result is two projects: one scoped to the lower (non-prod) environments, and one that covers those same lower environments **and** production.
+
+#### f. Create the matching AJO user role
+
+In **Adobe Journey Optimizer → Permissions**, create a user **role** that mirrors the API project. As with the project, start by giving the role a **name** and **description** that indicate which environments it's scoped for and which API capabilities it grants — keep them aligned with the matching API project's name and description.
+
+![Create an AJO role with a name and description that match the API project](readme_images/create_api_ajo_role_step1.png)
+
+Then **edit the role** to assign the appropriate **sandbox environment(s)** and the AJO permissions the server needs — for example, *Journey Optimizer Library* (Manage Library Items, Publish Fragments, Simulate Content), *Data Modeling* (View Schemas), and *Sandbox Administration* (View Sandboxes).
+
+![Edit the role to assign sandboxes and Journey Optimizer permissions](readme_images/create_api_ajo_role_step2.png)
+
+Finally, on the role's **API credentials** tab, assign the API credential you created in steps b–c (the one whose name matches the project).
+
+![Assign the API credential to the role on the API credentials tab](readme_images/create_api_ajo_role_step3.png)
+
+> Create a matching role for **each** of the two API projects (non-prod and all-environments).
+
+#### g. Export the environment file
+
+Download each project's credentials as the **Postman environment** export from the Developer Console. That JSON file is exactly what you upload in [Configuration](#configuration) Step 2 — its expected shape is documented there.
+
+### 2. Docker Desktop
 - **Download:** [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)
   - macOS: pick the **Apple Silicon** build for M1/M2/M3+ Macs, or the **Intel chip** build for older Macs.
   - Windows: download **Docker Desktop for Windows** (requires Windows 10/11 64-bit; WSL 2 is enabled by the installer).
