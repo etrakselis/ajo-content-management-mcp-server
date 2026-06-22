@@ -361,9 +361,15 @@ Finally, on the role's **API credentials** tab, assign the API credential you cr
 
 > Create a matching role for **each** of the two API projects (non-prod and all-environments).
 
-#### g. Export the environment file
+#### g. Download the environment file
 
-Download each project's credentials as the **Postman environment** export from the Developer Console. That JSON file is exactly what you upload in [Configuration](#configuration) Step 2 — its expected shape is documented there.
+From each project's overview page in the Developer Console, click the **Download** button at the top. This gives you the **Postman environment** JSON file — exactly what you upload in [Configuration](#configuration) Step 2 (its expected shape is documented there).
+
+<a href="readme_images/create_api_project_step5.png"><img src="readme_images/create_api_project_step5.png" alt="Download the project's environment file from the Download button at the top of the project overview" width="500"></a>
+
+> You only need this **single, project-wide** environment file — there's no need to download the Postman collection from each individual API service. Every service you added shares the project's one **OAuth Server-to-Server** credential, so the same environment file covers all of them.
+
+Do this **once for each project**, and give each downloaded file a **meaningful name** so you can tell them apart — e.g. one for the non-prod project and one for the all-environments (non-prod + prod) project.
 
 ### 2. Docker Desktop
 - **Download:** [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)
