@@ -1,0 +1,42 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "description": [
+    "Scope: only the runtime image's inputs - npm deps and the Node base image in the Dockerfile.",
+    "Excludes docker-compose (only references our own :latest image) and github-actions (CI-only, bumped by hand).",
+    "Auto-merge is limited to changes that cannot introduce a breaking change; everything else is surfaced on the Dependency Dashboard with no PR."
+  ],
+  "enabledManagers": ["npm", "dockerfile"],
+  "separateMinorPatch": true,
+  "platformAutomerge": true,
+  "dependencyDashboard": true,
+  "docker": {
+    "pinDigests": true
+  },
+  "packageRules": [
+    {
+      "description": "npm: auto-merge patch-only (bugfixes, no API change) for runtime AND dev deps. Native auto-merge waits for green CI.",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "npm: never touch minors or majors automatically. They appear on the Dependency Dashboard but open no PRs.",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "major"],
+      "enabled": false
+    },
+    {
+      "description": "Node base image: auto-merge digest + patch + minor (stays in the Node 20 LTS line, non-breaking).",
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["pin", "digest", "patch", "minor"],
+      "automerge": true
+    },
+    {
+      "description": "Node base image: block the major bump (20 -> 22). Deliberate manual move only.",
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ]
+}
