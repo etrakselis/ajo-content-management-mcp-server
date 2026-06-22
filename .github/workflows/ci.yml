@@ -15,7 +15,7 @@ jobs:
     name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -42,7 +42,7 @@ jobs:
     name: Distribution bundle in sync
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The bundle's docker-compose.yml is a deliberate standalone copy (different
       # comments, no repo dependencies), so a byte diff would be noise. Instead we
