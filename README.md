@@ -321,25 +321,25 @@ This step produces the environment file that [Configuration](#configuration) Ste
 
 In the [Adobe Developer Console](https://developer.adobe.com/console), create a new API project. Give it a **name** and **description** that clearly communicate (1) that the project is for **non-production** environments and (2) its **scope** — reading, creating, updating, and deleting AJO content templates, fragments, tags, and folders. The name and description are reference-only, so make them descriptive enough that anyone can tell what the project is for at a glance.
 
-![Create the API project: name and description communicate non-prod environment and content-management scope](readme_images/create_api_project_step1.png)
+<a href="readme_images/create_api_project_step1.png"><img src="readme_images/create_api_project_step1.png" alt="Create the API project: name and description communicate non-prod environment and content-management scope" width="500"></a>
 
 #### b. Add the two API services
 
 Use **Add to Project → API** to add **two** services to the project: **Experience Platform API** and **Adobe Journey Optimizer**. Both should appear under **Products & services** when you're done.
 
-![Add the Experience Platform API and Adobe Journey Optimizer services to the project](readme_images/create_api_project_step2.png)
+<a href="readme_images/create_api_project_step2.png"><img src="readme_images/create_api_project_step2.png" alt="Add the Experience Platform API and Adobe Journey Optimizer services to the project" width="500"></a>
 
 #### c. Name the credential to match the project
 
 When you add the Adobe Journey Optimizer service, choose **OAuth Server-to-Server** authentication and set the **Credential name** to **match the name of the API project** (e.g. `NonProd AJO Content Management`). Keeping the names aligned makes the credential easy to find later under **Users → API Credentials**.
 
-![Set the OAuth Server-to-Server credential name to match the API project name](readme_images/create_api_project_step3.png)
+<a href="readme_images/create_api_project_step3.png"><img src="readme_images/create_api_project_step3.png" alt="Set the OAuth Server-to-Server credential name to match the API project name" width="500"></a>
 
 #### d. Assign the product profile
 
 When prompted to assign a product profile, select the default **AEP-Default-All-Users** profile.
 
-![Select the AEP-Default-All-Users product profile](readme_images/create_api_project_step4.png)
+<a href="readme_images/create_api_project_step4.png"><img src="readme_images/create_api_project_step4.png" alt="Select the AEP-Default-All-Users product profile" width="320"></a>
 
 #### e. Create a second, all-environments project
 
@@ -349,15 +349,15 @@ Repeat steps **a–d** to create a **second** API project that is identical to t
 
 In **Adobe Journey Optimizer → Permissions**, create a user **role** that mirrors the API project. As with the project, start by giving the role a **name** and **description** that indicate which environments it's scoped for and which API capabilities it grants — keep them aligned with the matching API project's name and description.
 
-![Create an AJO role with a name and description that match the API project](readme_images/create_api_ajo_role_step1.png)
+<a href="readme_images/create_api_ajo_role_step1.png"><img src="readme_images/create_api_ajo_role_step1.png" alt="Create an AJO role with a name and description that match the API project" width="500"></a>
 
 Then **edit the role** to assign the appropriate **sandbox environment(s)** and the AJO permissions the server needs — for example, *Journey Optimizer Library* (Manage Library Items, Publish Fragments, Simulate Content), *Data Modeling* (View Schemas), and *Sandbox Administration* (View Sandboxes).
 
-![Edit the role to assign sandboxes and Journey Optimizer permissions](readme_images/create_api_ajo_role_step2.png)
+<a href="readme_images/create_api_ajo_role_step2.png"><img src="readme_images/create_api_ajo_role_step2.png" alt="Edit the role to assign sandboxes and Journey Optimizer permissions" width="500"></a>
 
 Finally, on the role's **API credentials** tab, assign the API credential you created in steps b–c (the one whose name matches the project).
 
-![Assign the API credential to the role on the API credentials tab](readme_images/create_api_ajo_role_step3.png)
+<a href="readme_images/create_api_ajo_role_step3.png"><img src="readme_images/create_api_ajo_role_step3.png" alt="Assign the API credential to the role on the API credentials tab" width="500"></a>
 
 > Create a matching role for **each** of the two API projects (non-prod and all-environments).
 
