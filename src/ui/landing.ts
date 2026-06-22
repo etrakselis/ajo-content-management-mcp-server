@@ -633,7 +633,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       </a>
     </div>
     <div class="setup-tracker" id="setupTracker">
-      <span class="setup-tracker-label">Steps Completed</span>
+      <span class="setup-tracker-label">Server Configuration Steps Completed</span>
       <div class="setup-tracker-dots">
         <span class="setup-dot" id="sdot1"></span>
         <span class="setup-dot" id="sdot2"></span>
