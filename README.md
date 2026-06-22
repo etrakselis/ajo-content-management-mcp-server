@@ -341,11 +341,21 @@ When prompted to assign a product profile, select the default **AEP-Default-All-
 
 <a href="readme_images/create_api_project_step4.png"><img src="readme_images/create_api_project_step4.png" alt="Select the AEP-Default-All-Users product profile" width="320"></a>
 
-#### e. Create a second, all-environments project
+#### e. Download the environment file
 
-Repeat steps **a–d** to create a **second** API project that is identical to the first, except that its **name and description** indicate it is intended for **all environments, including production**. The result is two projects: one scoped to the lower (non-prod) environments, and one that covers those same lower environments **and** production.
+From the project's overview page in the Developer Console, click the **Download** button at the top. This gives you the **Postman environment** JSON file — exactly what you upload in [Configuration](#configuration) Step 2 (its expected shape is documented there).
 
-#### f. Create the matching AJO user role
+<a href="readme_images/create_api_project_step5.png"><img src="readme_images/create_api_project_step5.png" alt="Download the project's environment file from the Download button at the top of the project overview" width="500"></a>
+
+> You only need this **single, project-wide** environment file — there's no need to download the Postman collection from each individual API service. Every service you added shares the project's one **OAuth Server-to-Server** credential, so the same environment file covers all of them.
+
+Give the downloaded file a **meaningful name** so you can tell it apart from the other project's file later — e.g. label this one for the non-prod environments.
+
+#### f. Create a second, all-environments project
+
+Repeat steps **a–e** to create a **second** API project that is identical to the first, except that its **name and description** indicate it is intended for **all environments, including production**. The result is two projects: one scoped to the lower (non-prod) environments, and one that covers those same lower environments **and** production. Name its downloaded environment file accordingly (e.g. non-prod + prod) so the two files stay distinguishable.
+
+#### g. Create the matching AJO user role
 
 In **Adobe Journey Optimizer → Permissions**, create a user **role** that mirrors the API project. As with the project, start by giving the role a **name** and **description** that indicate which environments it's scoped for and which API capabilities it grants — keep them aligned with the matching API project's name and description.
 
@@ -360,16 +370,6 @@ Finally, on the role's **API credentials** tab, assign the API credential you cr
 <a href="readme_images/create_api_ajo_role_step3.png"><img src="readme_images/create_api_ajo_role_step3.png" alt="Assign the API credential to the role on the API credentials tab" width="500"></a>
 
 > Create a matching role for **each** of the two API projects (non-prod and all-environments).
-
-#### g. Download the environment file
-
-From each project's overview page in the Developer Console, click the **Download** button at the top. This gives you the **Postman environment** JSON file — exactly what you upload in [Configuration](#configuration) Step 2 (its expected shape is documented there).
-
-<a href="readme_images/create_api_project_step5.png"><img src="readme_images/create_api_project_step5.png" alt="Download the project's environment file from the Download button at the top of the project overview" width="500"></a>
-
-> You only need this **single, project-wide** environment file — there's no need to download the Postman collection from each individual API service. Every service you added shares the project's one **OAuth Server-to-Server** credential, so the same environment file covers all of them.
-
-Do this **once for each project**, and give each downloaded file a **meaningful name** so you can tell them apart — e.g. one for the non-prod project and one for the all-environments (non-prod + prod) project.
 
 ### 2. Docker Desktop
 - **Download:** [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)
