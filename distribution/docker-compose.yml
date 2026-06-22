@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  ajo-content-mcp:
+    # Pre-built, multi-arch image pulled from the GitHub Container Registry.
+    # Use :latest, or pin a specific version (e.g. :1.0.0) for reproducibility.
+    image: ghcr.io/etrakselis/ajo-content-mcp:latest
+    container_name: ajo-content-mcp
+    ports:
+      # Publish to the host's loopback only — never expose to the LAN. The app has
+      # no caller authentication, so reachability is the security boundary.
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Bind all interfaces *inside the container's isolated network namespace* so
+      # the published port above can reach it; host-side loopback binding (above)
+      # is what actually limits exposure.
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+      # Where the content-change audit trail (JSONL) is written. Points at the
+      # writable volume below so it survives restarts and lands on the host.
+      - AUDIT_LOG_PATH=/audit/audit-log.jsonl
+    volumes:
+      # Bind-mount a host directory for the audit log. Writable even though the
+      # container rootfs is read-only (volumes override the read-only mount).
+      - ./audit:/audit
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true

@@ -439,6 +439,8 @@ docker compose up -d       # start it again later
 
 > **Building from source instead?** Contributors can build the image locally rather than pulling it — see [Development](#development).
 
+> **Sharing with someone who won't touch the repo?** The [`distribution/`](distribution/) folder is a self-contained bundle — an abridged `QUICKSTART.md` plus a ready-to-run `docker-compose.yml`. Zip it and hand it off; they only need Docker Desktop and their Adobe credentials file. See [Packaging the distribution bundle](#packaging-the-distribution-bundle).
+
 ---
 
 ## Configuration
@@ -1047,6 +1049,16 @@ git tag v1.0.1 && git push origin v1.0.1   # publishes :1.0.1, :1.0, and :latest
 ```
 
 You can also trigger it manually from the **Actions** tab (publishes `:latest`). The first push creates the GHCR package as **private** — make it **public** once (GitHub → your profile → Packages → `ajo-content-mcp` → Package settings → Change visibility) so end users can pull without `docker login`.
+
+### Packaging the distribution bundle
+
+To hand the server to an end user who won't clone the repo, zip the self-contained [`distribution/`](distribution/) folder (an abridged `QUICKSTART.md` + a pull-only `docker-compose.yml`):
+
+```bash
+zip -r ajo-content-mcp-quickstart.zip distribution/
+```
+
+The recipient unzips it, then runs `docker compose up -d` from the folder — no source, no build. If you change the root `docker-compose.yml`, keep `distribution/docker-compose.yml` in sync (it's a deliberate standalone copy so the bundle has no repo dependencies).
 
 ---
 
