@@ -1,0 +1,12 @@
+# Build-from-source override for contributors.
+#
+# The default docker-compose.yml pulls the pre-built image from GHCR. Layer this
+# file on top to build the image locally from the Dockerfile instead:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Everything else (ports, volumes, security settings) is inherited from
+# docker-compose.yml — only the image source changes.
+services:
+  ajo-content-mcp:
+    build: .

@@ -10,7 +10,7 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 2. [Features](#features)
 3. [Example Prompts](#example-prompts)
 4. [Prerequisites](#prerequisites)
-5. [Build & Run](#build--run)
+5. [Run](#run)
 6. [Configuration](#configuration)
 7. [Client Connection Guide](#client-connection-guide)
 8. [Available Tools — Detailed](#available-tools--detailed)
@@ -385,17 +385,42 @@ Finally, on the role's **API credentials** tab, assign the API credential you cr
 
 ---
 
-## Build & Run
+## Run
 
-From the project root, a single command builds the image and starts the server in the background. Everything — installing dependencies and compiling the code — happens inside the container, so you don't need to run `npm` yourself.
+You don't need to clone the repo or build anything — a **pre-built, multi-architecture image** (Apple Silicon and Intel/AMD) is published to the GitHub Container Registry. You only need the `docker-compose.yml` file and Docker Desktop running.
 
-```bash
-cd ajo-content-mcp
-docker compose up -d --build
+**1. Get `docker-compose.yml`.** Either download it from this repo, or create a file with that name containing:
+
+```yaml
+services:
+  ajo-content-mcp:
+    image: ghcr.io/etrakselis/ajo-content-mcp:latest
+    container_name: ajo-content-mcp
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+      - AUDIT_LOG_PATH=/audit/audit-log.jsonl
+    volumes:
+      - ./audit:/audit
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
 ```
 
-- `--build` builds the `ajo-content-mcp` image (only needed the first time, or after you change the code).
-- `-d` runs the container detached, so your terminal stays free.
+**2. Start it** from the folder that holds the file:
+
+```bash
+docker compose up -d
+```
+
+The first run **pulls** the image automatically (no `--build`); `-d` runs it detached so your terminal stays free. Docker picks the right build for your CPU architecture.
 
 The setup UI is now available at **http://localhost:3000** — continue to [Configuration](#configuration).
 
@@ -405,9 +430,14 @@ Common follow-up commands:
 
 ```bash
 docker compose logs -f     # watch the server logs (Ctrl+C to stop watching)
+docker compose pull        # fetch the latest published image
 docker compose down        # stop and remove the container
-docker compose up -d       # start it again later (no rebuild needed)
+docker compose up -d       # start it again later
 ```
+
+> **Want to pin a version?** Replace `:latest` with a specific tag (e.g. `:1.0.0`) for reproducible deployments.
+
+> **Building from source instead?** Contributors can build the image locally rather than pulling it — see [Development](#development).
 
 ---
 
@@ -997,6 +1027,26 @@ npm run typecheck
 # Run locally (no Docker)
 npm run dev
 ```
+
+### Build the Docker image from source
+
+End users pull the pre-built image (see [Run](#run)), but contributors can build it locally from the `Dockerfile`. Layer the build override on top of the default compose file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+This builds the image locally instead of pulling from GHCR; all other settings (ports, audit volume, security options) are inherited from `docker-compose.yml`.
+
+### Publishing a new image
+
+The [`Publish image`](.github/workflows/release.yml) GitHub Actions workflow builds the multi-arch image (`linux/amd64` + `linux/arm64`) and pushes it to GHCR. Push a version tag to release:
+
+```bash
+git tag v1.0.1 && git push origin v1.0.1   # publishes :1.0.1, :1.0, and :latest
+```
+
+You can also trigger it manually from the **Actions** tab (publishes `:latest`). The first push creates the GHCR package as **private** — make it **public** once (GitHub → your profile → Packages → `ajo-content-mcp` → Package settings → Change visibility) so end users can pull without `docker login`.
 
 ---
 

@@ -2,8 +2,10 @@ version: '3.8'
 
 services:
   ajo-content-mcp:
-    build: .
-    image: ajo-content-mcp
+    # Pull the pre-built, multi-arch image from GHCR — no local build needed.
+    # Pin a specific version (e.g. :1.0.0) for reproducibility, or use :latest.
+    # Contributors building from source instead: see docker-compose.build.yml.
+    image: ghcr.io/etrakselis/ajo-content-mcp:latest
     container_name: ajo-content-mcp
     ports:
       # Publish to the host's loopback only — never expose to the LAN. The app has
