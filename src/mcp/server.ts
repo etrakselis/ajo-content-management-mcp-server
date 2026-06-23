@@ -16,6 +16,7 @@ import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js';
 import { tokenManager } from '../auth/token-manager.js';
 import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, getConfiguredAuthorEmail, getConfiguredNamingConvention, getConfiguredGitHubIntegration, listFragments, listTemplates, getFragment, getTemplate, buildError } from '../adobe/client.js';
 import { commitAuditTrail, createApprovalPR } from '../github/sync.js';
+import { resolveAjoFolderPath } from '../adobe/unified-tags-client.js';
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
@@ -181,6 +182,31 @@ const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
 // Tools that bypass the GitHub PR approval gate. deploy_merged_changes IS the
 // deployment step — intercepting it would be circular. check_pr_status is read-only.
 const GITHUB_BYPASS_TOOLS = new Set<string>(['deploy_merged_changes', 'check_pr_status']);
+
+// Determine the AJO folderType for a tool so we can resolve folder names.
+function ajoFolderTypeFor(toolName: string): string | undefined {
+  if (toolName.includes('template')) return 'content-template';
+  if (toolName.includes('fragment')) return 'fragment';
+  return undefined;
+}
+
+// Resolve the AJO folder path from tool args (parentFolderId) for use as the
+// GitHub directory. Non-fatal: returns undefined on error so commits fall back
+// to the asset-type-based path.
+async function resolveGitHubFolderPath(
+  toolName: string, args: unknown
+): Promise<string | undefined> {
+  const a = args as Record<string, unknown>;
+  const parentFolderId = typeof a?.parentFolderId === 'string' ? a.parentFolderId : undefined;
+  if (!parentFolderId) return undefined;
+  const folderType = ajoFolderTypeFor(toolName);
+  if (!folderType) return undefined;
+  try {
+    return await resolveAjoFolderPath(folderType, parentFolderId) || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // Create tools that accept a validateOnly flag (dry-run: validate + return warnings
 // without persisting). A dry-run performs no write, so it is treated as a non-write
@@ -804,8 +830,9 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       const cleanArgs = (isWriteTool(name) ? stripConfirmFlag(args) : args) as Record<string, unknown>;
       const sandbox = getConfiguredSandboxName() ?? 'unknown';
       const author = getConfiguredAuthorEmail() ?? 'unknown';
+      const ajoFolderPathPR = await resolveGitHubFolderPath(name, args);
       try {
-        const { prNumber, prUrl, filePath } = await createApprovalPR(githubConfig, sandbox, name, cleanArgs, author);
+        const { prNumber, prUrl, filePath } = await createApprovalPR(githubConfig, sandbox, name, cleanArgs, author, ajoFolderPathPR);
         emitLog('info', `↗ ${name}: GitHub PR #${prNumber} created (approval gate)`, sessionId);
         return toToolResult({
           success: true,
@@ -869,12 +896,14 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
         const ghSandbox = activeSandbox ?? 'unknown';
         const ghAuthor = activeAuthor ?? 'unknown';
         emitLog('info', `↗ GitHub audit: committing "${name}" to ${githubConfig.owner}/${githubConfig.repo}`, sessionId);
+        resolveGitHubFolderPath(name, args).then(ajoFolderPath =>
         commitAuditTrail(
           githubConfig, ghSandbox, name,
           (isWriteTool(name) ? stripConfirmFlag(args) : args) as Record<string, unknown>,
           resultObj as Record<string, unknown>,
-          ghAuthor
-        ).then((committed) => {
+          ghAuthor,
+          ajoFolderPath
+        )).then((committed) => {
           // Surface GitHub commit failures to the LLM so the user is informed even
           // though the AJO write succeeded. committed === false means the try-catch
           // inside commitAuditTrail fired; see server logs for the underlying error.

@@ -419,12 +419,12 @@ Returns: { success: true, etag?: "<new-etag>", warnings?: [...] }  (a "warnings"
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
-    required: ['templateId', 'etag', 'name', 'templateType', 'channels'],
+    required: ['templateId', 'etag', 'templateType', 'channels'],
     allOf: TEMPLATE_CONDITIONAL_RULES,
     properties: {
       templateId: { type: 'string', format: 'uuid', description: 'UUID of the template to update' },
       etag: { type: 'string', description: 'ETag from get_content_template (or the etag returned by create_content_template), required for optimistic locking. Pass it back exactly as received, including its surrounding double-quote characters — do not strip them.' },
-      name: { type: 'string', description: 'Template name' },
+      name: { type: 'string', description: 'Template name. Optional: if omitted the server backfills the template\'s current name (the AJO PUT requires a name). Always pass it when renaming.' },
       description: { type: 'string', description: 'Optional description' },
       templateType: { type: 'string', enum: ['html', 'html_primary_page', 'html_sub_page', 'content'], description: 'Template type — must match the channel (email→html, push/sms/inapp/code→content, landingpage→html_primary_page or html_sub_page)' },
       channels: TEMPLATE_CHANNELS_SCHEMA,
@@ -448,6 +448,23 @@ export async function handleUpdateContentTemplate(args: unknown) {
     // follow-up PATCH instead of silently ignoring it, so re-filing works the same way
     // everywhere. tagIds/labels stay in the body.
     const { templateId, etag, parentFolderId, ...payload } = parsed.data;
+    // Backfill an omitted name from the current template so a content-only update
+    // doesn't hard-fail with "name Required" — the AJO PUT replaces the whole object
+    // and requires name, but callers routinely forget it when only changing content.
+    // One cheap read; a clear error (not the opaque validation rejection) if it can't
+    // be resolved. A convenience net, NOT a license to skip fetch-then-mutate for the
+    // content itself (which the caller must still resend in full).
+    if (payload.name == null) {
+      try {
+        const current = await getTemplate(templateId) as { data?: { name?: unknown } };
+        if (typeof current.data?.name === 'string' && current.data.name) payload.name = current.data.name;
+      } catch (err) {
+        return { success: false, error: buildError(err) };
+      }
+      if (payload.name == null) {
+        return { success: false, error: { code: 'VALIDATION_ERROR', message: 'name was omitted and could not be backfilled from the current template. Provide name explicitly.', details: {} } };
+      }
+    }
     try {
       const result = await updateTemplate(templateId, payload, etag) as { success: boolean; etag?: string };
       const warnings = templateWarnings(parsed.data);

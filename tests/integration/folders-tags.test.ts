@@ -146,11 +146,11 @@ describe('folder tools', () => {
   });
 
   test('list_subfolders and validate_folder pass through the upstream payload', async () => {
-    m.getSubfolders.mockResolvedValue({ id: FOLDER_ID, children: [] });
+    m.getSubfolders.mockResolvedValue({ id: FOLDER_ID, folders: [] });
     m.validateFolder.mockResolvedValue({ id: FOLDER_ID, status: 'IN_USE' });
     const sub = await handleListSubfolders({ folderType: 'dataset', folderId: FOLDER_ID }) as Envelope;
     const val = await handleValidateFolder({ folderType: 'dataset', folderId: FOLDER_ID }) as Envelope;
-    expect(sub.data).toEqual({ id: FOLDER_ID, children: [] });
+    expect(sub.data).toEqual({ id: FOLDER_ID, folders: [] });
     expect(val.data).toEqual({ id: FOLDER_ID, status: 'IN_USE' });
   });
 });
@@ -300,7 +300,7 @@ describe('ensure_folder_path', () => {
     m.createFolder
       .mockRejectedValueOnce(new Error('Duplicate folder name'))
       .mockResolvedValueOnce({ id: ID_B });
-    m.getSubfolders.mockResolvedValueOnce({ id: 'root', children: [{ id: ID_A, name: 'NV' }] });
+    m.getSubfolders.mockResolvedValueOnce({ id: 'root', folders: [{ id: ID_A, name: 'NV' }] });
 
     const res = await handleEnsureFolderPath({ folderType: 'fragment', path: ['NV', 'BIS'] }) as PathEnvelope;
     expect(res.success).toBe(true);
@@ -317,8 +317,8 @@ describe('ensure_folder_path', () => {
       .mockRejectedValueOnce(new Error('Duplicate folder name'))
       .mockRejectedValueOnce(new Error('Duplicate folder name'));
     m.getSubfolders
-      .mockResolvedValueOnce({ id: 'root', children: [{ id: ID_A, name: 'NV' }] })
-      .mockResolvedValueOnce({ id: ID_A, children: [{ id: ID_B, name: 'BIS' }] });
+      .mockResolvedValueOnce({ id: 'root', folders: [{ id: ID_A, name: 'NV' }] })
+      .mockResolvedValueOnce({ id: ID_A, folders: [{ id: ID_B, name: 'BIS' }] });
 
     const res = await handleEnsureFolderPath({ folderType: 'fragment', path: ['NV', 'BIS'] }) as PathEnvelope;
     expect(res.success).toBe(true);
@@ -329,9 +329,42 @@ describe('ensure_folder_path', () => {
     ]);
   });
 
+  test('bug-report regression: root segment exists (returned under the `folders` key) → reuse it and create the missing children', async () => {
+    // The subfolders endpoint returns children under `folders`. Reading `children`
+    // made this lookup miss and abort with a self-contradictory FOLDER_NOT_FOUND
+    // whenever the root segment already existed (the reviewer's exact case).
+    m.createFolder
+      .mockRejectedValueOnce(new Error('Duplicate folder name')) // LM already exists
+      .mockResolvedValueOnce({ id: ID_B })                        // UNIT created
+      .mockResolvedValueOnce({ id: ID_C });                       // OrderConfirmation created
+    m.getSubfolders.mockResolvedValueOnce({ id: 'root', folders: [{ id: ID_A, name: 'LM' }] });
+
+    const res = await handleEnsureFolderPath({ folderType: 'fragment', path: ['LM', 'UNIT', 'OrderConfirmation'] }) as PathEnvelope;
+    expect(res.success).toBe(true);
+    expect(res.leafFolderId).toBe(ID_C);
+    expect(res.path).toEqual([
+      { name: 'LM', id: ID_A, created: false },
+      { name: 'UNIT', id: ID_B, created: true },
+      { name: 'OrderConfirmation', id: ID_C, created: true }
+    ]);
+    // The new children anchor to the REUSED LM id, then to the new UNIT id.
+    expect(m.createFolder).toHaveBeenNthCalledWith(2, 'fragment', { name: 'UNIT', parentFolderId: ID_A });
+    expect(m.createFolder).toHaveBeenNthCalledWith(3, 'fragment', { name: 'OrderConfirmation', parentFolderId: ID_B });
+  });
+
+  test('reuses an existing folder case-insensitively (existing "LM" matches a requested "lm")', async () => {
+    m.createFolder.mockRejectedValueOnce(new Error('Duplicate folder name'));
+    m.getSubfolders.mockResolvedValueOnce({ id: 'root', folders: [{ id: ID_A, name: 'LM' }] });
+
+    const res = await handleEnsureFolderPath({ folderType: 'fragment', path: ['lm'] }) as PathEnvelope;
+    expect(res.success).toBe(true);
+    expect(res.leafFolderId).toBe(ID_A);
+    expect(res.path).toEqual([{ name: 'lm', id: ID_A, created: false }]);
+  });
+
   test('returns FOLDER_NOT_FOUND when duplicate is reported but name is missing from children', async () => {
     m.createFolder.mockRejectedValueOnce(new Error('Duplicate folder name'));
-    m.getSubfolders.mockResolvedValueOnce({ id: 'root', children: [{ id: ID_A, name: 'Other' }] });
+    m.getSubfolders.mockResolvedValueOnce({ id: 'root', folders: [{ id: ID_A, name: 'Other' }] });
 
     const res = await handleEnsureFolderPath({ folderType: 'fragment', path: ['NV'] }) as PathEnvelope;
     expect(res.success).toBe(false);

@@ -172,7 +172,9 @@ export const GetTemplateSchema = z.object({
 export const UpdateTemplateSchema = z.object({
   templateId: UuidSchema,
   etag: EtagSchema,
-  name: z.string().min(1).max(255),
+  // Optional: the handler backfills an omitted name from the current template so a
+  // content-only update doesn't hard-fail (full PUT requires name; callers forget it).
+  name: z.string().min(1).max(255).optional(),
   description: z.string().optional(),
   templateType: TemplateTypeEnum,
   channels: z.array(TemplateChannelEnum).min(1).max(1),
@@ -254,7 +256,9 @@ export const GetFragmentSchema = z.object({
 export const UpdateFragmentSchema = z.object({
   fragmentId: UuidSchema,
   etag: EtagSchema,
-  name: z.string().min(1).max(255),
+  // Optional: the handler backfills an omitted name from the current fragment so a
+  // content-only update doesn't hard-fail (full PUT requires name; callers forget it).
+  name: z.string().min(1).max(255).optional(),
   description: z.string().optional(),
   type: FragmentTypeEnum,
   channels: z.array(FragmentChannelEnum).min(1).max(1),

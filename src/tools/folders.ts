@@ -246,7 +246,7 @@ export const listSubfoldersDefinition = {
 
 Example usage: { "folderType": "content-template", "folderId": "c626b4f7-223b-4486-8900-00c266e31dd1" }
 
-Returns: { success: true, data: { id, name, children: [ ... ] } }`,
+Returns: { success: true, data: { id, name, folders: [ { id, name, parentFolderId }, ... ] } }`,
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: {
     type: 'object' as const,
@@ -343,12 +343,25 @@ Returns: { success: true, leafFolderId: "<uuid>", path: [{ name, id, created }] 
 
 const DUPLICATE_FOLDER_RE = /duplicate folder name/i;
 
-// Find a direct child of the given parent by exact name. Returns the child's id,
-// or null if not found. parentId null means the root level of the folder tree.
+// Find a direct child of the given parent by name. Returns the child's id, or null
+// if not found. parentId null means the root level of the folder tree.
+//
+// The unified-folders subfolders endpoint returns the children under a `folders`
+// array (NOT `children`); reading the wrong key made every duplicate-reuse lookup
+// come up empty and abort with a self-contradictory FOLDER_NOT_FOUND. We read
+// `folders` and also tolerate `children`/`items` defensively. Names are matched
+// trimmed + case-insensitively so a folder the server flagged as a duplicate (its
+// duplicate check is case-insensitive) is always re-findable here.
 async function findChildByName(folderType: string, parentId: string | null, name: string): Promise<string | null> {
   const folderId = parentId ?? 'root';
-  const data = await getSubfolders(folderType, folderId) as { children?: Array<{ id: string; name: string }> };
-  const child = (data.children ?? []).find(c => c.name === name);
+  const data = await getSubfolders(folderType, folderId) as {
+    folders?: Array<{ id: string; name: string }>;
+    children?: Array<{ id: string; name: string }>;
+    items?: Array<{ id: string; name: string }>;
+  };
+  const list = data.folders ?? data.children ?? data.items ?? [];
+  const target = name.trim().toLowerCase();
+  const child = list.find(c => typeof c?.name === 'string' && c.name.trim().toLowerCase() === target);
   return child?.id ?? null;
 }
 

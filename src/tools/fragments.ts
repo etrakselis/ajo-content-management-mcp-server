@@ -45,6 +45,12 @@ function liveMarkupOnly(html: string): string {
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ');  // named <head> <style> blocks
 }
 
+// Count non-overlapping matches of a global regex. Used for component-parity and
+// doubled-shell checks below.
+function countMatches(html: string, re: RegExp): number {
+  return (html.match(re) ?? []).length;
+}
+
 function dualFieldShapeWarnings(fragment?: Record<string, unknown>): string[] {
   const warnings: string[] = [];
   const content = typeof fragment?.content === 'string' ? fragment.content : '';
@@ -74,6 +80,43 @@ function dualFieldShapeWarnings(fragment?: Record<string, unknown>): string[] {
     warnings.push(
       'editorContext["wysiwyg-content"] uses "acr-tmp-component" — the full Visual Designer document must use "acr-component" ' +
       '(acr-tmp-component belongs only in the lightweight fragment.content snippet). See get_visual_designer_requirements.');
+  }
+
+  // ── Cross-field consistency (catches the "stub in wysiwyg-content" footgun) ──
+  // When fragment.content is a real component snippet, editorContext["wysiwyg-content"]
+  // must be the matching full Visual Designer document. A missing/stubbed/parity-
+  // mismatched wysiwyg-content saves but silently degrades to Compatibility mode, so
+  // flag the specific cause (the generic compat warning alone doesn't explain it).
+  const contentComponents = countMatches(contentMarkup, /data-tmp-component-id/gi);
+  const contentIsRealSnippet = contentComponents > 0 || /\bacr-tmp-component\b/.test(contentMarkup);
+  if (contentIsRealSnippet) {
+    const wysiwygComponents = countMatches(wysiwygMarkup, /data-component-id(?!\w)/gi);
+    if (!wysiwyg.trim()) {
+      warnings.push(
+        `fragment.content defines ${contentComponents || 'one or more'} component(s) but editorContext["wysiwyg-content"] is empty/absent. ` +
+        'The full Visual Designer document is what the drag-and-drop editor opens — without it this fragment falls back to Compatibility mode. ' +
+        'Supply the full native document (<!DOCTYPE> … <head> with the content-version meta … acr-component nesting) in editorContext["wysiwyg-content"]. See get_visual_designer_requirements.');
+    } else if (!/\bacr-/.test(wysiwygMarkup) || !/content-version/i.test(wysiwyg)) {
+      warnings.push(
+        'editorContext["wysiwyg-content"] does not look like a real Visual Designer document (no acr-* components and/or no content-version meta tag) — it appears to be a placeholder/stub. ' +
+        'It will save but open in Compatibility mode. Put the full native document there. See get_visual_designer_requirements.');
+    } else if (wysiwygComponents !== contentComponents) {
+      warnings.push(
+        `Component-count mismatch between the two fields: fragment.content has ${contentComponents} (data-tmp-component-id) but editorContext["wysiwyg-content"] has ${wysiwygComponents} (data-component-id). ` +
+        'They should describe the same content — a mismatch usually means one field is stale or was rebuilt independently. Regenerate both from the same source. See get_visual_designer_requirements.');
+    }
+  }
+
+  // ── Doubled document shell ──
+  // Prepending the standard <head>/shell to a wysiwyg-content that already begins
+  // with one yields two <!DOCTYPE>/<html> openings — a silently-malformed document.
+  const doctypeCount = countMatches(wysiwygMarkup, /<!doctype/gi);
+  const htmlOpenCount = countMatches(wysiwygMarkup, /<html[\s>]/gi);
+  if (doctypeCount > 1 || htmlOpenCount > 1) {
+    warnings.push(
+      `editorContext["wysiwyg-content"] contains a DOUBLED document shell (${doctypeCount} <!DOCTYPE> and ${htmlOpenCount} <html> openings). ` +
+      'This happens when the standard <head>/shell is prepended to a document that already includes one. The document must have exactly one shell — ' +
+      'the required <head> block is a complete shell prefix, do not re-wrap it. See get_visual_designer_requirements.');
   }
   return warnings;
 }
@@ -560,12 +603,12 @@ Returns: { success: true, etag?: "<new-etag>", warnings?: [...] }  (a "warnings"
   inputSchema: {
     type: 'object' as const,
     additionalProperties: false,
-    required: ['fragmentId', 'etag', 'name', 'type', 'channels', 'fragment'],
+    required: ['fragmentId', 'etag', 'type', 'channels', 'fragment'],
     allOf: EXPRESSION_REQUIRES_SUBTYPE,
     properties: {
       fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to update' },
       etag: { type: 'string', description: 'ETag from get_content_fragment (or the etag returned by create_content_fragment). Pass it back exactly as received, including its surrounding double-quote characters — do not strip them.' },
-      name: { type: 'string', description: 'Fragment name' },
+      name: { type: 'string', description: 'Fragment name. Optional: if omitted the server backfills the fragment\'s current name (the AJO PUT requires a name). Always pass it when renaming.' },
       description: { type: 'string', description: 'Optional description' },
       type: { type: 'string', enum: ['html', 'expression'], description: 'Fragment type: html → email channel; expression → shared channel' },
       channels: FRAGMENT_CHANNELS_SCHEMA,
@@ -589,12 +632,30 @@ export async function handleUpdateContentFragment(args: unknown) {
     // follow-up PATCH instead of silently ignoring it, so re-filing works the same
     // way everywhere. tagIds/labels stay in the body.
     const { fragmentId, etag, parentFolderId, ...rest } = parsed.data;
+    // Backfill an omitted name from the current fragment so a content-only update
+    // doesn't hard-fail with "name Required" — the AJO PUT replaces the whole object
+    // and requires name, but callers routinely forget it when only changing content.
+    // One cheap read; a clear error (not the opaque validation rejection) if it can't
+    // be resolved. This is a convenience net, NOT a license to skip fetch-then-mutate
+    // for the content itself (which the caller must still resend in full).
+    let name = rest.name;
+    if (name == null) {
+      try {
+        const current = await getFragment(fragmentId) as { data?: { name?: unknown } };
+        if (typeof current.data?.name === 'string' && current.data.name) name = current.data.name;
+      } catch (err) {
+        return { success: false, error: buildError(err) };
+      }
+      if (name == null) {
+        return { success: false, error: { code: 'VALIDATION_ERROR', message: 'name was omitted and could not be backfilled from the current fragment. Provide name explicitly.', details: {} } };
+      }
+    }
     // The fragment id is known here, so rewrite the data-fragment-id="ajo:SELF"
     // self-reference sentinel to the real ref in-place — this is already a PUT, so
     // no follow-up write is needed for that part (unlike create).
     const assignedRef = `ajo:${fragmentId}`;
     const selfRef = applySelfReference(rest.fragment as Record<string, unknown> | undefined, assignedRef);
-    const payload = { ...rest, ...(selfRef.changed ? { fragment: selfRef.fragment } : {}), source: rest.source ?? { origin: 'ajo' as const } };
+    const payload = { ...rest, name, ...(selfRef.changed ? { fragment: selfRef.fragment } : {}), source: rest.source ?? { origin: 'ajo' as const } };
     try {
       const result = await updateFragment(fragmentId, payload, etag) as { success: boolean; etag?: string };
       const warnings = fragmentWarnings(parsed.data);

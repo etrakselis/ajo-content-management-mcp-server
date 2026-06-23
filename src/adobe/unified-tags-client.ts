@@ -90,6 +90,29 @@ export const getSubfolders = (folderType: string, folderId: string) =>
 export const validateFolder = (folderType: string, folderId: string) =>
   utRequest('get', `/unifiedfolders/folders/${enc(folderType)}/${enc(folderId)}/validate`);
 
+// Resolve a folder UUID to its full human-readable path (e.g. "Campaigns/Email/Holiday 2026").
+// Results are cached per sandbox+folderType+folderId so repeated commits don't re-fetch.
+const folderPathCache = new Map<string, string>();
+
+export async function resolveAjoFolderPath(folderType: string, folderId: string): Promise<string> {
+  const sandbox = getConfiguredSandboxName() ?? '';
+  const cacheKey = `${sandbox}:${folderType}:${folderId}`;
+  if (folderPathCache.has(cacheKey)) return folderPathCache.get(cacheKey)!;
+
+  const segments: string[] = [];
+  let currentId: string | undefined = folderId;
+  for (let depth = 0; depth < 12 && currentId; depth++) {
+    const folder = await getFolder(folderType, currentId) as { name?: string; parentFolderId?: string | null };
+    if (!folder.name) break;
+    segments.unshift(folder.name);
+    currentId = folder.parentFolderId ?? undefined;
+  }
+
+  const path = segments.join('/');
+  folderPathCache.set(cacheKey, path);
+  return path;
+}
+
 // ── Tag categories (read-only) ────────────────────────────────────────────────
 // Category mutation (create/update/delete) is admin-only upstream and is NOT
 // exposed by this server — see src/tools/tags.ts — so only the read endpoints

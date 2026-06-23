@@ -21,9 +21,11 @@ function safeFilename(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
 }
 
-function assetFilePath(sandboxName: string, toolName: string, id?: string, name?: string): string {
-  const dir = assetTypeDir(toolName);
-  const identifier = id ? safeFilename(id) : name ? safeFilename(name) : 'unknown';
+function assetFilePath(sandboxName: string, toolName: string, id?: string, name?: string, ajoFolderPath?: string): string {
+  const dir = ajoFolderPath ?? assetTypeDir(toolName);
+  // Prefer name over id — names match what the user sees in AJO and make the
+  // repo readable without UUID lookups. safeFilename guards against path separators.
+  const identifier = name ? safeFilename(name) : id ? safeFilename(id) : 'unknown';
   return `${sandboxName}/${dir}/${identifier}.json`;
 }
 
@@ -51,7 +53,8 @@ export async function commitAuditTrail(
   toolName: string,
   args: Record<string, unknown>,
   result: Record<string, unknown>,
-  authorEmail: string
+  authorEmail: string,
+  ajoFolderPath?: string
 ): Promise<boolean> {
   const { token, owner, repo, defaultBranch } = config;
 
@@ -59,7 +62,7 @@ export async function commitAuditTrail(
     const argId = extractId(args);
     const resultId = (result as { id?: string }).id ?? argId;
     const argName = typeof args.name === 'string' ? args.name : undefined;
-    const filePath = assetFilePath(sandboxName, toolName, resultId ?? argId, argName);
+    const filePath = assetFilePath(sandboxName, toolName, resultId ?? argId, argName, ajoFolderPath);
 
     const isDelete = toolName.startsWith('delete_') || toolName === 'archive_content_fragment';
 
@@ -130,13 +133,14 @@ export async function createApprovalPR(
   sandboxName: string,
   toolName: string,
   args: Record<string, unknown>,
-  authorEmail: string
+  authorEmail: string,
+  ajoFolderPath?: string
 ): Promise<{ prNumber: number; prUrl: string; filePath: string }> {
   const { token, owner, repo, defaultBranch } = config;
 
   const argId = extractId(args);
   const argName = typeof args.name === 'string' ? args.name : argId ?? 'unknown';
-  const filePath = assetFilePath(sandboxName, toolName, argId, argName);
+  const filePath = assetFilePath(sandboxName, toolName, argId, argName, ajoFolderPath);
   const branch = makeBranchName(toolName);
 
   const baseSha = await getBranchSha(token, owner, repo, defaultBranch);

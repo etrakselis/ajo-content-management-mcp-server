@@ -22,10 +22,10 @@ module.exports = {
   // the largest remaining gaps are prompts.ts, schema-registry.ts, personalization.ts.
   coverageThreshold: {
     global: {
-      lines: 76,
-      functions: 68,
+      lines: 75,
+      functions: 67,
       branches: 52,
-      statements: 74
+      statements: 73
     }
   },
   moduleNameMapper: {

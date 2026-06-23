@@ -594,6 +594,30 @@ describe('Template Tools Integration', () => {
     expect(result.error.code).toBe('VALIDATION_ERROR');
     expect(mockClient.listTemplates).not.toHaveBeenCalled();
   });
+
+  // #4: an omitted name is backfilled from the current template (full PUT requires it).
+
+  test('update_content_template backfills an omitted name from the current template (#4)', async () => {
+    mockClient.getTemplate.mockResolvedValue({ data: { id: VALID_UUID, name: 'Existing Template' }, etag: '"v1"' });
+    mockClient.updateTemplate.mockResolvedValue({ success: true, etag: '"v2"' });
+    const result = await handleUpdateContentTemplate({
+      templateId: VALID_UUID, etag: '"v1"', templateType: 'content', channels: ['email'],
+      template: { subject: 'S', html: { body: '<html></html>' } } // name omitted
+    }) as { success: boolean };
+    expect(result.success).toBe(true);
+    expect(mockClient.getTemplate).toHaveBeenCalledWith(VALID_UUID);
+    const payload = mockClient.updateTemplate.mock.calls[0][1] as { name?: string };
+    expect(payload.name).toBe('Existing Template');
+  });
+
+  test('update_content_template does NOT re-fetch when name is provided (#4)', async () => {
+    mockClient.updateTemplate.mockResolvedValue({ success: true, etag: '"v2"' });
+    await handleUpdateContentTemplate({
+      templateId: VALID_UUID, etag: '"v1"', name: 'Given', templateType: 'content', channels: ['email'],
+      template: { subject: 'S', html: { body: '<html></html>' } }
+    });
+    expect(mockClient.getTemplate).not.toHaveBeenCalled();
+  });
 });
 
 // ─── Fragment Tools ───────────────────────────────────────────────────────────
@@ -812,6 +836,91 @@ describe('Fragment Tools Integration', () => {
     // No dual-field / compat warnings on fully-compliant content.
     const noise = (result.warnings ?? []).filter(w => /acr-tmp-component|acr-component|FULL Visual Designer document|Compatibility mode/.test(w));
     expect(noise).toEqual([]);
+  });
+
+  // #5/#6: cross-field consistency — content is a real snippet, so wysiwyg-content
+  // must be the matching full document (not empty, not a stub, not parity-mismatched).
+  const REAL_SNIPPET = '<div class="acr-fragment is-locked has-html-params"><div class="acr-tmp-component" data-tmp-component-id="text">Hi</div></div>';
+
+  test('create_content_fragment warns when content is a real snippet but wysiwyg-content is empty/absent (Issue 5)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-empty', location: '/fragments/f-empty', etag: '"v1"' });
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content: REAL_SNIPPET } // no editorContext["wysiwyg-content"]
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings?.some(w => w.includes('editorContext["wysiwyg-content"] is empty/absent'))).toBe(true);
+  });
+
+  test('create_content_fragment warns when wysiwyg-content is a placeholder stub, not a real document (Issue 6)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-stub', location: '/fragments/f-stub', etag: '"v1"' });
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content: REAL_SNIPPET, editorContext: { 'wysiwyg-content': 'DRYRUN' } }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings?.some(w => w.includes('placeholder/stub'))).toBe(true);
+  });
+
+  test('create_content_fragment warns on a component-count mismatch between the two fields (Issue 5)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-par', location: '/fragments/f-par', etag: '"v1"' });
+    // content: 2 tmp-components; wysiwyg (valid full doc): 1 component → mismatch.
+    const snippet2 = '<div class="acr-fragment is-locked has-html-params"><div class="acr-tmp-component" data-tmp-component-id="a"></div><div class="acr-tmp-component" data-tmp-component-id="b"></div></div>';
+    const wysiwyg = '<!DOCTYPE html><html><head><meta name="content-version" content="3"></head><body data-has-html-params><div class="acr-container"><div class="acr-structure"><div class="acr-fragment acr-component" data-component-id="a"></div></div></div></body></html>';
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content: snippet2, editorContext: { 'wysiwyg-content': wysiwyg } }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings?.some(w => w.includes('Component-count mismatch') && w.includes('has 2') && w.includes('has 1'))).toBe(true);
+  });
+
+  test('create_content_fragment warns on a doubled document shell in wysiwyg-content (Issue 7)', async () => {
+    mockClient.createFragment.mockResolvedValue({ id: 'f-dbl', location: '/fragments/f-dbl', etag: '"v1"' });
+    const head = '<!DOCTYPE html><html class><head><meta name="content-version" content="3"></head>';
+    // The standard shell prepended onto a document that already had one → two openings.
+    const wysiwyg = head + head + '<body data-has-html-params><div class="acr-container"><div class="acr-structure"><div class="acr-fragment acr-component" data-component-id="text"></div></div></div></body></html>';
+    const result = await handleCreateContentFragment({
+      name: 'Banner', type: 'html', channels: ['email'],
+      fragment: { content: REAL_SNIPPET, editorContext: { 'wysiwyg-content': wysiwyg } }
+    }) as { success: boolean; warnings?: string[] };
+    expect(result.success).toBe(true);
+    expect(result.warnings?.some(w => w.includes('DOUBLED document shell'))).toBe(true);
+  });
+
+  // #4: an omitted name is backfilled from the current fragment (full PUT requires it).
+
+  test('update_content_fragment backfills an omitted name from the current fragment (#4)', async () => {
+    mockClient.getFragment.mockResolvedValue({ data: { id: VALID_UUID, name: 'Existing Fragment' }, etag: '"v1"' });
+    mockClient.updateFragment.mockResolvedValue({ success: true, etag: '"v2"' });
+    const result = await handleUpdateContentFragment({
+      fragmentId: VALID_UUID, etag: '"v1"', type: 'html', channels: ['email'],
+      fragment: { content: '<div>x</div>' } // name omitted
+    }) as { success: boolean };
+    expect(result.success).toBe(true);
+    expect(mockClient.getFragment).toHaveBeenCalledWith(VALID_UUID);
+    const payload = mockClient.updateFragment.mock.calls[0][1] as { name?: string };
+    expect(payload.name).toBe('Existing Fragment');
+  });
+
+  test('update_content_fragment errors clearly when name is omitted and cannot be backfilled (#4)', async () => {
+    mockClient.getFragment.mockResolvedValue({ data: { id: VALID_UUID }, etag: '"v1"' }); // no name on the current object
+    const result = await handleUpdateContentFragment({
+      fragmentId: VALID_UUID, etag: '"v1"', type: 'html', channels: ['email'],
+      fragment: { content: '<div>x</div>' }
+    }) as { success: boolean; error: { code: string } };
+    expect(result.success).toBe(false);
+    expect(result.error.code).toBe('VALIDATION_ERROR');
+    expect(mockClient.updateFragment).not.toHaveBeenCalled();
+  });
+
+  test('update_content_fragment does NOT re-fetch when name is provided (#4)', async () => {
+    mockClient.updateFragment.mockResolvedValue({ success: true, etag: '"v2"' });
+    await handleUpdateContentFragment({
+      fragmentId: VALID_UUID, etag: '"v1"', name: 'Given', type: 'html', channels: ['email'],
+      fragment: { content: '<div>x</div>' }
+    });
+    expect(mockClient.getFragment).not.toHaveBeenCalled();
   });
 
   test('create_content_fragment validateOnly returns warnings WITHOUT persisting (Issue 4b dry-run)', async () => {
