@@ -14,7 +14,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js';
 import { tokenManager } from '../auth/token-manager.js';
-import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, getConfiguredAuthorEmail, getConfiguredNamingConvention, listFragments, listTemplates, getFragment, getTemplate, buildError } from '../adobe/client.js';
+import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, getConfiguredAuthorEmail, getConfiguredNamingConvention, getConfiguredGitHubIntegration, listFragments, listTemplates, getFragment, getTemplate, buildError } from '../adobe/client.js';
+import { commitAuditTrail, createApprovalPR } from '../github/sync.js';
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
@@ -65,7 +66,8 @@ import {
   updateFolderDefinition, handleUpdateFolder,
   deleteFolderDefinition, handleDeleteFolder,
   listSubfoldersDefinition, handleListSubfolders,
-  validateFolderDefinition, handleValidateFolder
+  validateFolderDefinition, handleValidateFolder,
+  ensureFolderPathDefinition, handleEnsureFolderPath
 } from '../tools/folders.js';
 
 // Tag + tag-category tools — classify content for discovery (Unified Tags API)
@@ -81,15 +83,17 @@ import {
 } from '../tools/tags.js';
 
 // Server context — read-only; reports who/what this server is operating as
-import { getServerContextDefinition, handleGetServerContext, setToolCatalog } from '../tools/context.js';
+import { getServerContextDefinition, handleGetServerContext, setToolCatalog, setWriteConfirmedGetter, getNamingConventionDefinition, handleGetNamingConvention } from '../tools/context.js';
 import { getVisualDesignerRequirementsDefinition, handleGetVisualDesignerRequirements } from '../tools/visual-designer.js';
 import { getPersonalizationSyntaxDefinition, handleGetPersonalizationSyntax, getPersonalizationGuidanceDefinition, handleGetPersonalizationGuidance } from '../tools/personalization.js';
+// GitHub integration tools
+import { checkPRStatusDefinition, handleCheckPRStatus, deployMergedChangesDefinition, handleDeployMergedChanges } from '../tools/github.js';
 import { buildToolCatalog, formatToolCatalog } from './tool-catalog.js';
 import {
   CreateTemplateSchema, UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema,
   CreateFragmentSchema, UpdateFragmentSchema, PatchFragmentSchema,
   PublishFragmentSchema, ArchiveFragmentSchema,
-  CreateFolderSchema, UpdateFolderSchema, DeleteFolderSchema,
+  CreateFolderSchema, UpdateFolderSchema, DeleteFolderSchema, EnsureFolderPathSchema,
   CreateTagSchema, UpdateTagSchema, DeleteTagSchema
 } from '../validation/schemas.js';
 import type { ZodTypeAny } from 'zod';
@@ -124,6 +128,7 @@ const ALL_TOOLS = [
   deleteFolderDefinition,
   listSubfoldersDefinition,
   validateFolderDefinition,
+  ensureFolderPathDefinition,
   // Tags & tag categories — classify content for discovery
   // (tag-category mutation is admin-only upstream and intentionally not exposed)
   listTagCategoriesDefinition,
@@ -136,12 +141,17 @@ const ALL_TOOLS = [
   validateTagsDefinition,
   // Server context — read-only
   getServerContextDefinition,
+  // Naming convention — read-only; returns the full enforced rules
+  getNamingConventionDefinition,
   // Visual Email Designer HTML spec — read-only reference
   getVisualDesignerRequirementsDefinition,
   // AJO personalization syntax library — read-only reference
   getPersonalizationSyntaxDefinition,
   // AJO personalization scenarios/strategy guidance — read-only reference
-  getPersonalizationGuidanceDefinition
+  getPersonalizationGuidanceDefinition,
+  // GitHub integration — check PR status, deploy merged PR to AJO
+  checkPRStatusDefinition,
+  deployMergedChangesDefinition
 ];
 
 // Catalog derived from the live tool list (so it never drifts). Registered into
@@ -160,11 +170,17 @@ const WRITE_TOOLS = new Set<string>([
   'publish_content_fragment', 'archive_content_fragment',
   // Folders & tags (organization) — validate_* and list_/get_ stay read-only.
   // (Tag-category mutation is admin-only upstream and not exposed by this server.)
-  'create_folder', 'update_folder', 'delete_folder',
-  'create_tag', 'update_tag', 'delete_tag'
+  'create_folder', 'update_folder', 'delete_folder', 'ensure_folder_path',
+  'create_tag', 'update_tag', 'delete_tag',
+  // GitHub integration — deploy_merged_changes writes to AJO, so it is a write tool.
+  'deploy_merged_changes'
 ]);
 
 const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
+
+// Tools that bypass the GitHub PR approval gate. deploy_merged_changes IS the
+// deployment step — intercepting it would be circular. check_pr_status is read-only.
+const GITHUB_BYPASS_TOOLS = new Set<string>(['deploy_merged_changes', 'check_pr_status']);
 
 // Create tools that accept a validateOnly flag (dry-run: validate + return warnings
 // without persisting). A dry-run performs no write, so it is treated as a non-write
@@ -191,9 +207,11 @@ const WRITE_TOOL_SCHEMAS: Record<string, ZodTypeAny> = {
   create_folder: CreateFolderSchema,
   update_folder: UpdateFolderSchema,
   delete_folder: DeleteFolderSchema,
+  ensure_folder_path: EnsureFolderPathSchema,
   create_tag: CreateTagSchema,
   update_tag: UpdateTagSchema,
   delete_tag: DeleteTagSchema
+  // deploy_merged_changes: validated inline (prUrl only; no Zod schema needed)
 };
 
 // Page cap for the ajo://fragments / ajo://templates directory reads. At 100
@@ -380,6 +398,7 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   delete_folder: handleDeleteFolder,
   list_subfolders: handleListSubfolders,
   validate_folder: handleValidateFolder,
+  ensure_folder_path: handleEnsureFolderPath,
   // Tags & tag categories — classify content for discovery
   list_tag_categories: handleListTagCategories,
   get_tag_category: handleGetTagCategory,
@@ -391,12 +410,16 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   validate_tags: handleValidateTags,
   // Server context — read-only
   get_server_context: handleGetServerContext,
+  get_naming_convention: handleGetNamingConvention,
   // Visual Email Designer HTML spec — read-only reference
   get_visual_designer_requirements: handleGetVisualDesignerRequirements,
   // AJO personalization syntax library — read-only reference
   get_personalization_syntax: handleGetPersonalizationSyntax,
   // AJO personalization scenarios/strategy guidance — read-only reference
-  get_personalization_guidance: handleGetPersonalizationGuidance
+  get_personalization_guidance: handleGetPersonalizationGuidance,
+  // GitHub integration
+  check_pr_status: handleCheckPRStatus,
+  deploy_merged_changes: handleDeployMergedChanges
 };
 
 export function createMcpServer(transport: TransportKind = 'http'): Server {
@@ -475,16 +498,16 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     ? ` NAMING CONVENTIONS: The administrator has defined naming rules that you MUST follow when creating or naming content templates, content fragments, folders, and tags. Do not deviate from these rules even if the user asks for a different name — explain the convention and suggest a compliant name instead. Rules:\n${namingConventionMd}`
     : '';
 
-  // Full rules block, appended to the description of the tools that assign a brand
-  // new name (create_*) — the moment the model is constructing the name, so the
-  // rules sit right where they're needed with no extra tool call.
+  // Brief pointer appended to create_* tool descriptions when a naming convention is
+  // enforced. The full rules are NOT inlined here: embedding a multi-page spec on
+  // every create/update tool balloons context and skews semantic tool-search ranking
+  // (dense write tools crowd out lean read tools that share the same nouns). Instead,
+  // point to get_naming_convention, which returns the full rules on demand.
   const namingRulesBlock = namingEnabled
-    ? `\n\n=== ENFORCED NAMING CONVENTION (MANDATORY) ===\n` +
-      `This server enforces an administrator-defined naming convention. The name you assign with this tool ` +
-      `MUST comply with the rules below. If the user asks for a non-compliant name, do not silently comply — ` +
-      `explain the rule and propose a compliant name. The same rules apply to content templates, fragments, ` +
-      `folders, and tags.\n` +
-      `Rules (markdown):\n${namingConventionMd}\n=== END NAMING CONVENTION ===`
+    ? `\n\n⚠ ENFORCED NAMING CONVENTION: An administrator-defined naming convention is active. ` +
+      `Call get_naming_convention to retrieve the full rules BEFORE assigning a name. ` +
+      `If the user provides a non-compliant name, explain the rule and propose a compliant alternative. ` +
+      `The same rules apply to content templates, fragments, folders, and tags.`
     : '';
 
   // Concise pointer, appended to the rename-capable tools (update_*/patch_*). These
@@ -565,6 +588,10 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   // Note this is a target-confirmation step, not a permission gate; whether writes
   // are allowed at all is enforced independently by the read-only toggle in CallTool.
   const confirmedSandboxes = new Set<string>();
+
+  // Expose confirmation state to get_server_context without coupling context.ts to
+  // server internals. The getter is evaluated at call time so it reflects live state.
+  setWriteConfirmedGetter(() => confirmedSandboxes.has(getConfiguredSandboxName() ?? '(unconfigured)'));
 
   async function confirmWriteTarget(
     toolName: string,
@@ -762,6 +789,47 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       }
     }
 
+    // ── GitHub approval gate ──────────────────────────────────────────────────
+    // In PR Approval Gate mode, write tools create a GitHub PR instead of writing
+    // to AJO. The LLM returns the PR URL to the user; a human reviews and merges it;
+    // then the LLM calls deploy_merged_changes to apply the approved content to AJO.
+    // deploy_merged_changes itself is exempt (it IS the deployment path).
+    const githubConfig = getConfiguredGitHubIntegration();
+    if (githubConfig?.requireApproval && isWriteTool(name) && !dryRun && !GITHUB_BYPASS_TOOLS.has(name)) {
+      const cleanArgs = (isWriteTool(name) ? stripConfirmFlag(args) : args) as Record<string, unknown>;
+      const sandbox = getConfiguredSandboxName() ?? 'unknown';
+      const author = getConfiguredAuthorEmail() ?? 'unknown';
+      try {
+        const { prNumber, prUrl, filePath } = await createApprovalPR(githubConfig, sandbox, name, cleanArgs, author);
+        emitLog('info', `↗ ${name}: GitHub PR #${prNumber} created (approval gate)`, sessionId);
+        return toToolResult({
+          success: true,
+          prCreated: true,
+          prNumber,
+          prUrl,
+          filePath,
+          message:
+            `Write blocked by GitHub PR Approval Gate. Instead of writing directly to AJO, ` +
+            `PR #${prNumber} has been created for human review: ${prUrl}\n\n` +
+            `File staged: \`${filePath}\`\n\n` +
+            `After a reviewer merges the PR on GitHub, call \`deploy_merged_changes\` with ` +
+            `prUrl: "${prUrl}" to apply the change to AJO sandbox "${sandbox}".`
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        emitLog('error', `✗ ${name}: GitHub PR creation failed — ${msg}`, sessionId);
+        return toToolResult({
+          success: false,
+          error: {
+            code: 'GITHUB_PR_FAILED',
+            message: `GitHub PR Approval Gate is enabled but the PR could not be created: ${msg}. ` +
+              `Check your GitHub token and repository configuration on the setup page.`,
+            details: {}
+          }
+        });
+      }
+    }
+
     try {
       // Drop the synthetic confirmWrite flag (confirm-and-retry fallback) so it
       // never reaches the tool handler or the AJO payload.
@@ -781,6 +849,41 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
         emitLog('warning', `✗ ${name}: ${resultObj.error?.code ?? 'error'}`, sessionId);
       } else {
         emitLog('info', `✓ ${name}`, sessionId);
+      }
+
+      // GitHub audit trail: after a successful write in audit-trail mode, commit the
+      // args + result metadata to GitHub. Fire-and-forget — a GitHub outage never
+      // surfaces as a tool failure. Only runs when GitHub is configured without the
+      // approval gate (approval-gate writes never reach this point; they return the
+      // PR URL above). deploy_merged_changes has its own audit path.
+      if (
+        githubConfig && !githubConfig.requireApproval &&
+        isWriteTool(name) && !dryRun && !GITHUB_BYPASS_TOOLS.has(name) &&
+        resultObj?.success !== false
+      ) {
+        const ghSandbox = activeSandbox ?? 'unknown';
+        const ghAuthor = activeAuthor ?? 'unknown';
+        emitLog('info', `↗ GitHub audit: committing "${name}" to ${githubConfig.owner}/${githubConfig.repo}`, sessionId);
+        commitAuditTrail(
+          githubConfig, ghSandbox, name,
+          (isWriteTool(name) ? stripConfirmFlag(args) : args) as Record<string, unknown>,
+          resultObj as Record<string, unknown>,
+          ghAuthor
+        ).then((committed) => {
+          // Surface GitHub commit failures to the LLM so the user is informed even
+          // though the AJO write succeeded. committed === false means the try-catch
+          // inside commitAuditTrail fired; see server logs for the underlying error.
+          if (committed === false) {
+            emitLog('warning',
+              `⚠ GitHub audit trail: failed to commit "${name}" to ` +
+              `${githubConfig.owner}/${githubConfig.repo} — ` +
+              `the AJO write succeeded but this change was not recorded in GitHub. ` +
+              `Check server logs for details. You may need to manually verify the repository ` +
+              `is initialized (has at least one commit) and the PAT has Contents write access.`,
+              sessionId
+            );
+          }
+        }).catch(() => {}); // commitAuditTrail always resolves; .catch is a safety net only
       }
 
       // Audit trail: attribute every content write to the self-declared author.

@@ -5,7 +5,8 @@ import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
 import { tokenManager, AdobeCredentials } from '../auth/token-manager.js';
 import axios from 'axios';
-import { configureAdobeClient, resetAdobeClient, listTemplates, type NamingConventionConfig } from '../adobe/client.js';
+import { configureAdobeClient, resetAdobeClient, listTemplates, type NamingConventionConfig, type GitHubConfig } from '../adobe/client.js';
+import { testConnection as testGitHubConnection, getDefaultBranch } from '../github/client.js';
 
 import { CredentialsFileSchema } from '../validation/schemas.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -161,6 +162,47 @@ function parseNamingConvention(raw: unknown): ParsedNamingConvention {
     };
   }
   return { ok: true, value: { enabled: true, markdown } };
+}
+
+// Parse and validate GitHub integration config from the configure request body.
+// Returns undefined when disabled (no config stored), a GitHubConfig when enabled,
+// or an error string when required fields are missing/invalid.
+type ParsedGitHubIntegration =
+  | { ok: true; value: GitHubConfig | undefined }
+  | { ok: false; error: string };
+
+function parseGitHubIntegration(raw: unknown): ParsedGitHubIntegration {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: true, value: undefined };
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.enabled !== 'boolean') return { ok: true, value: undefined };
+  if (!obj.enabled) return { ok: true, value: undefined };
+
+  const token = typeof obj.token === 'string' ? obj.token.trim() : '';
+  const owner = typeof obj.owner === 'string' ? obj.owner.trim() : '';
+  const repo = typeof obj.repo === 'string' ? obj.repo.trim() : '';
+
+  if (!token) return { ok: false, error: 'GitHub Personal Access Token is required when GitHub integration is enabled.' };
+  if (!owner) return { ok: false, error: 'GitHub owner (org or username) is required when GitHub integration is enabled.' };
+  if (!repo) return { ok: false, error: 'GitHub repository name is required when GitHub integration is enabled.' };
+
+  // Validate owner/repo look like valid GitHub identifiers (no slashes, reasonable chars).
+  if (!/^[a-zA-Z0-9_.-]{1,100}$/.test(owner)) {
+    return { ok: false, error: 'GitHub owner must contain only alphanumeric characters, hyphens, underscores, or dots.' };
+  }
+  if (!/^[a-zA-Z0-9_.-]{1,100}$/.test(repo)) {
+    return { ok: false, error: 'GitHub repository name must contain only alphanumeric characters, hyphens, underscores, or dots.' };
+  }
+
+  return {
+    ok: true,
+    value: {
+      token,
+      owner,
+      repo,
+      requireApproval: obj.requireApproval === true,
+      defaultBranch: 'main' // resolved after connectivity test
+    }
+  };
 }
 
 // Self-declared author email. We require a syntactically valid address but make
@@ -638,6 +680,27 @@ export function createExpressApp(): express.Application {
     });
   });
 
+  // Lightweight connectivity check for the GitHub integration UI step. Validates
+  // the PAT has access to the specified repo BEFORE the user activates the server,
+  // so misconfigured tokens surface immediately with a clear error rather than
+  // failing silently on the first content write.
+  app.post('/api/github-test', csrfGuard, authLimiter, async (req: Request, res: Response) => {
+    const { token, owner, repo } = (req.body ?? {}) as { token?: string; owner?: string; repo?: string };
+    if (!token?.trim() || !owner?.trim() || !repo?.trim()) {
+      return res.status(400).json({ success: false, error: 'token, owner, and repo are required.' });
+    }
+    try {
+      // testGitHubConnection checks both write-access permissions and that the repo
+      // has at least one commit — empty repos return a clear, actionable error.
+      await testGitHubConnection(token.trim(), owner.trim(), repo.trim());
+      return res.json({ success: true, message: `Connected to ${owner.trim()}/${repo.trim()}` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn('GitHub connectivity test failed', { owner, repo, error: msg });
+      return res.status(400).json({ success: false, error: msg });
+    }
+  });
+
   app.post('/api/configure', csrfGuard, authLimiter, async (req: Request, res: Response) => {
     const parsedReq = parseConfigRequest(req.body);
     if (!parsedReq.ok) {
@@ -662,6 +725,13 @@ export function createExpressApp(): express.Application {
     }
     const namingConvention = ncResult.value;
 
+    // Optional GitHub integration — validated before storage.
+    const ghResult = parseGitHubIntegration((req.body as Record<string, unknown>)?.githubIntegration);
+    if (!ghResult.ok) {
+      return res.status(400).json({ success: false, error: ghResult.error });
+    }
+    let githubIntegration = ghResult.value;
+
     // Apply credentials so the token manager can acquire an IMS token
     tokenManager.setCredentials(creds);
 
@@ -684,7 +754,10 @@ export function createExpressApp(): express.Application {
       accessToken, creds.API_KEY!, creds.IMS_ORG!, sandboxName
     );
 
-    // Configure client with all info (including auto-detected tenant ID)
+    // Configure client with all info (including auto-detected tenant ID).
+    // GitHub integration is provisionally stored here; it is verified in step 4 and
+    // the defaultBranch is filled in then. Using a provisional store means the
+    // AJO sandbox validation (step 3) can proceed concurrently with GitHub setup.
     configureAdobeClient({
       sandboxName,
       imsOrg: creds.IMS_ORG!,
@@ -692,7 +765,8 @@ export function createExpressApp(): express.Application {
       orgName,
       tenantId: detectedTenantId,
       authorEmail,
-      ...(namingConvention ? { namingConvention } : {})
+      ...(namingConvention ? { namingConvention } : {}),
+      ...(githubIntegration ? { githubIntegration } : {})
     });
 
     // ── Step 3: validate sandbox via lightweight read call ────────────────────
@@ -728,12 +802,52 @@ export function createExpressApp(): express.Application {
       });
     }
 
+    // ── Step 4: verify GitHub connectivity and resolve default branch (optional) ──
+    if (githubIntegration) {
+      try {
+        // testGitHubConnection also verifies the repo has at least one commit
+        // (empty repos fail with a clear actionable error before we get here).
+        await testGitHubConnection(githubIntegration.token, githubIntegration.owner, githubIntegration.repo);
+        const branch = await getDefaultBranch(githubIntegration.token, githubIntegration.owner, githubIntegration.repo);
+        githubIntegration = { ...githubIntegration, defaultBranch: branch };
+
+        // Re-configure with the resolved default branch now that we have it.
+        configureAdobeClient({
+          sandboxName,
+          imsOrg: creds.IMS_ORG!,
+          apiKey: creds.API_KEY!,
+          orgName,
+          tenantId: detectedTenantId,
+          authorEmail,
+          ...(namingConvention ? { namingConvention } : {}),
+          githubIntegration
+        });
+        logger.info('GitHub integration verified', {
+          owner: githubIntegration.owner,
+          repo: githubIntegration.repo,
+          defaultBranch: branch,
+          requireApproval: githubIntegration.requireApproval
+        });
+      } catch (err) {
+        tokenManager.reset();
+        resetAdobeClient();
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn('GitHub connectivity check failed during configure', { error: msg });
+        return res.status(400).json({
+          success: false,
+          error: `GitHub connection failed: ${msg}. Check your PAT, owner, and repository name.`
+        });
+      }
+    }
+
     logger.info('Server configured and validated', {
       sandboxName,
       imsOrg: creds.IMS_ORG,
       tenantId: detectedTenantId,
       authorEmail,
-      hasClientSecret: !!(creds.CLIENT_SECRET && creds.CLIENT_SECRET !== 'placeholder123')
+      hasClientSecret: !!(creds.CLIENT_SECRET && creds.CLIENT_SECRET !== 'placeholder123'),
+      githubEnabled: !!githubIntegration,
+      githubMode: githubIntegration ? (githubIntegration.requireApproval ? 'approval-gate' : 'audit-trail') : undefined
     });
 
     return res.json({
@@ -744,6 +858,8 @@ export function createExpressApp(): express.Application {
       tenantNamespace: detectedTenantId ? `_${detectedTenantId}` : undefined,
       authorEmail,
       writesAllowed: getWritesAllowed(),
+      githubEnabled: !!githubIntegration,
+      githubMode: githubIntegration ? (githubIntegration.requireApproval ? 'approval-gate' : 'audit-trail') : undefined,
       mcpEndpoint: '/mcp'
     });
   });

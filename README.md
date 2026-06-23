@@ -12,16 +12,17 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 4. [Prerequisites](#prerequisites)
 5. [Run](#run)
 6. [Configuration](#configuration)
-7. [Client Connection Guide](#client-connection-guide)
-8. [Available Tools — Detailed](#available-tools--detailed)
-9. [MCP Resources](#mcp-resources)
-10. [MCP Prompts](#mcp-prompts)
-11. [Observability](#observability)
-12. [Security](#security)
-13. [Development](#development)
-14. [Troubleshooting](#troubleshooting)
-15. [Architecture](#architecture)
-16. [License](#license)
+7. [GitHub Integration (optional)](#github-integration-optional)
+8. [Client Connection Guide](#client-connection-guide)
+9. [Available Tools — Detailed](#available-tools--detailed)
+10. [MCP Resources](#mcp-resources)
+11. [MCP Prompts](#mcp-prompts)
+12. [Observability](#observability)
+13. [Security](#security)
+14. [Development](#development)
+15. [Troubleshooting](#troubleshooting)
+16. [Architecture](#architecture)
+17. [License](#license)
 
 ---
 
@@ -104,6 +105,13 @@ Reference content the LLM fetches to produce output in the exact format AJO expe
 | Tool | Description |
 |------|-------------|
 | `get_server_context` | Reports who/what the server is acting as (author, sandbox, tenant, org, write-access) plus the full grouped tool catalog. |
+
+### GitHub Integration — optional
+When a GitHub repository is configured (see [GitHub Integration](#github-integration-optional)), two additional tools are exposed.
+| Tool | Description |
+|------|-------------|
+| `check_pr_status` | Check whether a GitHub pull request is open, merged, or closed, and get its merge commit SHA. |
+| `deploy_merged_changes` | Read the payload from a merged PR and re-execute the AJO write operations it describes, applying approved changes to AJO. |
 
 ---
 
@@ -562,6 +570,104 @@ These reflect the email entered at the most recent setup; reconnect the client a
 
 ---
 
+## GitHub Integration (optional)
+
+The server can mirror every AJO content change to a GitHub repository as a structured JSON commit, giving you a full version history of your content assets outside of AJO. You can also use it as a **human-approval gate**: instead of writing to AJO directly, the LLM opens a pull request that a human reviews and merges, then a follow-up tool call applies the approved changes.
+
+The integration is entirely opt-in — the server works normally without it, and you can enable or disable it at any time from the setup UI.
+
+### Two operating modes
+
+| Mode | How it works |
+|------|--------------|
+| **Audit Trail** | After every successful AJO write, the server asynchronously commits a JSON record of the args and result to the repository. The AJO write is never blocked — if the GitHub commit fails, the write has already succeeded and the server surfaces a warning to the LLM. |
+| **PR Approval Gate** | Instead of writing to AJO, the LLM opens a branch and a pull request with the proposed content. Once a human merges it, call `deploy_merged_changes` with the PR URL to apply the changes to AJO. |
+
+### Setting up the GitHub PAT
+
+The integration uses a **GitHub fine-grained Personal Access Token (PAT)**, not a classic token. Fine-grained PATs let you scope permissions to a single repository.
+
+1. Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
+2. Under **Repository access**, select **Only select repositories** and choose your target repo.
+3. Under **Repository permissions**, grant:
+   - **Contents: Read and write** — required to commit files and read file content.
+   - **Pull requests: Read and write** — required for PR Approval Gate mode (creating and reading PRs).
+4. Copy the generated token — it is shown only once.
+
+> **Keep the PAT private.** It is stored in server memory only and never written to disk, logged, or returned through any MCP tool.
+
+### Repository requirements
+
+- The repository must have **at least one commit** before the integration can be enabled. GitHub's API cannot write to a repository whose git storage hasn't been initialized. If your repo is brand new, add a README or any file via the GitHub web UI before testing the connection.
+- The integration works with **public or private** repositories, as long as the PAT has the permissions above.
+
+### Configuring the integration
+
+In the setup UI at `http://localhost:3000`, a **GitHub Integration** card appears after the server has started (Step 5). Fill in:
+
+- **Personal Access Token** — the fine-grained PAT from the step above.
+- **Owner** — the GitHub username or organization that owns the repository (e.g. `acmecorp`).
+- **Repository** — the repository name (e.g. `ajo-content`).
+- **Mode** — choose **Audit Trail** or **PR Approval Gate**.
+
+Click **Test Connection** to verify the PAT has write access and the repository has at least one commit. Once the test passes, click **Enable GitHub Integration** to activate it.
+
+The integration settings are stored in memory for the lifetime of the server — restart the container and you'll need to re-enter them. This is intentional; secrets are never written to disk.
+
+### File structure in the repository
+
+Each AJO write produces one JSON file at a path derived from the sandbox name, asset type, and asset identifier:
+
+```
+{sandbox-name}/
+  content-templates/
+    {template-id}.json
+  content-fragments/
+    {fragment-id}.json
+  folders/
+    {folder-id}.json
+  tags/
+    {tag-id}.json
+```
+
+Every file contains a `_meta` block with the operation name, timestamp, author email, and AJO ID, followed by the tool arguments used to produce the asset. Delete/archive operations write a **tombstone record** — the file stays in the repo (preserving history) but its content is replaced with a record showing what was removed and when.
+
+**Example commit for `create_content_fragment`:**
+```json
+{
+  "_meta": {
+    "operation": "create_content_fragment",
+    "ajoId": "b6d70a45-a149-453b-85ba-809a5d40066d",
+    "updatedAt": "2026-06-22T14:32:00.000Z",
+    "updatedBy": "alice@example.com",
+    "sandbox": "my-sandbox"
+  },
+  "name": "Global Footer",
+  "type": "html",
+  "channels": ["email"],
+  "fragment": { "content": "<footer>© 2026 Acme Corp</footer>" }
+}
+```
+
+### PR Approval Gate workflow
+
+1. **LLM proposes a change** — instead of calling `create_content_fragment` directly, the LLM opens a PR with the proposed JSON payload. It returns the PR number and URL.
+2. **Human reviews and merges** — the PR shows exactly what will be sent to AJO. Merge it on GitHub when you're happy with the content.
+3. **Deploy the merged change** — ask the LLM: *"Deploy the changes from [PR URL]."* It calls `deploy_merged_changes`, which reads the merged payload, strips `_meta`, and calls the original tool to write to AJO. The write goes through the normal audit trail and confirmation gate.
+4. **Check status** — at any point you can ask: *"What is the status of [PR URL]?"* The `check_pr_status` tool returns whether the PR is open, merged, or closed.
+
+### Example prompts for GitHub integration
+
+> "What's the status of the PR at [PR URL]?"
+
+> "Deploy the approved changes from [PR URL] to AJO."
+
+> "Create a content fragment for our new promo banner, but open a PR for review instead of writing directly."
+
+> "Is the GitHub integration enabled? What repo is it pointing to?"
+
+---
+
 ## Client Connection Guide
 
 > **Prerequisite:** finish [Build & Run](#build--run) and [Configuration](#configuration) first. There is **one** long-lived container (started by `docker compose up -d`) that you configure once at `http://localhost:3000`. Every client below connects to that same running server at `http://localhost:3000/mcp` — no client starts its own container, so the configuration you entered is shared by all of them and survives client restarts.
@@ -648,7 +754,7 @@ Protocol: Streamable HTTP (MCP 2024-11-05)
 
 ## Available Tools — Detailed
 
-All 24 tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)).
+All tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)). The two GitHub integration tools (`check_pr_status`, `deploy_merged_changes`) are only present when the GitHub integration is enabled.
 
 ### Content templates
 
@@ -905,6 +1011,24 @@ Returns who/what the server is operating as — `authorEmail` (self-declared at 
 
 It also returns `tools` — the full catalog of every tool this server exposes, grouped by domain (`[{ group, tools: [{ name, title }] }]`). This is the reliable way for a client to discover all capabilities by exact name in a single call, which matters when the client defers tools and a fuzzy tool search ranks one below its result cutoff. The same catalog is also rendered into the server `instructions` at connection time, so the two channels cover each other (instructions need no tool call but are dropped by some clients; this tool result is high-salience but requires the call).
 
+### GitHub integration tools
+
+These tools are only exposed when the [GitHub Integration](#github-integration-optional) is enabled. They are read-only from the perspective of AJO — they interact with GitHub, not with AJO's Content API.
+
+#### `check_pr_status` *(read)*
+```json
+{ "prUrl": "https://github.com/owner/repo/pull/42" }
+```
+Returns the PR's number, state (`open` | `closed`), whether it has been merged, its title, and the merge commit SHA (if merged). Use this before calling `deploy_merged_changes` to confirm the PR is ready.
+
+#### `deploy_merged_changes` *(write)*
+```json
+{ "prUrl": "https://github.com/owner/repo/pull/42" }
+```
+Reads the JSON payloads from a merged pull request (created by the PR Approval Gate mode) and re-executes the AJO write operations they describe. Each file in the PR that has a valid `_meta.operation` produces one write call. Requires the PR to be merged — the call fails with a clear error if the PR is still open or was closed without merging.
+
+The `_meta` block is stripped before the args are passed to the AJO tool, so only the original content payload reaches the API. Each operation goes through the normal write-confirmation gate (and is logged to the audit trail if it succeeds).
+
 ### Authoring references
 
 Read-only reference content, delivered as tools so the model can fetch it on its own even in clients that can't read MCP resources directly (e.g. Claude Desktop). The `create_*` / `update_*` tools' descriptions point the model here before it authors HTML or personalization.
@@ -1003,6 +1127,7 @@ These map to the workflow guidance the server's `instructions` point the model a
 ## Security
 
 - Credentials stored in memory only, never logged or returned via tools
+- GitHub PAT stored in memory only — never written to disk, logged, or returned through any MCP tool
 - Rate limiting: 200 req/min global, 5 req/min on `/api/configure`
 - Helmet security headers
 - Input validation via Zod on all tool inputs
@@ -1138,10 +1263,15 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   ├── tools/
 │   │   ├── templates.ts        Content template tool definitions + handlers
 │   │   ├── fragments.ts        Content fragment tool definitions + handlers
+│   │   ├── github.ts           check_pr_status and deploy_merged_changes tool definitions + handlers
 │   │   ├── schema-registry.ts  XDM schema / field group / union lookup tools (read-only)
 │   │   ├── visual-designer.ts  get_visual_designer_requirements tool — AJO email HTML spec (read-only)
 │   │   ├── personalization.ts  get_personalization_syntax tool — AJO personalization syntax library (read-only)
 │   │   └── context.ts          get_server_context tool — reports author/sandbox/tenant (read-only)
+│   ├── github/
+│   │   ├── client.ts           GitHub REST API client — PAT auth, repo/file/branch/PR operations
+│   │   ├── sync.ts             Audit-trail commit and PR approval-gate logic (commitAuditTrail, createApprovalPR, readMergedPRContent)
+│   │   └── types.ts            GitHubConfig type (token, owner, repo, defaultBranch, mode)
 │   ├── reference/
 │   │   └── ajo-personalization-syntax-library.md  Personalization syntax library (shipped asset, served by get_personalization_syntax)
 │   ├── adobe/

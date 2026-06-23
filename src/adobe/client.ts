@@ -3,6 +3,9 @@ import axiosRetry from 'axios-retry';
 import { v4 as uuidv4 } from 'uuid';
 import { tokenManager } from '../auth/token-manager.js';
 import { logger, adobeApiErrorCounter } from '../telemetry/index.js';
+import type { GitHubConfig } from '../github/types.js';
+
+export type { GitHubConfig };
 
 export interface NamingConventionConfig {
   enabled: boolean;
@@ -18,6 +21,7 @@ export interface AdobeClientConfig {
   authorEmail?: string;  // self-declared author email, recorded with content changes
   baseUrl?: string;
   namingConvention?: NamingConventionConfig;
+  githubIntegration?: GitHubConfig;
 }
 
 export interface PaginationParams {
@@ -143,6 +147,10 @@ export function getConfiguredImsOrg(): string | null {
 
 export function getConfiguredNamingConvention(): NamingConventionConfig | undefined {
   return clientConfig?.namingConvention;
+}
+
+export function getConfiguredGitHubIntegration(): GitHubConfig | undefined {
+  return clientConfig?.githubIntegration;
 }
 
 export function resetAdobeClient(): void {

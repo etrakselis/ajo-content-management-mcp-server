@@ -28,7 +28,8 @@ jest.mock('../../src/adobe/unified-tags-client', () => ({
 
 import {
   handleCreateFolder, handleGetFolder, handleUpdateFolder,
-  handleDeleteFolder, handleListSubfolders, handleValidateFolder
+  handleDeleteFolder, handleListSubfolders, handleValidateFolder,
+  handleEnsureFolderPath
 } from '../../src/tools/folders';
 import {
   handleListTagCategories, handleGetTagCategory,
@@ -264,5 +265,104 @@ describe('tag tools', () => {
     const res = await handleValidateTags({ ids: [] }) as Envelope;
     expect(res.success).toBe(false);
     expect(res.error?.code).toBe('VALIDATION_ERROR');
+  });
+});
+
+// ─── ensure_folder_path ─────────────────────────────────────────────────────
+
+type PathEnvelope = { success: boolean; leafFolderId?: string; path?: Array<{ name: string; id: string; created: boolean }>; error?: { code: string; message?: string } };
+
+const ID_A = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+const ID_B = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+const ID_C = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+
+describe('ensure_folder_path', () => {
+  test('creates all levels when none exist', async () => {
+    m.createFolder
+      .mockResolvedValueOnce({ id: ID_A })
+      .mockResolvedValueOnce({ id: ID_B })
+      .mockResolvedValueOnce({ id: ID_C });
+
+    const res = await handleEnsureFolderPath({ folderType: 'fragment', path: ['NV', 'BIS', 'Wishlist'] }) as PathEnvelope;
+    expect(res.success).toBe(true);
+    expect(res.leafFolderId).toBe(ID_C);
+    expect(res.path).toEqual([
+      { name: 'NV', id: ID_A, created: true },
+      { name: 'BIS', id: ID_B, created: true },
+      { name: 'Wishlist', id: ID_C, created: true }
+    ]);
+    expect(m.createFolder).toHaveBeenNthCalledWith(1, 'fragment', { name: 'NV', parentFolderId: null });
+    expect(m.createFolder).toHaveBeenNthCalledWith(2, 'fragment', { name: 'BIS', parentFolderId: ID_A });
+    expect(m.createFolder).toHaveBeenNthCalledWith(3, 'fragment', { name: 'Wishlist', parentFolderId: ID_B });
+  });
+
+  test('reuses an existing top-level folder on duplicate, then creates child', async () => {
+    m.createFolder
+      .mockRejectedValueOnce(new Error('Duplicate folder name'))
+      .mockResolvedValueOnce({ id: ID_B });
+    m.getSubfolders.mockResolvedValueOnce({ id: 'root', children: [{ id: ID_A, name: 'NV' }] });
+
+    const res = await handleEnsureFolderPath({ folderType: 'fragment', path: ['NV', 'BIS'] }) as PathEnvelope;
+    expect(res.success).toBe(true);
+    expect(res.leafFolderId).toBe(ID_B);
+    expect(res.path).toEqual([
+      { name: 'NV', id: ID_A, created: false },
+      { name: 'BIS', id: ID_B, created: true }
+    ]);
+    expect(m.getSubfolders).toHaveBeenCalledWith('fragment', 'root');
+  });
+
+  test('reuses existing folders at every level', async () => {
+    m.createFolder
+      .mockRejectedValueOnce(new Error('Duplicate folder name'))
+      .mockRejectedValueOnce(new Error('Duplicate folder name'));
+    m.getSubfolders
+      .mockResolvedValueOnce({ id: 'root', children: [{ id: ID_A, name: 'NV' }] })
+      .mockResolvedValueOnce({ id: ID_A, children: [{ id: ID_B, name: 'BIS' }] });
+
+    const res = await handleEnsureFolderPath({ folderType: 'fragment', path: ['NV', 'BIS'] }) as PathEnvelope;
+    expect(res.success).toBe(true);
+    expect(res.leafFolderId).toBe(ID_B);
+    expect(res.path).toEqual([
+      { name: 'NV', id: ID_A, created: false },
+      { name: 'BIS', id: ID_B, created: false }
+    ]);
+  });
+
+  test('returns FOLDER_NOT_FOUND when duplicate is reported but name is missing from children', async () => {
+    m.createFolder.mockRejectedValueOnce(new Error('Duplicate folder name'));
+    m.getSubfolders.mockResolvedValueOnce({ id: 'root', children: [{ id: ID_A, name: 'Other' }] });
+
+    const res = await handleEnsureFolderPath({ folderType: 'fragment', path: ['NV'] }) as PathEnvelope;
+    expect(res.success).toBe(false);
+    expect(res.error?.code).toBe('FOLDER_NOT_FOUND');
+  });
+
+  test('propagates a non-duplicate API error immediately', async () => {
+    m.createFolder.mockRejectedValueOnce(new Error('not onboarded'));
+    const res = await handleEnsureFolderPath({ folderType: 'bad-type', path: ['X'] }) as PathEnvelope;
+    expect(res.success).toBe(false);
+    expect(res.error?.message).toMatch(/not onboarded/);
+  });
+
+  test('rejects an empty path (validation)', async () => {
+    const res = await handleEnsureFolderPath({ folderType: 'fragment', path: [] }) as PathEnvelope;
+    expect(res.success).toBe(false);
+    expect(res.error?.code).toBe('VALIDATION_ERROR');
+    expect(m.createFolder).not.toHaveBeenCalled();
+  });
+
+  test('rejects a path deeper than 10 levels (validation)', async () => {
+    const path = Array.from({ length: 11 }, (_, i) => `Level${i}`);
+    const res = await handleEnsureFolderPath({ folderType: 'fragment', path }) as PathEnvelope;
+    expect(res.success).toBe(false);
+    expect(res.error?.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('returns NOT_CONFIGURED when the server is not set up', async () => {
+    configured = false;
+    const res = await handleEnsureFolderPath({ folderType: 'fragment', path: ['X'] }) as PathEnvelope;
+    expect(res.success).toBe(false);
+    expect(res.error?.code).toBe('NOT_CONFIGURED');
   });
 });

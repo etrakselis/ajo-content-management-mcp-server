@@ -1,6 +1,7 @@
 import {
   isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName,
-  getConfiguredTenantId, getConfiguredAuthorEmail, getConfiguredNamingConvention
+  getConfiguredTenantId, getConfiguredAuthorEmail, getConfiguredNamingConvention,
+  getConfiguredGitHubIntegration
 } from '../adobe/client.js';
 import { getWritesAllowed } from '../mcp/access-policy.js';
 import type { ToolCatalogGroup } from '../mcp/tool-catalog.js';
@@ -14,6 +15,14 @@ import { notConfiguredError, withTelemetry, buildOutputSchema } from './utils.js
 let toolCatalog: ToolCatalogGroup[] = [];
 export function setToolCatalog(catalog: ToolCatalogGroup[]): void {
   toolCatalog = catalog;
+}
+
+// Whether the current sandbox write-confirmation gate has been cleared this session.
+// Injected by createMcpServer() after the confirmedSandboxes set is established, so
+// get_server_context can report it without coupling context.ts to server internals.
+let writeConfirmedGetter: (() => boolean) | null = null;
+export function setWriteConfirmedGetter(fn: () => boolean): void {
+  writeConfirmedGetter = fn;
 }
 
 // ─── get_server_context ────────────────────────────────────────────────────
@@ -34,6 +43,7 @@ export const getServerContextDefinition = {
         tenantNamespace: { type: ['string', 'null'], description: 'Tenant namespace (e.g. _acme); null if unknown.' },
         orgName: { type: 'string', description: 'Adobe org name (optional). Omitted entirely when not configured — absence means no org name was set, not an error.' },
         writeAccess: { type: 'boolean', description: 'Whether write operations are currently enabled.' },
+        writeConfirmed: { type: 'boolean', description: 'Whether the write-confirmation gate has already been cleared for the current sandbox this session. True means subsequent non-destructive writes proceed without a WRITE_CONFIRMATION_REQUIRED hold.' },
         configured: { type: 'boolean', description: 'Whether credentials and sandbox are configured.' },
         tools: {
           type: 'array',
@@ -71,11 +81,11 @@ export const getServerContextDefinition = {
       }
     }
   }),
-  description: `Return the identity and configuration this MCP server is currently operating as: the author it is acting on behalf of (a self-declared email captured at setup — not verified), the AJO sandbox, the tenant namespace, the org name, and whether write access is enabled.
+  description: `Return the identity, configuration, and full tool inventory for this MCP server. Call this to list all available tools, enumerate capabilities, discover what this server can do, or find a tool by name — it returns the complete catalog grouped by domain so you can select any tool by its exact name without relying on keyword search.
 
-It also returns the full catalog of tools this server exposes (grouped by domain) — call this first to discover every available capability by exact name, instead of guessing at tool searches — and a catalog of every resource it exposes, each with an "access" hint telling you how to actually obtain that content (which tool to call, or where it already lives). The resource catalog matters because many clients do not let the model read MCP resources directly.
+Also returns: the author identity, AJO sandbox, tenant namespace, org name, whether write access is enabled, and whether the write-confirmation gate has already been cleared for this sandbox (writeConfirmed: true means non-destructive writes proceed immediately without a WRITE_CONFIRMATION_REQUIRED hold).
 
-Use this to answer questions like "who is this server running on behalf of?", "which sandbox / tenant am I connected to?", "can I make changes (is write access on)?", "what can this server do?", or "what resources are available and how do I read them?".
+Use this to answer: "list all tools", "what tools are available?", "enumerate capabilities", "find a tool for X", "who is this server running as?", "which sandbox / tenant am I on?", "is write access on?", "has a write been confirmed yet?", "what resources are available and how do I read them?".
 
 Example usage: {}
 
@@ -98,6 +108,7 @@ export async function handleGetServerContext(_args?: unknown) {
     // a non-existent org.
     const orgName = getConfiguredOrgName()?.trim();
     const namingConvention = getConfiguredNamingConvention();
+    const ghConfig = getConfiguredGitHubIntegration();
     return {
       success: true,
       data: {
@@ -106,13 +117,60 @@ export async function handleGetServerContext(_args?: unknown) {
         tenantNamespace: tenantId ? `_${tenantId}` : null,
         ...(orgName ? { orgName } : {}),
         writeAccess: getWritesAllowed(),
+        writeConfirmed: writeConfirmedGetter?.() ?? false,
         configured: true,
         // Only surface the convention when enforcement is ON — never expose rules the
         // operator chose not to enforce (defense-in-depth; disabled configs aren't stored).
         ...(namingConvention?.enabled ? { namingConvention } : {}),
+        // Surface GitHub integration status so the LLM knows which write mode is active
+        // (approval-gate vs audit-trail) without exposing the token.
+        ...(ghConfig ? {
+          githubIntegration: {
+            enabled: true,
+            owner: ghConfig.owner,
+            repo: ghConfig.repo,
+            mode: ghConfig.requireApproval ? 'approval-gate' : 'audit-trail',
+            defaultBranch: ghConfig.defaultBranch
+          }
+        } : {}),
         tools: toolCatalog,
         resources: RESOURCE_ACCESS_CATALOG
       }
     };
+  });
+}
+
+// ─── get_naming_convention ────────────────────────────────────────────────────
+
+export const getNamingConventionDefinition = {
+  name: 'get_naming_convention',
+  title: 'Get Naming Convention',
+  outputSchema: buildOutputSchema({
+    enabled: { type: 'boolean', description: 'Whether a naming convention is currently enforced.' },
+    rules: { type: ['string', 'null'], description: 'The full naming convention rules in Markdown. null when no convention is configured.' }
+  }),
+  description: `Return the administrator-defined naming convention that this server enforces when creating or renaming content templates, fragments, folders, and tags. Call this before assigning any name to ensure compliance. Returns the full rules as Markdown.
+
+When enabled, the create_* tools (create_content_template, create_content_fragment, create_folder, create_tag) and rename-capable tools require names to follow these rules — non-compliant names should be caught and corrected before submitting.
+
+Example usage: {}
+
+Returns: { success: true, enabled: true, rules: "# Naming Convention\\n..." } or { enabled: false, rules: null }`,
+  annotations: { readOnlyHint: true, openWorldHint: false },
+  inputSchema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    properties: {}
+  }
+};
+
+export async function handleGetNamingConvention(_args?: unknown) {
+  if (!isClientConfigured()) return notConfiguredError();
+  return withTelemetry('get_naming_convention', async () => {
+    const convention = getConfiguredNamingConvention();
+    if (!convention?.enabled || !convention.markdown.trim()) {
+      return { success: true, enabled: false, rules: null };
+    }
+    return { success: true, enabled: true, rules: convention.markdown.trim() };
   });
 }

@@ -426,6 +426,11 @@ export const ValidateFolderSchema = z.object({
   folderId: FolderIdSchema
 });
 
+export const EnsureFolderPathSchema = z.object({
+  folderType: FolderTypeSchema,
+  path: z.array(z.string().min(1, 'Folder name must not be empty')).min(1, 'path must have at least one entry').max(10, 'path depth limit is 10 levels')
+});
+
 // ─── Unified Tags & Tag categories ─────────────────────────────────────────────
 // Tags classify business objects; tag categories group tags into meaningful sets.
 // Both list endpoints share the same pagination/sort grammar. `property` is a

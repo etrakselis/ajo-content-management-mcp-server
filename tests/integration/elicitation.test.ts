@@ -20,6 +20,10 @@ jest.mock('../../src/telemetry/index', () => ({
 }));
 
 jest.mock('../../src/telemetry/audit', () => ({ recordAudit: jest.fn() }));
+jest.mock('../../src/github/sync', () => ({
+  commitAuditTrail: jest.fn().mockResolvedValue(undefined),
+  createApprovalPR: jest.fn()
+}));
 
 jest.mock('../../src/auth/token-manager', () => ({
   tokenManager: { getStatus: jest.fn().mockReturnValue({ configured: true, tokenCached: true }) }
@@ -32,6 +36,7 @@ jest.mock('../../src/adobe/client', () => ({
   getConfiguredTenantId: jest.fn().mockReturnValue('acme'),
   getConfiguredAuthorEmail: jest.fn().mockReturnValue('author@example.com'),
   getConfiguredNamingConvention: jest.fn().mockReturnValue(undefined),
+  getConfiguredGitHubIntegration: jest.fn().mockReturnValue(undefined),
   listFragments: jest.fn().mockResolvedValue({ items: [] }),
   archiveFragment: jest.fn().mockResolvedValue({ id: 'frag-1', etag: '"v2"' }),
   createFragment: jest.fn().mockResolvedValue({ id: 'frag-new', location: '/fragments/frag-new' }),

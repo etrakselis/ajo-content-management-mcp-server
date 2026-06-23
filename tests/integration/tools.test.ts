@@ -19,6 +19,7 @@ jest.mock('../../src/adobe/client', () => ({
   getConfiguredTenantId: jest.fn().mockReturnValue('mytenant'),
   getConfiguredAuthorEmail: jest.fn().mockReturnValue('author@example.com'),
   getConfiguredNamingConvention: jest.fn().mockReturnValue(undefined),
+  getConfiguredGitHubIntegration: jest.fn().mockReturnValue(undefined),
   listTemplates: jest.fn(),
   createTemplate: jest.fn(),
   getTemplate: jest.fn(),
@@ -58,7 +59,7 @@ import {
   handleArchiveContentFragment
 } from '../../src/tools/fragments';
 
-import { handleGetServerContext } from '../../src/tools/context';
+import { handleGetServerContext, handleGetNamingConvention, setWriteConfirmedGetter } from '../../src/tools/context';
 import { handleGetVisualDesignerRequirements } from '../../src/tools/visual-designer';
 import { handleGetPersonalizationGuidance } from '../../src/tools/personalization';
 
@@ -125,6 +126,60 @@ describe('get_server_context', () => {
     expect(result.data).not.toHaveProperty('namingConvention');
     // Restore the default — jest.clearAllMocks() doesn't reset mockReturnValue.
     mockClient.getConfiguredNamingConvention.mockReturnValue(undefined);
+  });
+
+  test('reports writeConfirmed: false by default and true after the getter is wired', async () => {
+    mockClient.isClientConfigured.mockReturnValue(true);
+    // No getter injected → defaults to false.
+    setWriteConfirmedGetter(null as unknown as () => boolean);
+    let result = await handleGetServerContext({}) as { data: Record<string, unknown> };
+    expect(result.data.writeConfirmed).toBe(false);
+    // Getter returns true → reflected in the output.
+    setWriteConfirmedGetter(() => true);
+    result = await handleGetServerContext({}) as { data: Record<string, unknown> };
+    expect(result.data.writeConfirmed).toBe(true);
+    // Reset.
+    setWriteConfirmedGetter(null as unknown as () => boolean);
+  });
+});
+
+// ─── Naming Convention Tool ───────────────────────────────────────────────────
+
+describe('get_naming_convention', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('returns enabled: false and null rules when no convention is configured', async () => {
+    mockClient.isClientConfigured.mockReturnValue(true);
+    mockClient.getConfiguredNamingConvention.mockReturnValue(undefined);
+    const result = await handleGetNamingConvention({}) as { success: boolean; enabled: boolean; rules: string | null };
+    expect(result.success).toBe(true);
+    expect(result.enabled).toBe(false);
+    expect(result.rules).toBeNull();
+  });
+
+  test('returns enabled: false when convention is disabled', async () => {
+    mockClient.isClientConfigured.mockReturnValue(true);
+    mockClient.getConfiguredNamingConvention.mockReturnValue({ enabled: false, markdown: '# Secret' });
+    const result = await handleGetNamingConvention({}) as { success: boolean; enabled: boolean; rules: string | null };
+    expect(result.success).toBe(true);
+    expect(result.enabled).toBe(false);
+    expect(result.rules).toBeNull();
+  });
+
+  test('returns the full markdown rules when convention is enabled', async () => {
+    mockClient.isClientConfigured.mockReturnValue(true);
+    mockClient.getConfiguredNamingConvention.mockReturnValue({ enabled: true, markdown: '# Naming\n\nUse kebab-case.' });
+    const result = await handleGetNamingConvention({}) as { success: boolean; enabled: boolean; rules: string };
+    expect(result.success).toBe(true);
+    expect(result.enabled).toBe(true);
+    expect(result.rules).toContain('kebab-case');
+  });
+
+  test('returns NOT_CONFIGURED when the server is not set up', async () => {
+    mockClient.isClientConfigured.mockReturnValue(false);
+    const result = await handleGetNamingConvention({}) as { success: boolean; error: { code: string } };
+    expect(result.success).toBe(false);
+    expect(result.error.code).toBe('NOT_CONFIGURED');
   });
 });
 

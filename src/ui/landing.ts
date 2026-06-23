@@ -806,7 +806,72 @@ export const landingPageHtml = `<!DOCTYPE html>
     </div>
     </section>
 
-    <!-- Step 6: Launch -->
+    <!-- Step 6: GitHub Integration — only shown when write access is on -->
+    <section class="step hidden" id="stepGithub" data-step-name="GitHub Integration (optional)">
+    <div class="step-label">Step 6 — GitHub Integration</div>
+    <div class="card">
+      <h2>GitHub integration</h2>
+      <p>Optionally connect a GitHub repository as the source of truth for all AJO content changes. When enabled, every write operation is tracked in GitHub. In <strong>PR Approval Gate</strong> mode, writes are blocked until a human reviews and merges the corresponding GitHub pull request.</p>
+      <label class="toggle-row" for="githubToggle" style="cursor:pointer;margin-bottom:0">
+        <span class="toggle-text">
+          <span class="toggle-title">Enable GitHub integration</span>
+          <span class="hint">Stored in memory only — never written to disk or logged.</span>
+        </span>
+        <span class="switch">
+          <input type="checkbox" id="githubToggle" />
+          <span class="slider"></span>
+        </span>
+      </label>
+
+      <div id="githubEditor" style="display:none;margin-top:20px;display:none;flex-direction:column;gap:14px">
+        <div class="field-group">
+          <label for="githubToken">Personal Access Token (PAT) <span class="required-mark">*</span></label>
+          <input type="password" id="githubToken" placeholder="github_pat_…" autocomplete="off" />
+          <span class="hint">
+            Create a <strong>fine-grained PAT</strong> scoped to your target repo with
+            <strong>Contents: read &amp; write</strong> and <strong>Pull requests: read &amp; write</strong>.
+            Generate one at <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">github.com → Settings → Developer settings → Fine-grained tokens</a>.
+          </span>
+        </div>
+
+        <div style="display:flex;gap:12px">
+          <div class="field-group" style="flex:1">
+            <label for="githubOwner">Owner <span class="required-mark">*</span></label>
+            <input type="text" id="githubOwner" placeholder="org or username" autocomplete="off" />
+            <span class="hint">The GitHub org or personal account that owns the repo.</span>
+          </div>
+          <div class="field-group" style="flex:1">
+            <label for="githubRepo">Repository <span class="required-mark">*</span></label>
+            <input type="text" id="githubRepo" placeholder="my-ajo-content" autocomplete="off" />
+            <span class="hint">Exact repository name (no slashes).</span>
+          </div>
+        </div>
+
+        <div>
+          <label style="display:block;margin-bottom:8px;font-size:13px;font-weight:500">Mode <span class="required-mark">*</span></label>
+          <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;cursor:pointer;font-size:13px;font-weight:400">
+            <input type="radio" name="githubMode" id="githubModeAudit" value="audit" checked style="margin-top:3px;flex-shrink:0" />
+            <span>
+              <strong>Audit Trail</strong> — writes execute normally and are committed to the repo for history. No approval required.
+            </span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;font-weight:400">
+            <input type="radio" name="githubMode" id="githubModeApproval" value="approval" style="margin-top:3px;flex-shrink:0" />
+            <span>
+              <strong>PR Approval Gate</strong> — writes are blocked; instead, a GitHub PR is opened for review. AJO is only updated after the PR is merged and <code>deploy_merged_changes</code> is called.
+            </span>
+          </label>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+          <button class="upload-md-btn" type="button" id="githubTestBtn">Test connection</button>
+          <span id="githubTestStatus" style="font-size:12px"></span>
+        </div>
+      </div>
+    </div>
+    </section>
+
+    <!-- Step 7: Launch -->
     <section class="step hidden" id="step6" data-step-name="Launch">
     <div class="step-label">Step 6 — Launch</div>
     <div class="card">
@@ -1096,6 +1161,13 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('namingConventionToggle').checked = false;
       document.getElementById('namingConventionEditor').style.display = 'none';
       document.getElementById('namingConventionMarkdown').value = DEFAULT_NAMING_MD;
+      document.getElementById('githubToggle').checked = false;
+      document.getElementById('githubEditor').style.display = 'none';
+      document.getElementById('githubToken').value = '';
+      document.getElementById('githubOwner').value = '';
+      document.getElementById('githubRepo').value = '';
+      document.getElementById('githubModeAudit').checked = true;
+      document.getElementById('githubTestStatus').textContent = '';
       document.getElementById('resetNotice').classList.add('show');
       if (clientsWereConnected) document.getElementById('clientRestartNotice').classList.add('show');
       checkReady();
@@ -1293,6 +1365,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('step3').classList.toggle('hidden', !(hasCreds && hasSandbox));
       document.getElementById('step4').classList.toggle('hidden', !(hasCreds && hasSandbox && hasEmail));
       document.getElementById('step5').classList.toggle('hidden', !(hasCreds && hasSandbox && hasEmail && writeOn));
+      document.getElementById('stepGithub').classList.toggle('hidden', !(hasCreds && hasSandbox && hasEmail && writeOn));
       document.getElementById('step6').classList.toggle('hidden', !(hasCreds && hasSandbox && hasEmail));
       // Renumber labels sequentially based on which steps are currently visible,
       // so the user always sees 1, 2, 3… with no gaps regardless of toggle state.
@@ -1454,7 +1527,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       const allowWrites = document.getElementById('writeToggle').checked;
       let data;
       try {
-        data = await postJson('/api/configure', { credentials, sandboxName: sandbox, orgName: org || undefined, allowWrites, authorEmail: getAuthorEmail(), namingConvention: getNamingConvention() });
+        data = await postJson('/api/configure', { credentials, sandboxName: sandbox, orgName: org || undefined, allowWrites, authorEmail: getAuthorEmail(), namingConvention: getNamingConvention(), githubIntegration: getGitHubIntegration() });
       } catch (err) {
         clearInterval(stepTimer);
         if (err.retryAfter !== undefined) { startRetryCountdown(err.retryAfter); return; }
@@ -1602,16 +1675,93 @@ export const landingPageHtml = `<!DOCTYPE html>
       });
     })();
 
+    // ─── GitHub integration ────────────────────────────────────────────────────
+
+    function getGitHubIntegration() {
+      const enabled = document.getElementById('githubToggle').checked;
+      if (!enabled) return { enabled: false };
+      return {
+        enabled: true,
+        token: document.getElementById('githubToken').value.trim(),
+        owner: document.getElementById('githubOwner').value.trim(),
+        repo: document.getElementById('githubRepo').value.trim(),
+        requireApproval: document.getElementById('githubModeApproval').checked
+      };
+    }
+
+    (function setupGitHubIntegration() {
+      const toggle = document.getElementById('githubToggle');
+      const editor = document.getElementById('githubEditor');
+      const testBtn = document.getElementById('githubTestBtn');
+      const testStatus = document.getElementById('githubTestStatus');
+
+      function invalidateGitHub() {
+        if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) resetActivationUI();
+      }
+
+      toggle.addEventListener('change', (e) => {
+        editor.style.display = e.target.checked ? 'flex' : 'none';
+        if (e.target.checked) {
+          setTimeout(() => document.getElementById('stepGithub').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+        } else {
+          testStatus.textContent = '';
+        }
+        invalidateGitHub();
+      });
+
+      ['githubToken', 'githubOwner', 'githubRepo'].forEach(id => {
+        document.getElementById(id).addEventListener('input', () => {
+          testStatus.textContent = '';
+          invalidateGitHub();
+        });
+      });
+
+      document.querySelectorAll('input[name="githubMode"]').forEach(el => {
+        el.addEventListener('change', () => invalidateGitHub());
+      });
+
+      testBtn.addEventListener('click', async () => {
+        const token = document.getElementById('githubToken').value.trim();
+        const owner = document.getElementById('githubOwner').value.trim();
+        const repo = document.getElementById('githubRepo').value.trim();
+        if (!token || !owner || !repo) {
+          testStatus.textContent = '⚠ Fill in token, owner, and repo first.';
+          testStatus.style.color = 'var(--adobe-warn)';
+          return;
+        }
+        testBtn.disabled = true;
+        testStatus.textContent = 'Testing…';
+        testStatus.style.color = 'var(--adobe-mid)';
+        try {
+          const res = await postJson('/api/github-test', { token, owner, repo });
+          if (res.success) {
+            testStatus.textContent = '✓ Connected to ' + escapeHtml(owner) + '/' + escapeHtml(repo);
+            testStatus.style.color = 'var(--adobe-success)';
+          } else {
+            testStatus.textContent = '✗ ' + escapeHtml(res.error || 'Connection failed');
+            testStatus.style.color = '#C9252D';
+          }
+        } catch (err) {
+          testStatus.textContent = '✗ Network error: ' + escapeHtml(err.message || String(err));
+          testStatus.style.color = '#C9252D';
+        } finally {
+          testBtn.disabled = false;
+        }
+      });
+    })();
+
     // The write toggle drives step visibility (naming convention only appears when
     // writes are on) and, once the server is active, flips the access mode live.
     updateCardTrace(document.getElementById('step1'));
 
     document.getElementById('writeToggle').addEventListener('change', async (e) => {
-      // Turning writes off makes naming convention irrelevant — clear it so the
-      // user doesn't accidentally activate a convention they can't use.
+      // Turning writes off makes naming convention and GitHub integration irrelevant
+      // — clear them so the user doesn't accidentally activate options they can't use.
       if (!e.target.checked) {
         document.getElementById('namingConventionToggle').checked = false;
         document.getElementById('namingConventionEditor').style.display = 'none';
+        document.getElementById('githubToggle').checked = false;
+        document.getElementById('githubEditor').style.display = 'none';
       }
       syncSteps();
       if (!document.getElementById('statusPanel').classList.contains('show')) return;

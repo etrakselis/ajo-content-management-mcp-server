@@ -4,7 +4,7 @@ import {
 } from '../adobe/unified-tags-client.js';
 import {
   CreateFolderSchema, GetFolderSchema, UpdateFolderSchema,
-  DeleteFolderSchema, ListSubfoldersSchema, ValidateFolderSchema
+  DeleteFolderSchema, ListSubfoldersSchema, ValidateFolderSchema, EnsureFolderPathSchema
 } from '../validation/schemas.js';
 import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, DATA_OBJECT } from './utils.js';
 
@@ -301,5 +301,98 @@ export async function handleValidateFolder(args: unknown) {
     } catch (err) {
       return { success: false, error: folderError(err) };
     }
+  });
+}
+
+// ─── ensure_folder_path ──────────────────────────────────────────────────────
+
+export const ensureFolderPathDefinition = {
+  name: 'ensure_folder_path',
+  title: 'Ensure Folder Path',
+  outputSchema: buildOutputSchema({
+    leafFolderId: { type: 'string', description: 'The id of the deepest (leaf) folder in the path.' },
+    path: { type: 'array', items: { type: 'object' }, description: 'Each level: { name, id, created }. created: true = new folder; false = existing folder reused.' }
+  }),
+  description: `Idempotently create a multi-level folder path, returning the leaf folder id. ${FOLDER_HINT}
+
+Creates only the levels that do not already exist; existing folders at any level are detected and reused without error. Use this instead of calling create_folder level-by-level: it removes the create→duplicate-error→list-subfolders→retry loop that plain folder creation requires for nested paths.
+
+Example usage:
+- Create or find /NV/BIS/Wishlist for fragment folders:
+  { "folderType": "fragment", "path": ["NV", "BIS", "Wishlist"] }
+- Single top-level folder: { "folderType": "content-template", "path": ["Campaign Assets"] }
+
+Returns: { success: true, leafFolderId: "<uuid>", path: [{ name, id, created }] }`,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  inputSchema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    required: ['folderType', 'path'],
+    properties: {
+      folderType: FOLDER_TYPE_PROP,
+      path: {
+        type: 'array' as const,
+        items: { type: 'string' },
+        minItems: 1,
+        maxItems: 10,
+        description: 'Ordered list of folder names from root to leaf (e.g. ["NV", "BIS", "Wishlist"]). Each level is created if missing, or reused by name if it already exists.'
+      }
+    }
+  }
+};
+
+const DUPLICATE_FOLDER_RE = /duplicate folder name/i;
+
+// Find a direct child of the given parent by exact name. Returns the child's id,
+// or null if not found. parentId null means the root level of the folder tree.
+async function findChildByName(folderType: string, parentId: string | null, name: string): Promise<string | null> {
+  const folderId = parentId ?? 'root';
+  const data = await getSubfolders(folderType, folderId) as { children?: Array<{ id: string; name: string }> };
+  const child = (data.children ?? []).find(c => c.name === name);
+  return child?.id ?? null;
+}
+
+export async function handleEnsureFolderPath(args: unknown) {
+  if (!isClientConfigured()) return notConfiguredError();
+  return withTelemetry('ensure_folder_path', async () => {
+    const parsed = EnsureFolderPathSchema.safeParse(args);
+    if (!parsed.success) return validationError(parsed.error);
+    const { folderType, path } = parsed.data;
+
+    const levels: Array<{ name: string; id: string; created: boolean }> = [];
+    let parentId: string | null = null;
+
+    for (const name of path) {
+      try {
+        const data = await createFolder(folderType, { name, parentFolderId: parentId }) as { id: string };
+        parentId = data.id;
+        levels.push({ name, id: data.id, created: true });
+      } catch (err) {
+        const e = buildError(err);
+        if (!DUPLICATE_FOLDER_RE.test(e.message)) {
+          return { success: false, error: folderError(err) };
+        }
+        // Folder already exists — find it by name among the parent's children.
+        try {
+          const existingId = await findChildByName(folderType, parentId, name);
+          if (!existingId) {
+            return {
+              success: false,
+              error: {
+                code: 'FOLDER_NOT_FOUND',
+                message: `Folder "${name}" was reported as a duplicate but could not be found under ` +
+                  `${parentId ? `folder ${parentId}` : 'root'}. Try list_subfolders to inspect the tree.`
+              }
+            };
+          }
+          parentId = existingId;
+          levels.push({ name, id: existingId, created: false });
+        } catch (innerErr) {
+          return { success: false, error: folderError(innerErr) };
+        }
+      }
+    }
+
+    return { success: true, leafFolderId: parentId!, path: levels };
   });
 }
