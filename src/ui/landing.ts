@@ -359,7 +359,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     @keyframes btnBreathe {
       0%, 100% { box-shadow: 0 0 0 0 rgba(192,57,43,0), 0 2px 6px rgba(0,0,0,0.12); }
-      50%       { box-shadow: 0 0 0 7px rgba(192,57,43,0.3), 0 6px 28px rgba(192,57,43,0.45); }
+      50%       { box-shadow: 0 0 0 4px rgba(192,57,43,0.22), 0 4px 16px rgba(192,57,43,0.3); }
     }
     .btn-primary.btn-breathing:not(:disabled) {
       animation: btnBreathe 2.5s ease-in-out infinite;
@@ -1433,8 +1433,19 @@ export const landingPageHtml = `<!DOCTYPE html>
     function updateCardTrace(step) {
       document.querySelectorAll('.card').forEach(c => c.classList.remove('card-trace'));
       if (serverActive || !step || step.id === 'step6') return;
-      const cards = step.querySelectorAll('.card');
-      if (cards.length) cards[cards.length - 1].classList.add('card-trace');
+      // step5 (naming convention) and stepGithub (GitHub integration) are paired optional
+      // steps that appear and disappear together — trace both simultaneously so neither
+      // is overlooked when the user is deciding which to configure.
+      const PAIRED = new Set(['step5', 'stepGithub']);
+      const stepsToTrace = PAIRED.has(step.id)
+        ? Array.from(document.querySelectorAll('.step')).filter(
+            s => PAIRED.has(s.id) && !s.classList.contains('hidden')
+          )
+        : [step];
+      stepsToTrace.forEach(s => {
+        const cards = s.querySelectorAll('.card');
+        if (cards.length) cards[cards.length - 1].classList.add('card-trace');
+      });
     }
 
     function checkReady() {
