@@ -494,8 +494,13 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     ? namingConvention.markdown.trim()
     : '';
   const namingEnabled = namingConventionMd.length > 0;
+  // The full rules are NOT inlined here — that copy would be ~5K tokens loaded into
+  // every session's instructions, which many clients drop anyway. Instead point to
+  // get_naming_convention (the authoritative full-rules tool). The convention stays
+  // reachable through three channels: this pointer, get_server_context (returns the
+  // markdown), and the inline pointer on every create_/rename tool description.
   const namingConventionNote = namingEnabled
-    ? ` NAMING CONVENTIONS: The administrator has defined naming rules that you MUST follow when creating or naming content templates, content fragments, folders, and tags. Do not deviate from these rules even if the user asks for a different name — explain the convention and suggest a compliant name instead. Rules:\n${namingConventionMd}`
+    ? ` NAMING CONVENTIONS: The administrator has defined mandatory naming rules for content templates, content fragments, folders, and tags. You MUST follow them when creating or renaming content — call get_naming_convention to retrieve the full rules BEFORE assigning any name. If the user provides a non-compliant name, explain the rule and propose a compliant alternative rather than deviating.`
     : '';
 
   // Brief pointer appended to create_* tool descriptions when a naming convention is

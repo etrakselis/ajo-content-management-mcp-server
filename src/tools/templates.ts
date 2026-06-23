@@ -226,48 +226,23 @@ export const createContentTemplateDefinition = {
   }),
   description: `Create a new content template in Adobe Journey Optimizer.
 
-CHOOSING templateType — "html" vs "content" (they select entirely different content shapes, not two flavors of the same thing):
-  • "content" → a channel-aware container whose shape is selected by "channels". It is the ONLY option for push/sms/inapp/directMail,
-                and for email it is the "structured" form that holds the subject line plus the HTML body and text/x-amp-html/headers parts.
-                The email HTML body still uses the Visual Email Designer (drag-and-drop) — content is a superset of "html" plus a subject,
-                so PREFER "content" for NEW email templates.
-  • "html"    → a raw EMAIL design body only: { html: "<string>" } with NO subject/text/headers (subject is set on the message/campaign).
-                Mainly here to read and edit EXISTING design templates of this type; not the recommended choice for new email templates.
-                Only valid for the email channel.
-  • "html_primary_page" / "html_sub_page" → landing-page bodies ({ html: "<string>" }); separate from both of the above.
-  Decision guide:
-    - email (NEW)      → "content" (default — gives you a subject line; HTML body still drag-and-drop editable).
-    - email (existing) → match whatever templateType the fetched template already uses ("html" or "content") — don't switch it on a plain edit.
-    - push / sms / inapp / directMail → must use "content".
-    - landingpage → "html_primary_page" (or "html_sub_page" for confirmation pages).
-    - code → "content" + subType.
+templateType — "content" vs "html" (they select different content shapes, not two flavors of one):
+  • "content" → channel-aware container. REQUIRED for push/sms/inapp/directMail/code; for email it carries the subject line plus an html.body that stays drag-and-drop editable. DEFAULT — prefer it for new templates.
+  • "html" → raw EMAIL body only ({ html: "<string>" }, NO subject). Use only to edit an existing "html" design template. Email channel only.
+  • "html_primary_page" / "html_sub_page" → landing-page bodies.
+  Decision: email (new) → "content"; email (existing) → keep the fetched type; push/sms/inapp/directMail → "content"; code → "content" + subType; landingpage → "html_primary_page" (or "html_sub_page" for confirmation pages).
 
-Channel → templateType → template shape (channels must have exactly 1 value):
-  "email"       → "content"            → { "subject": "...", "html": { "body": "<html>..." } }  ← DEFAULT for new email (subject + html.body both REQUIRED)
-  "email"       → "html"               → { "html": "<html>..." }  (legacy/existing design templates only; html is a STRING, NO subject)
-  "push"        → "content"            → { "title": "...", "message": "...", "pushType"?: "message"|"silent", "ios"?: {...}, "android"?: {...} }  (deep links go in ios/android interaction.uri)
-  "sms"         → "content"            → { "text": "..." }  (field is "text", not "body"; optional: messageType, title, mediaUri)
-  "inapp"       → "content"            → { "body": { "html": "<html>..." } }  (body is an OBJECT; optional: mobileParameters, editorContext)
-  "code"        → "content" + subType  → { "html": "<string>" } OR { "expression": "<string>" } OR { "condition": "<string>" }  (subType "HTML" or "JSON"; the body key is html/expression/condition, NOT "content")
-  "directMail"  → "content"            → { "fileName": "...", ... }  (fileName REQUIRED; optional: appendTimeStamp, notes, notesPosition, sortBy, attributes)
-  "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page" for confirmation pages)
-  "shared"      → "content"            → { ... }  (provider-defined)
+The per-channel "template" shape (which keys each channel needs) is documented in full on the "template" parameter below — follow it exactly (e.g. email "content" → { subject, html: { body } }; sms uses "text" not "body"; inapp body is an OBJECT; code's key is html/expression/condition, not "content").
 
-⚠ EMAIL SUBJECT LINE: For new email templates use templateType "content", channel "email" (the email-variant-detail shape) —
-  "subject" is required and "html" is an object { body: "..." }, and the body is still drag-and-drop editable in the Visual Email
-  Designer. The older templateType "html" carries NO subject (it's set on the message/campaign); only use it when editing an
-  existing "html" template.
-
-⚠ VISUAL EMAIL DESIGNER REQUIREMENT (channel "email", both templateType "content" html.body and templateType "html"):
-  The HTML must use AJO's native serialization format (acr-* class namespace,
-  structure/component catalog, required <head> with content-version meta tag).
-  Generic email HTML will force the designer into Compatibility mode, locking
-  the user out of drag-and-drop editing. Call the get_visual_designer_requirements
-  tool to get the full mandatory spec BEFORE constructing any HTML for this
-  template type (it returns the exact structure/component catalog and required
-  <head> you must reproduce).
+⚠ EMAIL HTML → VISUAL EMAIL DESIGNER: email HTML (templateType "content" html.body, or templateType "html") MUST be in AJO's native serialization format, or it opens in Compatibility mode and locks the user out of drag-and-drop editing. Call get_visual_designer_requirements BEFORE writing any email HTML and reproduce that exact structure. (Landing-page HTML has no such requirement.)
 
 ${FRAGMENT_EMBED_NOTE}
+
+PERSONALIZATION: use the 'discover-personalization-paths' prompt / get_personalization_guidance for WHAT & WHEN, the XDM tools (list_xdm_field_groups / get_xdm_union_schema) for WHICH real attribute paths exist — never guess paths like {{profile.person.firstName}}; tenant-custom attributes live under "profile._tenantId." — and get_personalization_syntax for HOW. Use only real AJO constructs (never JavaScript/Liquid/Jinja or invented functions).
+
+DUPLICATE CHECK (before creating): check by name with ONE server-side filtered list call — list_content_templates({ property: ["name==<exact name>"] }) for an exact match, or ["name~^<prefix>"] for a family — rather than listing everything (~^ is case-insensitive starts-with).
+
+ORGANIZATION: tagIds tags the template (goes in the create body); parentFolderId files it (applied via an automatic follow-up PATCH — the create body doesn't accept it; folderType "content-template", create one with create_folder). If folder placement fails the create still succeeds (see warnings) and can be retried with patch_content_template.
 
 Example usage (email template — DEFAULT, with subject line):
 {
@@ -276,28 +251,6 @@ Example usage (email template — DEFAULT, with subject line):
   "channels": ["email"],
   "template": { "subject": "Welcome, {{profile.person.name.firstName}}!", "html": { "body": "<html>Hello {{profile.person.name.firstName}}</html>" } }
 }
-
-Example usage (legacy "html" email design template — no subject; use only when editing an existing one):
-{
-  "name": "Welcome Email",
-  "templateType": "html",
-  "channels": ["email"],
-  "template": { "html": "<html>Hello {{profile.person.name.firstName}}</html>" }
-}
-
-Personalization (3-step flow): (1) call get_personalization_guidance to decide WHAT/WHEN to personalize (find every dynamic value, resolve its data source, detect collections that need iteration, review coverage). (2) Find WHICH real attribute paths exist: standard XDM profile attributes use the "profile." prefix (e.g. {{profile.person.name.firstName}}); tenant-custom attributes sit under "profile._tenantId." (e.g. {{profile._acssandboxustwo.loyaltyTier}}). Do NOT root standard XDM fields (person, homeAddress, etc.) under the tenant namespace — only attributes your org added in a custom field group belong there. Use the 'discover-personalization-paths' prompt, or call list_xdm_union_schemas → get_xdm_union_schema (full=false) → get_xdm_field_group on each ref, to confirm real attribute paths. (3) For HOW to write it — the AJO-native expression SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.) — call get_personalization_syntax (no arg for the index, then a category). Use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
-
-Example usage (push notification template):
-{
-  "name": "Sale Push",
-  "templateType": "content",
-  "channels": ["push"],
-  "template": { "title": "Big Sale!", "message": "50% off today only" }
-}
-
-DUPLICATE CHECK (before creating): to avoid a duplicate, check for an existing template by name with ONE server-side filtered list call — list_content_templates({ property: ["name==<exact name>"] }) for an exact match, or ["name~^<prefix>"] to see whether any asset in a family already exists — rather than listing everything and scanning client-side (~^ is case-insensitive starts-with).
-
-ORGANIZATION: pass tagIds to tag the new template and parentFolderId to file it into a folder. tagIds goes in the create body directly; parentFolderId is applied by the server via an automatic follow-up step (the AJO create body does not accept it). For a content-template folder the folderType is "content-template" (create one with create_folder). If folder placement fails the create still succeeds (see warnings) and can be retried with patch_content_template.
 
 Returns: { success: true, id: "<uuid>", location: "/templates/<uuid>", etag: "<etag>", warnings?: [...] }
 The returned etag is immediately reusable for a follow-up update_content_template / patch_content_template — no need to re-fetch right after creating. A "warnings" entry (email templates) means the HTML is not in AJO native format and will open in Compatibility mode.`,
@@ -433,64 +386,25 @@ export const updateContentTemplateDefinition = {
   name: 'update_content_template',
   title: 'Update Content Template (Replace)',
   outputSchema: buildOutputSchema({ etag: ETAG_FIELD, warnings: WARNINGS_FIELD }),
-  description: `Replace a content template entirely (PUT). Use this when changing template content, type, or channels. To rename or move a template without touching its content, patch_content_template is lighter-weight.
+  description: `Replace a content template entirely (PUT). Use this to change content, type, or channels. To only rename, move, or tag a template, patch_content_template is lighter-weight.
 
-CHOOSING templateType — "html" vs "content" (they select entirely different content shapes, not two flavors of the same thing):
-  • "content" → a channel-aware container whose shape is selected by "channels". The ONLY option for push/sms/inapp/directMail, and for
-                email the "structured" form that holds the subject line plus the HTML body and text/x-amp-html/headers parts (body is still
-                drag-and-drop editable). It is a superset of "html" plus a subject — the recommended type for new email templates.
-  • "html"    → a raw EMAIL design body only: { html: "<string>" } with NO subject/text/headers (subject is set on the message/campaign).
-                Mainly for editing EXISTING design templates of this type. Only valid for the email channel.
-  • "html_primary_page" / "html_sub_page" → landing-page bodies; separate from both.
-  ON UPDATE, PRESERVE the existing templateType: call get_content_template first and reuse whatever type it already has — do NOT flip an
-  existing "html" email to "content" (or vice-versa) unless the user explicitly asks, since that changes the required template shape.
-  Decision guide: push/sms/inapp/directMail → "content"; landingpage → "html_primary_page"|"html_sub_page"; code → "content" + subType;
-  email → keep the fetched type ("content" or "html"); for a brand-new email prefer "content" (subject line + drag-and-drop body).
+templateType — same meanings as create_content_template: "content" (channel-aware container w/ subject; preferred), "html" (raw email body, no subject), "html_primary_page"/"html_sub_page" (landing pages). ON UPDATE, PRESERVE the existing type — call get_content_template first and reuse whatever it already has; do NOT flip "html"↔"content" unless the user explicitly asks, since that changes the required shape.
 
-Channel → templateType → template shape (channels must have exactly 1 value):
-  "email"       → "content"            → { "subject": "...", "html": { "body": "<html>..." } }  ← preferred for email (carries a SUBJECT LINE)
-  "email"       → "html"               → { "html": "<html>..." }  (legacy/existing design templates; html is a STRING, NO subject)
-  "push"        → "content"            → { "title": "...", "message": "...", "pushType"?: "message"|"silent", "ios"?: {...}, "android"?: {...} }
-  "sms"         → "content"            → { "text": "..." }  (field is "text", not "body"; optional: messageType, title, mediaUri)
-  "inapp"       → "content"            → { "body": { "html": "<html>..." } }  (body is an OBJECT)
-  "code"        → "content" + subType  → { "html": "<string>" } OR { "expression": "<string>" } OR { "condition": "<string>" }  (subType "HTML" or "JSON"; the body key is html/expression/condition, NOT "content")
-  "directMail"  → "content"            → { "fileName": "...", ... }  (fileName REQUIRED)
-  "landingpage" → "html_primary_page"  → { "html": "<html>..." }  (or "html_sub_page")
-  "shared"      → "content"            → { ... }
+The per-channel "template" shape is documented in full on the "template" parameter below — follow it exactly.
 
-⚠ VISUAL EMAIL DESIGNER REQUIREMENT (channel "email", both templateType "content" html.body and templateType "html"):
-  The HTML must use AJO's native serialization format (acr-* class namespace,
-  structure/component catalog, required <head> with content-version meta tag).
-  Generic email HTML will force the designer into Compatibility mode, locking
-  the user out of drag-and-drop editing. Call the get_visual_designer_requirements
-  tool to get the full mandatory spec BEFORE constructing any HTML for this
-  template type (it returns the exact structure/component catalog and required
-  <head> you must reproduce).
+⚠ EMAIL HTML → VISUAL EMAIL DESIGNER: email HTML must be in AJO's native serialization format or it opens in Compatibility mode (drag-and-drop editing lost). Call get_visual_designer_requirements BEFORE writing any email HTML.
 
 ${FRAGMENT_EMBED_NOTE}
 
-PERSONALIZATION: if you are adding or changing {{ }} / {%= %} expressions, call get_personalization_syntax for the
-  AJO-native syntax (and discover-personalization-paths / list_xdm_field_groups for the real attribute paths) — never
-  invent functions or use JavaScript/Liquid/Jinja.
+PERSONALIZATION: when adding/changing {{ }} / {%= %} expressions, use get_personalization_syntax for the AJO-native syntax and discover-personalization-paths / list_xdm_field_groups for the real attribute paths — never invent functions or use JavaScript/Liquid/Jinja.
 
-⚠ THIS IS A FULL REPLACE — THERE IS NO FIELD-LEVEL UPDATE. The AJO API has no way to patch a single content field
-  (subject, html, body, …); PATCH only supports /name, /description, /parentFolderId. To change even ONE field you must
-  resend the ENTIRE template. The only safe way to do that without losing data is to fetch-then-mutate:
+⚠ FULL REPLACE — NO FIELD-LEVEL UPDATE. AJO cannot patch a single content field (subject, html, body, …); PATCH only does /name, /description, /parentFolderId. To change even ONE field you must resend the ENTIRE template, so fetch-then-mutate (never rebuild content from memory):
+1. Call get_content_template FIRST for the complete current template + etag — required every time you edit an existing template, even a tiny change; it is the source of truth for the fields you are NOT changing. (Exception: right after create_content_template you already hold the full object + a valid etag.)
+2. Modify ONLY the field(s) requested; copy the existing html/body and every other field through EXACTLY as returned.
+3. Call update_content_template with the full object (changed + untouched fields) + the etag.
+❌ DO NOT regenerate or reconstruct the HTML/body from scratch for a single-field change — regenerated HTML loses the user's design, personalization, and Visual Email Designer serialization. ALWAYS round-trip the exact content from step 1; if you don't have it in hand, call get_content_template before updating.
 
-MANDATORY WORKFLOW (do NOT skip step 1, and NEVER rebuild content from memory):
-1. Call get_content_template FIRST to get the complete current template + etag. This is required every time you edit an
-   EXISTING template, even for a tiny change — it is the source of truth for all the fields you are NOT changing. (Exception:
-   immediately after create_content_template you already hold the full object and a valid etag, so you may update without re-fetching.)
-2. Take that returned object and modify ONLY the field(s) the user asked to change (e.g. just template.subject). Leave the
-   existing html/body and every other field EXACTLY as returned — copy them through verbatim.
-3. Call update_content_template with the full object (changed field + all untouched fields) + the etag.
-
-❌ DO NOT regenerate, re-author, or reconstruct the HTML/body from scratch when the user only asked to change the subject
-   (or any other single field). Re-generated HTML will differ from the original — losing the user's design, personalization,
-   and Visual Email Designer serialization. ALWAYS round-trip the exact content you received in step 1.
-   If you do not have the current template content in hand, you MUST call get_content_template before updating.
-
-Example usage (email template — preserve the fetched templateType; "content" shown here):
+Example usage (email — keep the fetched templateType; "content" shown; if it is "html", send template { "html": "<html>..." } instead — no subject):
 {
   "templateId": "b6d70a45-...",
   "etag": "\\"abc123\\"",
@@ -499,7 +413,6 @@ Example usage (email template — preserve the fetched templateType; "content" s
   "channels": ["email"],
   "template": { "subject": "Updated Subject", "html": { "body": "<html>Updated content</html>" } }
 }
-(If the fetched template is templateType "html", keep it "html" and send template { "html": "<html>..." } — that shape has no subject.)
 
 Returns: { success: true, etag?: "<new-etag>", warnings?: [...] }  (a "warnings" entry means the email html is not in AJO native format and will open in Compatibility mode)`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },

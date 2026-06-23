@@ -21,6 +21,59 @@ const REFRESH_THRESHOLD_MS = 5 * 60 * 1000;
 // Default token TTL if not returned by IMS (23h)
 const DEFAULT_TOKEN_TTL_MS = 23 * 60 * 60 * 1000;
 
+/**
+ * Acquire an Adobe IMS access token directly from a set of credentials, WITHOUT
+ * touching the shared tokenManager singleton. Used by the setup-time probe
+ * endpoints (sandbox discovery, tenant detection), which validate freshly-uploaded
+ * credentials before the user has committed to a configuration — they must never
+ * mutate the credentials/cache that an already-configured live MCP session depends
+ * on. Returns the IMS-reported TTL so a caller that does cache it (the singleton)
+ * can honor the real expiry instead of assuming the default.
+ */
+export async function acquireImsToken(
+  creds: AdobeCredentials
+): Promise<{ accessToken: string; expiresInSeconds?: number }> {
+  const { CLIENT_SECRET, API_KEY, IMS, SCOPES, ACCESS_TOKEN } = creds;
+
+  // A pre-supplied access token (no client secret to exchange) is used as-is.
+  if (!CLIENT_SECRET || CLIENT_SECRET === 'placeholder123') {
+    if (ACCESS_TOKEN) return { accessToken: ACCESS_TOKEN };
+    throw new Error('No client secret configured and no access token provided');
+  }
+
+  logger.info('Fetching new Adobe IMS access token');
+  authRefreshCounter.inc();
+
+  const scopes = Array.isArray(SCOPES) ? SCOPES.join(',') : (SCOPES || 'openid,AdobeID,read_organizations');
+  const imsHost = IMS || 'ims-na1.adobelogin.com';
+
+  try {
+    const params = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: API_KEY,
+      client_secret: CLIENT_SECRET,
+      scope: scopes
+    });
+
+    const response = await axios.post(
+      `https://${imsHost}/ims/token/v3`,
+      params.toString(),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 15000
+      }
+    );
+
+    const { access_token, expires_in } = response.data;
+    logger.info('Access token acquired', { expiresInSeconds: expires_in });
+    return { accessToken: access_token, expiresInSeconds: expires_in };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error('Failed to fetch IMS token', { error: msg });
+    throw new Error(`Authentication failed: ${msg}`);
+  }
+}
+
 export class TokenManager {
   private cache: TokenCache | null = null;
   private credentials: AdobeCredentials | null = null;
@@ -68,7 +121,7 @@ export class TokenManager {
   private async fetchToken(): Promise<string> {
     if (!this.credentials) throw new Error('No credentials configured');
 
-    const { CLIENT_SECRET, API_KEY, IMS, SCOPES } = this.credentials;
+    const { CLIENT_SECRET } = this.credentials;
 
     // If we already have a pre-supplied token (no client secret for OAuth), reuse it
     if (!CLIENT_SECRET || CLIENT_SECRET === 'placeholder123') {
@@ -76,44 +129,13 @@ export class TokenManager {
       throw new Error('No client secret configured and no cached token available');
     }
 
-    logger.info('Fetching new Adobe IMS access token');
-    authRefreshCounter.inc();
-
-    const scopes = Array.isArray(SCOPES) ? SCOPES.join(',') : (SCOPES || 'openid,AdobeID,read_organizations');
-    const imsHost = IMS || 'ims-na1.adobelogin.com';
-
-    try {
-      const params = new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: API_KEY,
-        client_secret: CLIENT_SECRET,
-        scope: scopes
-      });
-
-      const response = await axios.post(
-        `https://${imsHost}/ims/token/v3`,
-        params.toString(),
-        {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          timeout: 15000
-        }
-      );
-
-      const { access_token, expires_in } = response.data;
-      const ttl = (expires_in ? expires_in * 1000 : DEFAULT_TOKEN_TTL_MS);
-
-      this.cache = {
-        accessToken: access_token,
-        expiresAt: Date.now() + ttl
-      };
-
-      logger.info('Access token acquired', { expiresInSeconds: expires_in });
-      return access_token;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error('Failed to fetch IMS token', { error: msg });
-      throw new Error(`Authentication failed: ${msg}`);
-    }
+    const { accessToken, expiresInSeconds } = await acquireImsToken(this.credentials);
+    const ttl = expiresInSeconds ? expiresInSeconds * 1000 : DEFAULT_TOKEN_TTL_MS;
+    this.cache = {
+      accessToken,
+      expiresAt: Date.now() + ttl
+    };
+    return accessToken;
   }
 
   clearCache(): void {

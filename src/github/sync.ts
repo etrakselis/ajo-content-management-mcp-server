@@ -18,7 +18,7 @@ function assetTypeDir(toolName: string): string {
 // Sanitize a name/id so it's safe as a filename. UUIDs and typical AJO names
 // are already safe; this guards against edge cases with special chars.
 function safeFilename(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._\-]/g, '_').slice(0, 120);
+  return value.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
 }
 
 function assetFilePath(sandboxName: string, toolName: string, id?: string, name?: string): string {

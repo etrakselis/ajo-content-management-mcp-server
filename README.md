@@ -594,11 +594,11 @@ The integration uses a **GitHub fine-grained Personal Access Token (PAT)**, not 
    - **Pull requests: Read and write** — required for PR Approval Gate mode (creating and reading PRs).
 4. Copy the generated token — it is shown only once.
 
-> **Keep the PAT private.** It is stored in server memory only and never written to disk, logged, or returned through any MCP tool.
+> **Keep the PAT private.** It is stored in server memory only and is never written to disk, logged, or returned through any MCP tool.
 
 ### Repository requirements
 
-- The repository must have **at least one commit** before the integration can be enabled. GitHub's API cannot write to a repository whose git storage hasn't been initialized. If your repo is brand new, add a README or any file via the GitHub web UI before testing the connection.
+- **Empty repositories are handled automatically.** If you point the integration at a brand-new repo with no commits, clicking "Test Connection" will push an initial `README.md` commit via the git HTTPS protocol (using your PAT for auth), so GitHub's git storage is initialized and subsequent REST API commits work normally. The success message will note that the repo was initialized.
 - The integration works with **public or private** repositories, as long as the PAT has the permissions above.
 
 ### Configuring the integration

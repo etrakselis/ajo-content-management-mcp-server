@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { createExpressApp } from '../../src/server/app';
-import { tokenManager } from '../../src/auth/token-manager';
+import { tokenManager, acquireImsToken } from '../../src/auth/token-manager';
 import axios from 'axios';
 import { listTemplates } from '../../src/adobe/client';
 
@@ -71,7 +71,10 @@ jest.mock('../../src/auth/token-manager', () => ({
     getStatus: jest.fn().mockReturnValue({ configured: false, tokenCached: false }),
     getToken: jest.fn().mockResolvedValue('mock-token'),
     reset: jest.fn()
-  }
+  },
+  // The probe endpoints (/api/list-sandboxes, /api/detect-tenant) acquire a
+  // throwaway token via acquireImsToken instead of mutating the singleton.
+  acquireImsToken: jest.fn().mockResolvedValue({ accessToken: 'mock-token' })
 }));
 
 jest.mock('../../src/adobe/client', () => ({
@@ -250,7 +253,7 @@ describe('Express App', () => {
     });
 
     test('returns 401 when token acquisition fails', async () => {
-      (tokenManager.getToken as jest.Mock).mockRejectedValueOnce(new Error('invalid_client'));
+      (acquireImsToken as jest.Mock).mockRejectedValueOnce(new Error('invalid_client'));
       const res = await request(app).post('/api/detect-tenant').send({
         credentials: {
           values: [
@@ -516,6 +519,19 @@ describe('Express App', () => {
       expect(res.body.tenantNamespace).toBe('_acme');
     });
 
+    // Regression guard: the probe must validate credentials via a throwaway token
+    // (acquireImsToken) and never mutate the shared tokenManager singleton — doing so
+    // would clobber the credentials/cache an already-configured live MCP session uses.
+    test('does not mutate the shared tokenManager singleton', async () => {
+      (axios.get as jest.Mock).mockResolvedValueOnce({ data: { sandboxes: [] } });
+      const setCredsBefore = (tokenManager.setCredentials as jest.Mock).mock.calls.length;
+      const resetBefore = (tokenManager.reset as jest.Mock).mock.calls.length;
+      await request(app).post('/api/list-sandboxes').send(CREDS);
+      expect((tokenManager.setCredentials as jest.Mock).mock.calls.length).toBe(setCredsBefore);
+      expect((tokenManager.reset as jest.Mock).mock.calls.length).toBe(resetBefore);
+      expect(acquireImsToken as jest.Mock).toHaveBeenCalled();
+    });
+
     test('returns success with an empty list when no sandboxes are accessible', async () => {
       (axios.get as jest.Mock).mockResolvedValueOnce({ data: { sandboxes: [] } });
       const res = await request(app).post('/api/list-sandboxes').send(CREDS);
@@ -525,7 +541,7 @@ describe('Express App', () => {
     });
 
     test('returns 401 with AUTH_FAILED when token acquisition fails', async () => {
-      (tokenManager.getToken as jest.Mock).mockRejectedValueOnce(new Error('invalid_client'));
+      (acquireImsToken as jest.Mock).mockRejectedValueOnce(new Error('invalid_client'));
       const res = await request(app).post('/api/list-sandboxes').send(CREDS);
       expect(res.status).toBe(401);
       expect(res.body.code).toBe('AUTH_FAILED');

@@ -1,3 +1,7 @@
+import * as git from 'isomorphic-git';
+import gitHttp from 'isomorphic-git/http/node';
+import { Volume, createFsFromVolume } from 'memfs';
+
 const GITHUB_API = 'https://api.github.com';
 
 function ghHeaders(token: string): Record<string, string> {
@@ -25,7 +29,8 @@ async function ghRequest(token: string, path: string, options: RequestInit = {})
   return res.text();
 }
 
-export async function testConnection(token: string, owner: string, repo: string): Promise<void> {
+// Returns true if the repo was just initialized (empty → seeded with README), false if it already had commits.
+export async function testConnection(token: string, owner: string, repo: string): Promise<{ initialized: boolean }> {
   const data = await ghRequest(token, `/repos/${owner}/${repo}`) as {
     permissions?: { push?: boolean } | null;
     default_branch?: string;
@@ -42,19 +47,49 @@ export async function testConnection(token: string, owner: string, repo: string)
       `"Contents: Read and write" and "Pull requests: Read and write" under Repository permissions.`
     );
   }
-  // GitHub's API cannot create any git objects (blobs, trees, commits) in a repository
-  // that has never had a commit pushed to it — the git storage backend is not
-  // initialized until the first commit exists. Detect this here so the user gets a
-  // clear, actionable error at test time rather than a confusing 409 later.
   const branch = data.default_branch ?? 'main';
   try {
     await ghRequest(token, `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`);
+    return { initialized: false };
   } catch {
+    // Repo exists and PAT has write access, but no commits yet — initialize it automatically.
+    await initializeRepoWithReadme(token, owner, repo, branch);
+    return { initialized: true };
+  }
+}
+
+async function initializeRepoWithReadme(
+  token: string, owner: string, repo: string, defaultBranch: string
+): Promise<void> {
+  const vol = new Volume();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fs = createFsFromVolume(vol) as any;
+  const dir = '/repo';
+  vol.mkdirSync(dir);
+
+  await git.init({ fs, dir, defaultBranch });
+  vol.writeFileSync(`${dir}/README.md`, `# ${repo}\n`);
+  await git.add({ fs, dir, filepath: 'README.md' });
+  await git.commit({
+    fs,
+    dir,
+    message: 'Initial commit',
+    author: { name: 'AJO Content MCP', email: 'noreply@ajo-content-mcp' }
+  });
+
+  try {
+    await git.push({
+      fs,
+      http: gitHttp,
+      dir,
+      url: `https://github.com/${owner}/${repo}.git`,
+      onAuth: () => ({ username: token }),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `The repository "${owner}/${repo}" has no commits. ` +
-      `GitHub requires at least one commit before content can be tracked via the API. ` +
-      `Go to github.com/${owner}/${repo}, click "Add a README file" (or any file), ` +
-      `commit it — then test the connection again.`
+      `Repository "${owner}/${repo}" is empty and automatic initialization failed: ${msg}. ` +
+      `Go to github.com/${owner}/${repo} and add a file manually, then test the connection again.`
     );
   }
 }

@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
-import { tokenManager, AdobeCredentials } from '../auth/token-manager.js';
+import { tokenManager, acquireImsToken, AdobeCredentials } from '../auth/token-manager.js';
 import axios from 'axios';
 import { configureAdobeClient, resetAdobeClient, listTemplates, type NamingConventionConfig, type GitHubConfig } from '../adobe/client.js';
 import { testConnection as testGitHubConnection, getDefaultBranch } from '../github/client.js';
@@ -575,16 +575,14 @@ export function createExpressApp(): express.Application {
     }
     const { creds } = extracted;
 
-    // Acquire an IMS token to call the Sandbox Management API. We reset the token
-    // manager afterwards so this probe doesn't leave the server looking
-    // "configured" before the user has picked a sandbox and clicked Start.
-    tokenManager.setCredentials(creds);
-
+    // Acquire a throwaway IMS token to call the Sandbox Management API. This is a
+    // best-effort probe over freshly-uploaded credentials the user hasn't committed
+    // to yet, so it must NOT touch the shared tokenManager singleton — doing so would
+    // clobber the credentials/cache an already-configured live MCP session depends on.
     let accessToken: string;
     try {
-      accessToken = await tokenManager.getToken();
+      accessToken = (await acquireImsToken(creds)).accessToken;
     } catch (err) {
-      tokenManager.reset();
       const detail = err instanceof Error ? err.message : String(err);
       logger.warn('Credential validation failed during list-sandboxes', { error: detail });
       return res.status(401).json({
@@ -607,7 +605,6 @@ export function createExpressApp(): express.Application {
         tenantId = await detectTenantNamespace(accessToken, creds.API_KEY!, creds.IMS_ORG!, probeSandbox);
       }
 
-      tokenManager.reset();
       logger.info('Listed accessible sandboxes', { count: sandboxes.length, tenantId });
       return res.json({
         success: true,
@@ -616,7 +613,6 @@ export function createExpressApp(): express.Application {
         tenantNamespace: tenantId ? `_${tenantId}` : undefined
       });
     } catch (err) {
-      tokenManager.reset();
       const status = axios.isAxiosError(err) ? err.response?.status : null;
       const body = axios.isAxiosError(err) ? err.response?.data : null;
       logger.warn('Sandbox Management API call failed', { status, body });
@@ -653,14 +649,13 @@ export function createExpressApp(): express.Application {
     }
     const { creds, sandboxName } = parsedReq;
 
-    // Apply credentials so the token manager can acquire an IMS token
-    tokenManager.setCredentials(creds);
-
+    // Acquire a throwaway IMS token — like /api/list-sandboxes, this validates
+    // uncommitted credentials WITHOUT mutating the shared tokenManager, so it can't
+    // disturb an already-configured live MCP session.
     let accessToken: string;
     try {
-      accessToken = await tokenManager.getToken();
+      accessToken = (await acquireImsToken(creds)).accessToken;
     } catch (err) {
-      tokenManager.reset();
       const detail = err instanceof Error ? err.message : String(err);
       logger.warn('Credential validation failed during detect-tenant', { error: detail });
       return res.status(401).json({
@@ -690,10 +685,11 @@ export function createExpressApp(): express.Application {
       return res.status(400).json({ success: false, error: 'token, owner, and repo are required.' });
     }
     try {
-      // testGitHubConnection checks both write-access permissions and that the repo
-      // has at least one commit — empty repos return a clear, actionable error.
-      await testGitHubConnection(token.trim(), owner.trim(), repo.trim());
-      return res.json({ success: true, message: `Connected to ${owner.trim()}/${repo.trim()}` });
+      const { initialized } = await testGitHubConnection(token.trim(), owner.trim(), repo.trim());
+      const message = initialized
+        ? `Connected to ${owner.trim()}/${repo.trim()} — repository was empty and has been initialized with a README`
+        : `Connected to ${owner.trim()}/${repo.trim()}`;
+      return res.json({ success: true, message });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('GitHub connectivity test failed', { owner, repo, error: msg });
@@ -805,9 +801,12 @@ export function createExpressApp(): express.Application {
     // ── Step 4: verify GitHub connectivity and resolve default branch (optional) ──
     if (githubIntegration) {
       try {
-        // testGitHubConnection also verifies the repo has at least one commit
-        // (empty repos fail with a clear actionable error before we get here).
-        await testGitHubConnection(githubIntegration.token, githubIntegration.owner, githubIntegration.repo);
+        const { initialized: repoInitialized } = await testGitHubConnection(githubIntegration.token, githubIntegration.owner, githubIntegration.repo);
+        if (repoInitialized) {
+          logger.info('GitHub repo was empty — initialized with README', {
+            owner: githubIntegration.owner, repo: githubIntegration.repo
+          });
+        }
         const branch = await getDefaultBranch(githubIntegration.token, githubIntegration.owner, githubIntegration.repo);
         githubIntegration = { ...githubIntegration, defaultBranch: branch };
 
