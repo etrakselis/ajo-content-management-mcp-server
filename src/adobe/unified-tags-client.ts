@@ -15,6 +15,7 @@
 import axios, { Method } from 'axios';
 import { tokenManager } from '../auth/token-manager.js';
 import { getConfiguredApiKey, getConfiguredImsOrg, getConfiguredSandboxName } from './client.js';
+import { logger } from '../telemetry/index.js';
 
 const BASE_URL = process.env.AJO_UNIFIED_TAGS_BASE_URL ?? 'https://experience.adobe.io';
 
@@ -102,10 +103,15 @@ export async function resolveAjoFolderPath(folderType: string, folderId: string)
   const segments: string[] = [];
   let currentId: string | undefined = folderId;
   for (let depth = 0; depth < 12 && currentId; depth++) {
-    const folder = await getFolder(folderType, currentId) as { name?: string; parentFolderId?: string | null };
-    if (!folder.name) break;
-    segments.unshift(folder.name);
-    currentId = folder.parentFolderId ?? undefined;
+    const folder = await getFolder(folderType, currentId) as Record<string, unknown>;
+    const name = typeof folder.name === 'string' ? folder.name : undefined;
+    if (!name) {
+      logger.warn('resolveAjoFolderPath: unexpected folder response shape', { folderType, folderId: currentId, keys: Object.keys(folder) });
+      break;
+    }
+    segments.unshift(name);
+    const parent = folder.parentFolderId ?? folder.parentId;
+    currentId = typeof parent === 'string' ? parent : undefined;
   }
 
   const path = segments.join('/');

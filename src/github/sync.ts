@@ -22,7 +22,8 @@ function safeFilename(value: string): string {
 }
 
 function assetFilePath(sandboxName: string, toolName: string, id?: string, name?: string, ajoFolderPath?: string): string {
-  const dir = ajoFolderPath ?? assetTypeDir(toolName);
+  const typeDir = assetTypeDir(toolName);
+  const dir = ajoFolderPath ? `${typeDir}/${ajoFolderPath}` : typeDir;
   // Prefer name over id — names match what the user sees in AJO and make the
   // repo readable without UUID lookups. safeFilename guards against path separators.
   const identifier = name ? safeFilename(name) : id ? safeFilename(id) : 'unknown';
@@ -54,7 +55,8 @@ export async function commitAuditTrail(
   args: Record<string, unknown>,
   result: Record<string, unknown>,
   authorEmail: string,
-  ajoFolderPath?: string
+  ajoFolderPath?: string,
+  tenant?: string
 ): Promise<boolean> {
   const { token, owner, repo, defaultBranch } = config;
 
@@ -76,6 +78,7 @@ export async function commitAuditTrail(
           deletedAt: new Date().toISOString(),
           deletedBy: authorEmail,
           sandbox: sandboxName,
+          ...(tenant ? { tenant } : {}),
           ajoId: resultId ?? argId
         }
       };
@@ -95,7 +98,8 @@ export async function commitAuditTrail(
           ajoId: resultId,
           updatedAt: new Date().toISOString(),
           updatedBy: authorEmail,
-          sandbox: sandboxName
+          sandbox: sandboxName,
+          ...(tenant ? { tenant } : {})
         },
         ...args
       };
@@ -134,7 +138,8 @@ export async function createApprovalPR(
   toolName: string,
   args: Record<string, unknown>,
   authorEmail: string,
-  ajoFolderPath?: string
+  ajoFolderPath?: string,
+  tenant?: string
 ): Promise<{ prNumber: number; prUrl: string; filePath: string }> {
   const { token, owner, repo, defaultBranch } = config;
 
@@ -151,7 +156,8 @@ export async function createApprovalPR(
       operation: toolName,
       requestedBy: authorEmail,
       requestedAt: new Date().toISOString(),
-      sandbox: sandboxName
+      sandbox: sandboxName,
+      ...(tenant ? { tenant } : {})
     },
     ...args
   };
