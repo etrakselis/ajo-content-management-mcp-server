@@ -95,42 +95,20 @@ const TEMPLATE_CHANNELS_SCHEMA = {
   description: 'Target channel (exactly 1 value required).'
 };
 
-// Conditional requirement: AJO mandates subType for code-channel templates.
-// Declared as a JSON-Schema if/then so a schema-aware client enforces it before
-// the call. Adds only to `required` (no new property), so it composes cleanly
-// with the top-level additionalProperties:false and the injected confirmWrite flag.
-const CODE_CHANNEL_REQUIRES_SUBTYPE = [
-  { if: { properties: { channels: { contains: { const: 'code' } } }, required: ['channels'] }, then: { required: ['subType'] } }
-];
-
-// Schema-level enforcement of the two email shapes that get confused most often
-// (the evidenced bug: templateType "content" with template.html as a STRING). A
-// schema-aware client catches this before the call; the Zod superRefine in
-// validation/schemas.ts is the authoritative server-side check that always fires.
-const EMAIL_TEMPLATE_SHAPE_RULES = [
-  {
-    if: {
-      required: ['channels', 'templateType'],
-      properties: { channels: { contains: { const: 'email' } }, templateType: { const: 'content' } }
-    },
-    then: {
-      properties: {
-        template: { required: ['subject', 'html'], properties: { html: { type: 'object', required: ['body'] } } }
-      }
-    }
-  },
-  {
-    if: {
-      required: ['channels', 'templateType'],
-      properties: { channels: { contains: { const: 'email' } }, templateType: { const: 'html' } }
-    },
-    then: {
-      properties: { template: { required: ['html'], properties: { html: { type: 'string' } } } }
-    }
-  }
-];
-
-const TEMPLATE_CONDITIONAL_RULES = [...CODE_CHANNEL_REQUIRES_SUBTYPE, ...EMAIL_TEMPLATE_SHAPE_RULES];
+// NOTE: two conditional requirements apply to template writes —
+//   (1) code-channel templates require `subType`, and
+//   (2) email templates must match their shape (templateType "content" →
+//       template { subject, html: { body } }; templateType "html" → template
+//       { html: "<string>" }).
+// These were once declared here as JSON-Schema allOf/if-then rules so a
+// schema-aware client could pre-validate. That is REMOVED on purpose: Anthropic's
+// tool input_schema rejects allOf/anyOf/oneOf (and if/then) at the top level, and
+// a tool whose schema contains them is silently dropped by the client during
+// MCP→API conversion — it vanishes from tool discovery and returns "tool not
+// found" when called. The authoritative enforcement is the Zod superRefine in
+// validation/schemas.ts (CreateTemplateSchema/UpdateTemplateSchema), which runs
+// server-side on every call; the requirements are also documented in the tool and
+// property descriptions. Do NOT reintroduce allOf/if-then on the input schema.
 
 // Embed-by-reference guidance, surfaced on both create_ and update_ template
 // descriptions (the point where the model authors the body). Without it, models
@@ -236,6 +214,8 @@ The per-channel "template" shape (which keys each channel needs) is documented i
 
 ⚠ EMAIL HTML → VISUAL EMAIL DESIGNER: email HTML (templateType "content" html.body, or templateType "html") MUST be in AJO's native serialization format, or it opens in Compatibility mode and locks the user out of drag-and-drop editing. Call get_visual_designer_requirements BEFORE writing any email HTML and reproduce that exact structure. (Landing-page HTML has no such requirement.)
 
+⚠ EMBEDDING AEM IMAGES: if the content includes an image hosted in Adobe Experience Manager (AEM), its <img> must carry the AJO media-library attributes data-medialibrary-id, data-mediarepo-id, and data-medialibrary-source ("aem") or it will not resolve from the media library. This server does NOT look those up — call get_aem_image_embed_instructions for the step-by-step procedure to resolve them via the separate AEM MCP server (by image name + folder) BEFORE writing the <img> tag.
+
 ${FRAGMENT_EMBED_NOTE}
 
 PERSONALIZATION: use the 'discover-personalization-paths' prompt / get_personalization_guidance for WHAT & WHEN, the XDM tools (list_xdm_field_groups / get_xdm_union_schema) for WHICH real attribute paths exist — never guess paths like {{profile.person.firstName}}; tenant-custom attributes live under "profile._tenantId." — and get_personalization_syntax for HOW. Use only real AJO constructs (never JavaScript/Liquid/Jinja or invented functions).
@@ -259,7 +239,6 @@ The returned etag is immediately reusable for a follow-up update_content_templat
     type: 'object' as const,
     additionalProperties: false,
     required: ['name', 'templateType', 'channels'],
-    allOf: TEMPLATE_CONDITIONAL_RULES,
     properties: {
       name: { type: 'string', description: 'Template name (required)' },
       description: { type: 'string', description: 'Optional description' },
@@ -394,6 +373,8 @@ The per-channel "template" shape is documented in full on the "template" paramet
 
 ⚠ EMAIL HTML → VISUAL EMAIL DESIGNER: email HTML must be in AJO's native serialization format or it opens in Compatibility mode (drag-and-drop editing lost). Call get_visual_designer_requirements BEFORE writing any email HTML.
 
+⚠ EMBEDDING AEM IMAGES: if you add or change an image hosted in Adobe Experience Manager (AEM), its <img> must carry the AJO media-library attributes data-medialibrary-id, data-mediarepo-id, and data-medialibrary-source ("aem") or it will not resolve. This server does NOT look those up — call get_aem_image_embed_instructions for the procedure to resolve them via the separate AEM MCP server BEFORE writing the <img> tag. (Preserve any existing AEM image attributes verbatim when round-tripping content you are not changing.)
+
 ${FRAGMENT_EMBED_NOTE}
 
 PERSONALIZATION: when adding/changing {{ }} / {%= %} expressions, use get_personalization_syntax for the AJO-native syntax and discover-personalization-paths / list_xdm_field_groups for the real attribute paths — never invent functions or use JavaScript/Liquid/Jinja.
@@ -420,7 +401,6 @@ Returns: { success: true, etag?: "<new-etag>", warnings?: [...] }  (a "warnings"
     type: 'object' as const,
     additionalProperties: false,
     required: ['templateId', 'etag', 'templateType', 'channels'],
-    allOf: TEMPLATE_CONDITIONAL_RULES,
     properties: {
       templateId: { type: 'string', format: 'uuid', description: 'UUID of the template to update' },
       etag: { type: 'string', description: 'ETag from get_content_template (or the etag returned by create_content_template), required for optimistic locking. Pass it back exactly as received, including its surrounding double-quote characters — do not strip them.' },

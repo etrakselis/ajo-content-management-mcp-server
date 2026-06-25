@@ -14,6 +14,7 @@ export const RESOURCE_URIS = {
   channelReference: 'ajo://sandbox/channel-reference',
   errorCodes: 'ajo://error-codes',
   visualDesignerRequirements: 'ajo://visual-designer-requirements',
+  aemImageEmbedInstructions: 'ajo://aem-image-embed-instructions',
   personalizationSyntax: 'ajo://personalization-syntax',
   personalizationGuidance: 'ajo://personalization-guidance',
   // Browsable collections: name→id directories so a human/client can find a
@@ -139,6 +140,12 @@ export const RESOURCE_ACCESS_CATALOG: ResourceAccessEntry[] = [
     title: 'AJO Visual Email Designer — HTML Requirements',
     description: 'The complete native-HTML serialization spec for the AJO Visual Email Designer (rules, structure/component catalog, required <head>).',
     access: 'Call the get_visual_designer_requirements tool to get the full spec.'
+  },
+  {
+    uri: RESOURCE_URIS.aemImageEmbedInstructions,
+    title: 'AEM Image Embed-Attribute Retrieval Instructions',
+    description: 'Step-by-step procedure for resolving an AEM DAM asset\'s AJO embed attributes (data-medialibrary-id, data-mediarepo-id, data-medialibrary-source) via a separate AEM MCP server, so AEM images embed correctly into content fragments/templates.',
+    access: 'Call the get_aem_image_embed_instructions tool to get the full procedure. The asset IDs themselves come from the separate AEM MCP server, following this procedure.'
   },
   {
     uri: RESOURCE_URIS.personalizationSyntax,

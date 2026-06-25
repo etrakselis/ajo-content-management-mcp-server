@@ -171,29 +171,25 @@ function selfReferenceWarnings(fragment: Record<string, unknown> | undefined, re
 }
 
 // ─── Shared input-schema fragments ──────────────────────────────────────────
-// The content payload is a discriminated union on `type`: html fragments carry
-// { content }, expression fragments carry { expression }. Declaring it as oneOf
-// surfaces the required shape to the model/client up front instead of leaving
-// `fragment` an opaque object it has to infer from the description prose. Reused
-// verbatim by both create_ and update_ so the two never drift.
+// The content payload is effectively a discriminated union on `type`: html
+// fragments carry { content }, expression fragments carry { expression }. This was
+// once declared as a JSON-Schema `oneOf` to surface the two shapes up front, but
+// that is REMOVED on purpose: Anthropic's tool input_schema rejects
+// allOf/anyOf/oneOf (and if/then), and a tool whose schema contains them is
+// silently dropped by the client during MCP→API conversion — it disappears from
+// tool discovery and returns "tool not found" when called. So the shape is now a
+// flat object with all fields documented (and which one is required per `type`
+// noted in each description); the authoritative per-type enforcement is the Zod
+// superRefine in validation/schemas.ts. Reused verbatim by both create_ and
+// update_ so the two never drift. Do NOT reintroduce oneOf/if-then here.
 const FRAGMENT_CONTENT_SCHEMA = {
   type: 'object' as const,
-  description: 'Content payload. Shape depends on `type`: html → { "content": "<html>...", editorContext? }; expression → { "expression": "..." }. For an email html fragment that must embed into templates AND stay drag-and-drop editable, use the DUAL-FIELD shape: "content" is the lightweight embeddable render snippet, and editorContext["wysiwyg-content"] is the FULL Visual Designer document. Call get_visual_designer_requirements for the exact shape of each field.',
-  oneOf: [
-    {
-      title: 'HTML fragment content',
-      required: ['content'],
-      properties: {
-        content: { type: 'string', description: 'HTML markup. Required when type is "html". For an email html fragment this is the LIGHTWEIGHT render snippet, NOT a full document: a <div class="acr-fragment is-locked has-html-params" data-fragment-id="ajo:SELF"> wrapper using acr-tmp-component (NOT acr-component), with NO <!DOCTYPE>/<head>/acr-container/acr-structure. SELF-REFERENCE: data-fragment-id must be the fragment\'s OWN id, which does not exist until after creation — so set it to the literal sentinel "ajo:SELF" and the server rewrites it to the real id automatically on create/update. (A wrong value renders but fails to resolve in the Visual Email Designer — "id does not exist" — so the server warns if it isn\'t the assigned id.) The full Visual Designer document (with <head> + content-version meta) goes in editorContext["wysiwyg-content"], not here. Call get_visual_designer_requirements FIRST for the exact shape of both fields; do not paste generic email HTML.' },
-        editorContext: { type: 'object', description: 'Editor metadata. For an email html fragment, put the FULL native Visual Designer document in editorContext["wysiwyg-content"] (the <!DOCTYPE html> … document with the verbatim <head>, <body … data-has-html-params>, and acr-component nesting). This is the field the drag-and-drop editor uses and the one the server checks for Visual Designer compliance — the top-level "content" stays the lightweight embeddable snippet. See get_visual_designer_requirements.' }
-      }
-    },
-    {
-      title: 'Expression fragment content',
-      required: ['expression'],
-      properties: { expression: { type: 'string', description: 'Personalization expression. Required when type is "expression".' } }
-    }
-  ]
+  description: 'Content payload. Shape depends on `type`: html → { "content": "<html>...", editorContext? } (content REQUIRED); expression → { "expression": "..." } (expression REQUIRED). For an email html fragment that must embed into templates AND stay drag-and-drop editable, use the DUAL-FIELD shape: "content" is the lightweight embeddable render snippet, and editorContext["wysiwyg-content"] is the FULL Visual Designer document. Call get_visual_designer_requirements for the exact shape of each field.',
+  properties: {
+    content: { type: 'string', description: 'HTML markup. Required when type is "html". For an email html fragment this is the LIGHTWEIGHT render snippet, NOT a full document: a <div class="acr-fragment is-locked has-html-params" data-fragment-id="ajo:SELF"> wrapper using acr-tmp-component (NOT acr-component), with NO <!DOCTYPE>/<head>/acr-container/acr-structure. SELF-REFERENCE: data-fragment-id must be the fragment\'s OWN id, which does not exist until after creation — so set it to the literal sentinel "ajo:SELF" and the server rewrites it to the real id automatically on create/update. (A wrong value renders but fails to resolve in the Visual Email Designer — "id does not exist" — so the server warns if it isn\'t the assigned id.) The full Visual Designer document (with <head> + content-version meta) goes in editorContext["wysiwyg-content"], not here. Call get_visual_designer_requirements FIRST for the exact shape of both fields; do not paste generic email HTML.' },
+    editorContext: { type: 'object', description: 'Editor metadata. For an email html fragment, put the FULL native Visual Designer document in editorContext["wysiwyg-content"] (the <!DOCTYPE html> … document with the verbatim <head>, <body … data-has-html-params>, and acr-component nesting). This is the field the drag-and-drop editor uses and the one the server checks for Visual Designer compliance — the top-level "content" stays the lightweight embeddable snippet. See get_visual_designer_requirements.' },
+    expression: { type: 'string', description: 'Personalization expression. Required when type is "expression".' }
+  }
 };
 
 const FRAGMENT_CHANNELS_SCHEMA = {
@@ -210,13 +206,15 @@ const FRAGMENT_SUBTYPE_SCHEMA = {
   description: 'Sub-type for expression fragments (TEXT | HTML | JSON). REQUIRED when type is "expression"; not used for html fragments.'
 };
 
-// Conditional requirement: AJO mandates subType for expression fragments. Declared
-// as a JSON-Schema if/then so a schema-aware client enforces it before the call.
-// Adds only to `required` (no new property), so it composes cleanly with the
-// top-level additionalProperties:false and the confirmWrite flag injected later.
-const EXPRESSION_REQUIRES_SUBTYPE = [
-  { if: { properties: { type: { const: 'expression' } }, required: ['type'] }, then: { required: ['subType'] } }
-];
+// Conditional requirement: AJO mandates subType for expression fragments. This was
+// once a JSON-Schema if/then rule (wrapped in allOf) so a schema-aware client could
+// enforce it pre-call. REMOVED on purpose: Anthropic's tool input_schema rejects
+// allOf/anyOf/oneOf and if/then, and a tool whose schema contains them is silently
+// dropped by the client during MCP→API conversion — it vanishes from tool discovery
+// and returns "tool not found" when called. The authoritative enforcement is the Zod
+// superRefine in validation/schemas.ts (CreateFragmentSchema/UpdateFragmentSchema),
+// and the requirement is documented on the subType property description. Do NOT
+// reintroduce allOf/if-then on the input schema.
 
 // Organization fields shared by create_ and update_. tagIds/labels are real runtime
 // write-model fields (accepted in the body) even though the published spec omits
@@ -391,6 +389,14 @@ export const createContentFragmentDefinition = {
   constructing any HTML for this fragment type (it returns the exact
   structure/component catalog and required <head> you must reproduce).
 
+⚠ EMBEDDING AEM IMAGES: if this content includes an image hosted in Adobe
+  Experience Manager (AEM), its <img> must carry the AJO media-library attributes
+  data-medialibrary-id, data-mediarepo-id, and data-medialibrary-source ("aem") or
+  it will not resolve from the media library. This server does NOT look those up —
+  call get_aem_image_embed_instructions for the step-by-step procedure to resolve
+  them via the separate AEM MCP server (by image name + folder) BEFORE writing the
+  <img> tag.
+
 Example usage (HTML fragment — standard XDM field):
 {
   "name": "Header Banner",
@@ -425,7 +431,6 @@ The returned etag is immediately reusable for a follow-up update_content_fragmen
     type: 'object' as const,
     additionalProperties: false,
     required: ['name', 'type', 'channels', 'fragment'],
-    allOf: EXPRESSION_REQUIRES_SUBTYPE,
     properties: {
       name: { type: 'string', description: 'Fragment name (required)' },
       description: { type: 'string', description: 'Optional description' },
@@ -567,6 +572,14 @@ export const updateContentFragmentDefinition = {
   constructing any HTML for this fragment type (it returns the exact
   structure/component catalog and required <head> you must reproduce).
 
+⚠ EMBEDDING AEM IMAGES: if you add or change an image hosted in Adobe Experience
+  Manager (AEM), its <img> must carry the AJO media-library attributes
+  data-medialibrary-id, data-mediarepo-id, and data-medialibrary-source ("aem") or
+  it will not resolve. This server does NOT look those up — call
+  get_aem_image_embed_instructions for the procedure to resolve them via the
+  separate AEM MCP server BEFORE writing the <img> tag. (Preserve any existing
+  AEM image attributes verbatim when round-tripping content you are not changing.)
+
 PERSONALIZATION: if you are adding or changing {{ }} / {%= %} expressions, call get_personalization_syntax for the
   AJO-native syntax (and discover-personalization-paths / list_xdm_field_groups for the real attribute paths) — never
   invent functions or use JavaScript/Liquid/Jinja.
@@ -604,7 +617,6 @@ Returns: { success: true, etag?: "<new-etag>", warnings?: [...] }  (a "warnings"
     type: 'object' as const,
     additionalProperties: false,
     required: ['fragmentId', 'etag', 'type', 'channels', 'fragment'],
-    allOf: EXPRESSION_REQUIRES_SUBTYPE,
     properties: {
       fragmentId: { type: 'string', format: 'uuid', description: 'UUID of the fragment to update' },
       etag: { type: 'string', description: 'ETag from get_content_fragment (or the etag returned by create_content_fragment). Pass it back exactly as received, including its surrounding double-quote characters — do not strip them.' },

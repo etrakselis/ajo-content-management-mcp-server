@@ -22,6 +22,7 @@ import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
 import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_TEMPLATE_DESCRIPTORS, parseFragmentUri, parseTemplateUri, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT } from './resources.js';
 import { getVisualDesignerRequirements } from './visual-designer-requirements.js';
+import { getAemImageEmbedInstructions } from './aem-asset-instructions.js';
 import { getPersonalizationGuidance } from './personalization-guidance.js';
 import { logger } from '../telemetry/index.js';
 import { recordAudit } from '../telemetry/audit.js';
@@ -86,6 +87,7 @@ import {
 // Server context — read-only; reports who/what this server is operating as
 import { getServerContextDefinition, handleGetServerContext, setToolCatalog, setWriteConfirmedGetter, getNamingConventionDefinition, handleGetNamingConvention } from '../tools/context.js';
 import { getVisualDesignerRequirementsDefinition, handleGetVisualDesignerRequirements } from '../tools/visual-designer.js';
+import { getAemImageEmbedInstructionsDefinition, handleGetAemImageEmbedInstructions } from '../tools/aem-assets.js';
 import { getPersonalizationSyntaxDefinition, handleGetPersonalizationSyntax, getPersonalizationGuidanceDefinition, handleGetPersonalizationGuidance } from '../tools/personalization.js';
 // GitHub integration tools
 import { checkPRStatusDefinition, handleCheckPRStatus, deployMergedChangesDefinition, handleDeployMergedChanges } from '../tools/github.js';
@@ -146,6 +148,8 @@ const ALL_TOOLS = [
   getNamingConventionDefinition,
   // Visual Email Designer HTML spec — read-only reference
   getVisualDesignerRequirementsDefinition,
+  // AEM image embed-attribute retrieval guide — read-only reference
+  getAemImageEmbedInstructionsDefinition,
   // AJO personalization syntax library — read-only reference
   getPersonalizationSyntaxDefinition,
   // AJO personalization scenarios/strategy guidance — read-only reference
@@ -378,6 +382,44 @@ function withAnnotationTitle<T extends { title?: string; annotations?: Record<st
   return { ...tool, annotations: { ...(tool.annotations ?? {}), title: tool.title } };
 }
 
+// Anthropic's tool input_schema does NOT support the JSON-Schema composition
+// keywords allOf/anyOf/oneOf (rejected at the top level) or the conditional
+// if/then/else. A tool whose input_schema contains them is dropped by the client
+// during MCP→API conversion: it silently disappears from tool discovery and
+// returns "tool not found" when called by name. The tool definitions are kept free
+// of these keywords on purpose (the real validation is the Zod layer in
+// validation/schemas.ts, which runs server-side on every call) — this sanitizer is
+// a defensive backstop so that if one is ever reintroduced, the tool still gets
+// advertised rather than vanishing. `properties` / `patternProperties` / `$defs` /
+// `definitions` are subschema MAPS: their child keys are field names, never schema
+// keywords, so we recurse into their values without filtering their keys.
+const UNSUPPORTED_SCHEMA_KEYWORDS = new Set(['allOf', 'anyOf', 'oneOf', 'if', 'then', 'else']);
+const SUBSCHEMA_MAP_KEYS = new Set(['properties', 'patternProperties', 'definitions', '$defs']);
+
+function stripUnsupportedSchemaKeywords(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripUnsupportedSchemaKeywords);
+  if (!node || typeof node !== 'object') return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    if (UNSUPPORTED_SCHEMA_KEYWORDS.has(key)) continue;
+    if (SUBSCHEMA_MAP_KEYS.has(key) && value && typeof value === 'object' && !Array.isArray(value)) {
+      const inner: Record<string, unknown> = {};
+      for (const [propName, propSchema] of Object.entries(value as Record<string, unknown>)) {
+        inner[propName] = stripUnsupportedSchemaKeywords(propSchema);
+      }
+      out[key] = inner;
+    } else {
+      out[key] = stripUnsupportedSchemaKeywords(value);
+    }
+  }
+  return out;
+}
+
+function sanitizeToolInputSchema<T extends { inputSchema?: unknown }>(tool: T): T {
+  if (!tool.inputSchema || typeof tool.inputSchema !== 'object') return tool;
+  return { ...tool, inputSchema: stripUnsupportedSchemaKeywords(tool.inputSchema) };
+}
+
 // Build a CallTool result from the standard `{ success, ... }` envelope our tool
 // handlers return. Always attaches `structuredContent` (the parsed object) so
 // clients on the 2025-06-18 spec get a schema-typed result matching each tool's
@@ -465,6 +507,8 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   get_naming_convention: handleGetNamingConvention,
   // Visual Email Designer HTML spec — read-only reference
   get_visual_designer_requirements: handleGetVisualDesignerRequirements,
+  // AEM image embed-attribute retrieval guide — read-only reference
+  get_aem_image_embed_instructions: handleGetAemImageEmbedInstructions,
   // AJO personalization syntax library — read-only reference
   get_personalization_syntax: handleGetPersonalizationSyntax,
   // AJO personalization scenarios/strategy guidance — read-only reference
@@ -512,8 +556,10 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     `catalog, which lists every resource with an "access" hint for how to actually obtain its content. In ` +
     `particular: the channel→templateType→content-shape mapping is already in the create_/update_ tool ` +
     `descriptions; the full Visual Email Designer HTML spec is returned by the get_visual_designer_requirements ` +
-    `tool; server status is in get_server_context; and to find an object by name call list_content_fragments / ` +
-    `list_content_templates, then get_content_fragment / get_content_template by id for the full object plus etag.`;
+    `tool; the procedure for resolving an AEM image's AJO embed attributes (via the separate AEM MCP server) is ` +
+    `returned by the get_aem_image_embed_instructions tool; server status is in get_server_context; and to find an ` +
+    `object by name call list_content_fragments / list_content_templates, then get_content_fragment / ` +
+    `get_content_template by id for the full object plus etag.`;
 
   const promptNote = ` Use the 'discover-personalization-paths' prompt before inserting personalization ` +
     `expressions into any template or fragment. Use the 'publish-fragment' prompt for the full async publication ` +
@@ -762,7 +808,11 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     // get_server_context still discover it.
     const tools = ALL_TOOLS.map(t => {
       const augmented = isWriteTool(t.name) ? augmentWriteTool(t) : t;
-      return withAnnotationTitle(augmentNamingTool(augmented, namingRulesBlock, namingPointer));
+      const named = withAnnotationTitle(augmentNamingTool(augmented, namingRulesBlock, namingPointer));
+      // Final step: strip any JSON-Schema keywords Anthropic's input_schema rejects
+      // (allOf/anyOf/oneOf/if/then/else) so a tool can never silently vanish from
+      // discovery. A no-op for the current definitions, which avoid them by design.
+      return sanitizeToolInputSchema(named);
     });
     return { tools };
   });
@@ -1063,6 +1113,12 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     if (uri === RESOURCE_URIS.visualDesignerRequirements) {
       return {
         contents: [{ uri, mimeType: 'text/plain', text: getVisualDesignerRequirements() }]
+      };
+    }
+
+    if (uri === RESOURCE_URIS.aemImageEmbedInstructions) {
+      return {
+        contents: [{ uri, mimeType: 'text/plain', text: getAemImageEmbedInstructions() }]
       };
     }
 
