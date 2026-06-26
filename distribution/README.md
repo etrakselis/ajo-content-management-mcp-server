@@ -18,8 +18,7 @@ Run the **AJO Content MCP Server** from its pre-built container image — no sou
 If you haven't already, clone the repository and navigate into the distribution folder:
 
 ```bash
-git clone https://github.com/etrakselis/ajo_content_mgmt_mcp.git
-cd ajo_content_mgmt_mcp/distribution
+git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/ajo_content_mgmt_mcp.git && cd ajo_content_mgmt_mcp && git sparse-checkout set distribution && cd distribution
 ```
 
 ---
