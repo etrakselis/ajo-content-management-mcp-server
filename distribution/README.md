@@ -122,13 +122,17 @@ If the file is empty or new:
   "mcpServers": {
     "et-ajo-content-mgmt": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://localhost:3000/mcp"]
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "http://127.0.0.1:3000/mcp"
+      ]
     }
   }
 }
 ```
 
-If the file already has other servers, add the new entry inside the existing `mcpServers` block:
+If the file already has other servers or settings, add the new entry inside the existing `mcpServers` block:
 ```json
 {
   "mcpServers": {
@@ -138,13 +142,26 @@ If the file already has other servers, add the new entry inside the existing `mc
     },
     "et-ajo-content-mgmt": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://localhost:3000/mcp"]
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "http://127.0.0.1:3000/mcp"
+      ]
     }
+  },
+  "preferences": {
+    "...": "..."
   }
 }
 ```
 
 > **`npx` not found?** Install Node via the official `.pkg` (macOS) / `.msi` (Windows) installer, or set the absolute path: find it with `which npx` (macOS) / `where npx` (Windows) and use e.g. `"command": "/usr/local/bin/npx"`.
+
+### Verify the connection
+
+After restarting Claude Desktop, open the connectors dropdown — you should see **et-ajo-content-mgmt** listed as a connected server:
+
+<a href="../readme_images/claude-connector-example.png"><img src="../readme_images/claude-connector-example.png" alt="Claude Desktop connectors dropdown showing et-ajo-content-mgmt connected" width="400"></a>
 
 For other clients (Claude Code, Cursor, Codex), see the **[Client Connection Guide](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#client-connection-guide)**.
 
