@@ -61,8 +61,14 @@ Then open **http://localhost:3000**.
 
 ```bash
 docker compose logs -f     # watch logs (Ctrl+C to stop watching)
+```
+```bash
 docker compose pull        # fetch the latest published image
+```
+```bash
 docker compose up -d       # start (or restart after a pull)
+```
+```bash
 docker compose down        # stop and remove the container
 ```
 
