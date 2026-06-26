@@ -25,6 +25,8 @@ git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/aj
 
 ## 1. Start the server
 
+> **Make sure Docker Desktop is running first** — look for the whale icon in your menu bar (macOS) or system tray (Windows) showing "Docker Desktop is running." The command below will fail if the Docker engine isn't started.
+
 From this folder (the one containing `docker-compose.yml`):
 
 ```bash
