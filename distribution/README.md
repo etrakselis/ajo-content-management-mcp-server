@@ -8,17 +8,29 @@ Run the **AJO Content MCP Server** from its pre-built container image — no sou
 
 ## What you need first
 
-1. **Docker Desktop**, installed and running (the whale icon shows "Docker Desktop is running"). Download: [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/).
-2. **An Adobe API credentials file** (a Postman-environment JSON export from the Adobe Developer Console). Obtaining it requires admin access to the Adobe Developer Console and AJO — the **[full setup steps are in the main README](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#prerequisites)**. You upload this file in Step 2 below.
+1. **Git**, to download this folder. Check if it's already installed by running `git --version` in a terminal. If not:
+   - **macOS:** install [Xcode Command Line Tools](https://developer.apple.com/xcode/resources/) by running `xcode-select --install`, or install [Git directly](https://git-scm.com/download/mac).
+   - **Windows:** download and install [Git for Windows](https://git-scm.com/download/win), which includes Git Bash.
+2. **Docker Desktop**, installed and running (the whale icon shows "Docker Desktop is running"). Download: [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/).
+3. **An Adobe API credentials file** (a Postman-environment JSON export from the Adobe Developer Console). Obtaining it requires admin access to the Adobe Developer Console and AJO — the **[full setup steps are in the main README](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#prerequisites)**. You upload this file in Step 2 below.
 
 ---
 
 ## 0. Get this folder
 
-If you haven't already, clone the repository and navigate into the distribution folder:
+If you haven't already, clone the repository and navigate into the distribution folder.
 
+**macOS** (Terminal):
 ```bash
 git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/ajo_content_mgmt_mcp.git && cd ajo_content_mgmt_mcp && git sparse-checkout set distribution && cd distribution
+```
+
+**Windows** (Command Prompt or PowerShell):
+```
+git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/ajo_content_mgmt_mcp.git
+cd ajo_content_mgmt_mcp
+git sparse-checkout set distribution
+cd distribution
 ```
 
 ---
