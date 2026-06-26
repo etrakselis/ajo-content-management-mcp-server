@@ -11,7 +11,7 @@ A production-grade **Model Context Protocol (MCP) server** that exposes Adobe Jo
 3. [Example Prompts](#example-prompts)
 4. [Prerequisites](#prerequisites)
 5. [Run](#run)
-6. [Configuration](#configuration)
+6. [MCP Server Configuration](#mcp-server-configuration)
 7. [GitHub Integration (optional)](#github-integration-optional)
 8. [Client Connection Guide](#client-connection-guide)
 9. [Available Tools — Detailed](#available-tools--detailed)
@@ -451,7 +451,7 @@ docker compose up -d       # start it again later
 
 ---
 
-## Configuration
+## MCP Server Configuration
 
 > The setup steps appear **one at a time** — only Step 1 is shown when the page loads, and each subsequent step is revealed automatically once you complete the one before it.
 
