@@ -581,23 +581,25 @@ The integration settings are stored in memory for the lifetime of the server —
 
 ### File structure in the repository
 
-Each AJO write produces one JSON file at a path derived from the sandbox name, asset type, and asset identifier:
+Each AJO write produces one JSON file whose path mirrors the sandbox and folder structure you've set up in AJO:
 
 ```
 {sandbox-name}/
   content-templates/
-    {template-id}.json
+    {ajo-folder-path}/
+      {asset-name}.json
   content-fragments/
-    {fragment-id}.json
-  folders/
-    {folder-id}.json
+    {ajo-folder-path}/
+      {asset-name}.json
   tags/
-    {tag-id}.json
+    {tag-name}.json
 ```
 
-Every file contains a `_meta` block with the operation name, timestamp, author email, and AJO ID, followed by the tool arguments used to produce the asset. Delete/archive operations write a **tombstone record** — the file stays in the repo (preserving history) but its content is replaced with a record showing what was removed and when.
+The `{ajo-folder-path}` is resolved by walking the AJO folder hierarchy (e.g. a template in the `BIS › Wishlist` folder under `NV` produces `content-templates/NV/BIS/Wishlist/`). If an asset has no parent folder, it's placed directly under the asset-type directory. The filename is the asset's name (not its UUID), so the repo is human-readable without any ID lookups.
 
-**Example commit for `create_content_fragment`:**
+Every file contains a `_meta` block with the operation name, timestamp, author email, sandbox, and tenant namespace, followed by the tool arguments used to produce the asset. Delete/archive operations write a **tombstone record** — the file stays in the repo (preserving history) but its content is replaced with a record showing what was removed and when.
+
+**Example commit for `create_content_fragment`** (fragment named `NV_BIS_Wishlist_Hero` in folder `NV › BIS › Wishlist`):
 ```json
 {
   "_meta": {
@@ -605,14 +607,17 @@ Every file contains a `_meta` block with the operation name, timestamp, author e
     "ajoId": "b6d70a45-a149-453b-85ba-809a5d40066d",
     "updatedAt": "2026-06-22T14:32:00.000Z",
     "updatedBy": "alice@example.com",
-    "sandbox": "my-sandbox"
+    "sandbox": "my-sandbox",
+    "tenant": "_mytenant"
   },
-  "name": "Global Footer",
+  "name": "NV_BIS_Wishlist_Hero",
   "type": "html",
   "channels": ["email"],
   "fragment": { "content": "<footer>© 2026 Acme Corp</footer>" }
 }
 ```
+
+This file lands at `my-sandbox/content-fragments/NV/BIS/Wishlist/NV_BIS_Wishlist_Hero.json`.
 
 ### PR Approval Gate workflow
 
