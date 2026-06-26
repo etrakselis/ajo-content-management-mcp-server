@@ -5,7 +5,7 @@ import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
 import { tokenManager, acquireImsToken, AdobeCredentials } from '../auth/token-manager.js';
 import axios from 'axios';
-import { configureAdobeClient, resetAdobeClient, listTemplates, type NamingConventionConfig, type GitHubConfig } from '../adobe/client.js';
+import { configureAdobeClient, resetAdobeClient, listTemplates, getConfiguredSandboxName, setConfiguredSandboxName, type NamingConventionConfig, type GitHubConfig } from '../adobe/client.js';
 import { testConnection as testGitHubConnection, getDefaultBranch } from '../github/client.js';
 
 import { CredentialsFileSchema } from '../validation/schemas.js';
@@ -13,6 +13,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createMcpServer } from '../mcp/server.js';
 import { getConnectedClients, addSession, touchSession, openSessionStream, closeSessionStream, removeSession } from '../mcp/connected-clients.js';
 import { getWritesAllowed, setWritesAllowed, onWriteAccessChanged } from '../mcp/access-policy.js';
+import { onSandboxChanged, notifySandboxChanged } from '../mcp/sandbox-change.js';
 import { logger, metricsRegistry } from '../telemetry/index.js';
 import { landingPageHtml } from '../ui/landing.js';
 import { getDefaultNamingConvention } from '../ui/naming-convention-default.js';
@@ -875,6 +876,70 @@ export function createExpressApp(): express.Application {
     return res.json({ success: true, writesAllowed: getWritesAllowed() });
   });
 
+  // Switch the active sandbox live (after activation), without a full reconfigure
+  // or a client restart — the read/write toggle's counterpart for sandbox targeting.
+  // The new sandbox is validated with a lightweight read before it's committed; if
+  // it's unreachable we revert to the previous one (so the server keeps working) and
+  // notify no one. On success, already-connected MCP clients are nudged to refresh
+  // (the Adobe client reads the sandbox live, so subsequent calls hit the new one).
+  app.post('/api/sandbox', csrfGuard, async (req: Request, res: Response) => {
+    if (!tokenManager.isConfigured()) {
+      return res.status(409).json({ success: false, error: 'Server is not configured yet.' });
+    }
+    const sandboxName = (req.body as { sandboxName?: unknown })?.sandboxName;
+    if (typeof sandboxName !== 'string' || !sandboxName.match(/^[a-zA-Z0-9_-]{1,50}$/)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid sandbox name. Use alphanumeric characters, hyphens, and underscores only.'
+      });
+    }
+
+    const previous = getConfiguredSandboxName();
+    if (sandboxName === previous) {
+      // No-op (e.g. a change event that didn't actually change the value).
+      return res.json({ success: true, sandboxName });
+    }
+
+    // Point the Adobe client at the new sandbox, then validate it with a lightweight
+    // read. On failure, restore the previous sandbox so the server stays usable.
+    setConfiguredSandboxName(sandboxName);
+    try {
+      await listTemplates({ limit: 1 });
+    } catch (err) {
+      if (previous !== null) setConfiguredSandboxName(previous);
+      const stillActive = previous ? ` The previous sandbox "${previous}" is still active.` : '';
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status;
+        if (status === 403) {
+          return res.status(400).json({
+            success: false,
+            error: `Sandbox "${sandboxName}" not found or your API key does not have AJO Content permissions for it.${stillActive}`
+          });
+        }
+        if (status === 401) {
+          return res.status(401).json({
+            success: false,
+            error: `Access token was rejected by the API (401). Check that your API key and IMS org are correct.${stillActive}`
+          });
+        }
+        const title = err.response?.data?.title || err.response?.data?.message || err.message;
+        return res.status(400).json({
+          success: false,
+          error: `Could not switch to sandbox "${sandboxName}" (${status}): ${title}.${stillActive}`
+        });
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      return res.status(400).json({
+        success: false,
+        error: `Could not switch to sandbox "${sandboxName}": ${detail}.${stillActive}`
+      });
+    }
+
+    notifySandboxChanged();
+    logger.info('Sandbox switched live', { from: previous, to: sandboxName });
+    return res.json({ success: true, sandboxName });
+  });
+
   app.post('/api/deactivate', csrfGuard, (_req: Request, res: Response) => {
     tokenManager.reset();
     resetAdobeClient();
@@ -938,12 +1003,15 @@ export function createExpressApp(): express.Application {
           }
         });
         const mcpServer = createMcpServer('http');
-        const unsubWriteAccess = onWriteAccessChanged(() => {
+        const notifyListsChanged = () => {
           mcpServer.notification({ method: 'notifications/tools/list_changed' }).catch(() => {});
           mcpServer.notification({ method: 'notifications/resources/list_changed' }).catch(() => {});
-        });
+        };
+        const unsubWriteAccess = onWriteAccessChanged(notifyListsChanged);
+        const unsubSandbox = onSandboxChanged(notifyListsChanged);
         transport.onclose = () => {
           unsubWriteAccess();
+          unsubSandbox();
           const sid = transport.sessionId;
           if (sid) {
             httpSessions.delete(sid);

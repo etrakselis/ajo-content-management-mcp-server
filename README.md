@@ -461,22 +461,7 @@ Navigate to `http://localhost:3000` in your browser.
 
 ### 2. Upload environment file
 
-Drag and drop your credentials file. The expected format matches the Postman environment export from Adobe:
-
-```json
-{
-  "values": [
-    { "type": "text", "value": "your-client-secret", "key": "CLIENT_SECRET", "enabled": true },
-    { "type": "text", "value": "your-api-key", "key": "API_KEY", "enabled": true },
-    { "type": "text", "value": "your-token-if-pre-obtained", "key": "ACCESS_TOKEN", "enabled": true },
-    { "type": "text", "value": ["openid", "AdobeID", "additional_info.projectedProductContext"], "key": "SCOPES", "enabled": true },
-    { "type": "text", "value": "tech@techacct.adobe.com", "key": "TECHNICAL_ACCOUNT_ID", "enabled": true },
-    { "type": "text", "value": "ims-na1.adobelogin.com", "key": "IMS", "enabled": true },
-    { "type": "text", "value": "org@AdobeOrg", "key": "IMS_ORG", "enabled": true }
-  ],
-  "name": "name of the API project will display here"
-}
-```
+Drag and drop your credentials file — see [Prerequisites → 1. Adobe API credentials](#1-adobe-api-credentials-the-environment-file) for how to obtain it.
 
 #### What each field is for
 

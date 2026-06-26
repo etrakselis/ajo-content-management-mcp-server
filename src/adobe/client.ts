@@ -125,6 +125,19 @@ export function getConfiguredSandboxName(): string | null {
   return clientConfig?.sandboxName ?? null;
 }
 
+// Switch the active sandbox in place, without rebuilding the HTTP client. The
+// request interceptor reads clientConfig.sandboxName live on every call, so the
+// change takes effect immediately for already-connected clients — the same
+// live-read pattern the read-only toggle uses (see access-policy.ts). No-op when
+// the client isn't configured yet. Does not emit the client-facing change
+// notification itself; the caller fires that once the new sandbox is validated
+// (see notifySandboxChanged in mcp/sandbox-change.ts).
+export function setConfiguredSandboxName(sandboxName: string): void {
+  if (clientConfig) {
+    clientConfig.sandboxName = sandboxName;
+  }
+}
+
 export function getConfiguredOrgName(): string | null {
   return clientConfig?.orgName ?? null;
 }

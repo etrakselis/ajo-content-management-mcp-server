@@ -711,7 +711,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     <div class="step-label">Step 2 — Sandbox</div>
     <div class="card">
       <h2>Select sandbox</h2>
-      <p>Choose the Adobe Experience Platform sandbox to target. Sandboxes are discovered automatically from your uploaded credentials. All API calls will be scoped to the selected sandbox.</p>
+      <p>Choose the Adobe Experience Platform sandbox to target. Sandboxes are discovered automatically from your uploaded credentials. All API calls will be scoped to the selected sandbox. You can switch sandbox any time after launch and it takes effect immediately — connected clients are notified, no restart needed.</p>
 
       <!-- Before any credentials are uploaded -->
       <div class="sandbox-msg" id="sandboxPrompt">Upload your credentials file above to load the list of accessible sandboxes.</div>
@@ -1126,6 +1126,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
       needsOrg = false;
       serverActive = false;
+      activeSandbox = '';
       document.getElementById('clientRestartNotice').classList.remove('show');
       document.getElementById('configChangeNotice').classList.remove('show');
       stopClientPolling();
@@ -1176,6 +1177,9 @@ export const landingPageHtml = `<!DOCTYPE html>
     let needsOrg = false;
     let hadConnectedClients = false;
     let serverActive = false;
+    // The sandbox the running server is currently targeting. Tracked so a live
+    // sandbox switch can be reverted in the selector if the backend rejects it.
+    let activeSandbox = '';
     const startBtn = document.getElementById('startBtn');
 
     // ─── Sandbox discovery ─────────────────────────────────────────────────────
@@ -1334,17 +1338,64 @@ export const landingPageHtml = `<!DOCTYPE html>
       discoverSandboxes();
     });
 
-    // Selecting a different sandbox from the dropdown invalidates prior activation.
-    document.getElementById('sandboxSelect').addEventListener('change', () => {
-      if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) {
+    // Force the Step 2 selector back to a sandbox name (used to undo a failed switch).
+    function setSandboxSelection(name) {
+      if (sandboxMode === 'list') {
+        document.getElementById('sandboxSelect').value = name;
+      } else {
+        document.getElementById('sandboxInput').value = name;
+      }
+    }
+
+    // Live-switch the active sandbox without tearing down the server — the sandbox
+    // counterpart of the write-access toggle. The backend validates the new sandbox
+    // and notifies connected MCP clients; on failure it keeps the previous sandbox,
+    // so we revert the selector and surface the error rather than deactivating.
+    async function switchSandboxLive() {
+      const sandbox = getSandboxName();
+      if (!sandbox || sandbox === activeSandbox) return;
+      showSandboxNote('<span class="spinner dark"></span> Switching to "' + escapeHtml(sandbox) + '"…', 'info');
+      let data;
+      try {
+        data = await postJson('/api/sandbox', { sandboxName: sandbox });
+      } catch (err) {
+        const msg = err.retryAfter !== undefined
+          ? 'Too many requests — wait a moment, then pick the sandbox again.'
+          : 'Network error switching sandbox: ' + escapeHtml(err.message) + '. The previous sandbox is still active.';
+        showSandboxNote(msg, 'warn');
+        setSandboxSelection(activeSandbox);
+        return;
+      }
+      if (!data.success) {
+        showSandboxNote(escapeHtml(typeof data.error === 'string' ? data.error : 'Could not switch sandbox.'), 'warn');
+        setSandboxSelection(activeSandbox);
+        return;
+      }
+      activeSandbox = data.sandboxName;
+      showSandboxNote('Sandbox switched to "' + escapeHtml(data.sandboxName) + '". Connected clients were notified — no restart needed.', 'info');
+    }
+
+    // A sandbox selection was committed (dropdown change, or manual entry blurred/
+    // entered). Once the server is active, switch live and notify clients instead of
+    // deactivating; before activation, a change only invalidates a pending tenant
+    // fallback. needsOrg can co-exist with an active server, so the active check wins.
+    async function onSandboxCommitted() {
+      if (document.getElementById('statusPanel').classList.contains('show')) {
+        await switchSandboxLive();
+      } else if (needsOrg) {
         resetActivationUI();
       }
       checkReady();
-    });
+    }
 
+    document.getElementById('sandboxSelect').addEventListener('change', onSandboxCommitted);
+    document.getElementById('sandboxInput').addEventListener('change', onSandboxCommitted);
+
+    // Per-keystroke updates in manual mode keep the launch button state fresh. The
+    // live switch waits for the field to be committed (the 'change' handler above)
+    // so we don't validate a half-typed sandbox name on every keystroke.
     document.getElementById('sandboxInput').addEventListener('input', () => {
-      // Changing the sandbox invalidates any prior detection / activation
-      if (needsOrg || document.getElementById('statusPanel').classList.contains('show')) {
+      if (needsOrg && !document.getElementById('statusPanel').classList.contains('show')) {
         resetActivationUI();
       }
       checkReady();
@@ -1583,6 +1634,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       renderIdentityBanner();
 
       serverActive = true;
+      activeSandbox = sandbox;
       updateProgress();
       startBtn.disabled = false;
       startBtn.classList.add('btn-breathing');

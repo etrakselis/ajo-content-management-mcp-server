@@ -19,6 +19,7 @@ import { commitAuditTrail, createApprovalPR } from '../github/sync.js';
 import { resolveAjoFolderPath } from '../adobe/unified-tags-client.js';
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
+import { onSandboxChanged } from './sandbox-change.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
 import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_TEMPLATE_DESCRIPTORS, parseFragmentUri, parseTemplateUri, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT } from './resources.js';
 import { getVisualDesignerRequirements } from './visual-designer-requirements.js';
@@ -1326,13 +1327,16 @@ export async function startStdioServer(): Promise<void> {
   const server = createMcpServer('stdio');
   const transport = new StdioServerTransport();
 
-  const unsubWriteAccess = onWriteAccessChanged(() => {
+  const notifyListsChanged = () => {
     server.notification({ method: 'notifications/tools/list_changed' }).catch(() => {});
     server.notification({ method: 'notifications/resources/list_changed' }).catch(() => {});
-  });
+  };
+  const unsubWriteAccess = onWriteAccessChanged(notifyListsChanged);
+  const unsubSandbox = onSandboxChanged(notifyListsChanged);
 
   transport.onclose = () => {
     unsubWriteAccess();
+    unsubSandbox();
     // A stdio server is 1:1 with a client; drop it from the connected list on close
     const info = server.getClientVersion();
     if (info?.name) removeClient(info.name);

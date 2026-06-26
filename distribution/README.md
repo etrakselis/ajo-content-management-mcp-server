@@ -46,6 +46,33 @@ Details for each field are in the **[Configuration section of the main README](h
 
 Point your MCP client at **http://localhost:3000/mcp**. Per-client setup (Claude Code, Claude Desktop, Cursor, Codex) is in the **[Client Connection Guide](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#client-connection-guide)**.
 
+### Claude Desktop
+
+Claude Desktop only speaks STDIO, so it can't connect to an HTTP URL directly. The [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge handles this — **do not** have Claude Desktop launch its own container, or it will collide with the one already running on port 3000 and start unconfigured.
+
+**Install Node.js first.** `npx` ships with npm, which ships with [Node.js](https://nodejs.org/en/download). Without it, Claude Desktop fails with `spawn npx ENOENT`. After installing, verify with:
+```bash
+npx --version
+```
+You do **not** need to install `mcp-remote` separately — `npx -y mcp-remote` downloads and caches it on first run.
+
+Add the following to your Claude Desktop config file, then restart Claude Desktop:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "et-ajo-content-mgmt": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:3000/mcp"]
+    }
+  }
+}
+```
+
+> **`npx` not found after installing Node?** Claude Desktop uses the GUI app's `PATH`, which on macOS often differs from your terminal's (common with `nvm` or Homebrew installs). Fix it by installing Node via the official `.pkg` (macOS) / `.msi` (Windows) installer, or use the absolute path: find it with `which npx` (macOS) / `where npx` (Windows) and set e.g. `"command": "/usr/local/bin/npx"`.
+
 ---
 
 ## Everyday commands
