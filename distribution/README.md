@@ -91,7 +91,7 @@ Details for each step are in the **[MCP Server Configuration section of the main
 
 ---
 
-## 3. Connect your client
+## 3. Connect your LLM client
 
 ### Claude Desktop
 
