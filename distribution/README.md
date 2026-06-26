@@ -61,7 +61,7 @@ The setup UI reveals one step at a time:
 3. **Set the access mode** — read-only (default) or read & write.
 4. **Enter your email** and click **Start MCP Server**.
 
-Details for each field are in the **[Configuration section of the main README](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#configuration)**.
+Details for each field are in the **[Configuration section of the main README](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#mcp-server-configuration)**.
 
 ---
 
