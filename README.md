@@ -455,7 +455,7 @@ docker compose up -d       # start it again later
 
 > **Building from source instead?** Contributors can build the image locally rather than pulling it — see [Development](#development).
 
-> **Sharing with someone who won't touch the repo?** The [`distribution/`](distribution/) folder is a self-contained bundle — an abridged `QUICKSTART.md` plus a ready-to-run `docker-compose.yml`. Zip it and hand it off; they only need Docker Desktop and their Adobe credentials file. See [Packaging the distribution bundle](#packaging-the-distribution-bundle).
+> **Sharing with someone who won't touch the repo?** The [`distribution/`](distribution/) folder is a self-contained bundle — an abridged `README.md` plus a ready-to-run `docker-compose.yml`. Zip it and hand it off; they only need Docker Desktop and their Adobe credentials file. See [Packaging the distribution bundle](#packaging-the-distribution-bundle).
 
 ---
 
@@ -1179,7 +1179,7 @@ You can also trigger it manually from the **Actions** tab (publishes `:latest`).
 
 ### Packaging the distribution bundle
 
-To hand the server to an end user who won't clone the repo, zip the self-contained [`distribution/`](distribution/) folder (an abridged `QUICKSTART.md` + a pull-only `docker-compose.yml`):
+To hand the server to an end user who won't clone the repo, zip the self-contained [`distribution/`](distribution/) folder (an abridged `README.md` + a pull-only `docker-compose.yml`):
 
 ```bash
 zip -r ajo-content-mcp-quickstart.zip distribution/
