@@ -93,15 +93,12 @@ Details for each step are in the **[MCP Server Configuration section of the main
 
 ### Claude Desktop
 
-Claude Desktop only speaks STDIO, so it can't connect to an HTTP URL directly. The [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge handles this — **do not** have Claude Desktop launch its own container, or it will collide with the one already running on port 3000 and start unconfigured.
-
-**Install Node.js first.** `npx` ships with npm, which ships with [Node.js](https://nodejs.org/en/download). Without it, Claude Desktop fails with `spawn npx ENOENT`. After installing, verify with:
+**1. Install [Node.js](https://nodejs.org/en/download)** if you don't have it, then verify:
 ```bash
 npx --version
 ```
-You do **not** need to install `mcp-remote` separately — `npx -y mcp-remote` downloads and caches it on first run.
 
-Add the following to your Claude Desktop config file, then restart Claude Desktop. Navigate to the folder containing the file using the command for your OS:
+**2. Open your Claude Desktop config file.** Navigate to its folder using the command for your OS:
 
 **macOS** (Terminal):
 ```bash
@@ -117,6 +114,7 @@ cd %APPDATA%\Claude
 cd $env:APPDATA\Claude
 ```
 
+**3. Add the following to `claude_desktop_config.json`, save the file, then restart Claude Desktop:**
 ```json
 {
   "mcpServers": {
@@ -128,7 +126,7 @@ cd $env:APPDATA\Claude
 }
 ```
 
-> **`npx` not found after installing Node?** Claude Desktop uses the GUI app's `PATH`, which on macOS often differs from your terminal's (common with `nvm` or Homebrew installs). Fix it by installing Node via the official `.pkg` (macOS) / `.msi` (Windows) installer, or use the absolute path: find it with `which npx` (macOS) / `where npx` (Windows) and set e.g. `"command": "/usr/local/bin/npx"`.
+> **`npx` not found?** Install Node via the official `.pkg` (macOS) / `.msi` (Windows) installer, or set the absolute path: find it with `which npx` (macOS) / `where npx` (Windows) and use e.g. `"command": "/usr/local/bin/npx"`.
 
 For other clients (Claude Code, Cursor, Codex), see the **[Client Connection Guide](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#client-connection-guide)**.
 
