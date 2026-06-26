@@ -463,26 +463,6 @@ Navigate to `http://localhost:3000` in your browser.
 
 Drag and drop your credentials file — see [Prerequisites → 1. Adobe API credentials](#1-adobe-api-credentials-the-environment-file) for how to obtain it.
 
-#### What each field is for
-
-**Always required** — every setup needs these two:
-
-| Field | What it is |
-|-------|------------|
-| `API_KEY` | Your integration's Client ID from the Adobe Developer Console. |
-| `IMS_ORG` | Your Adobe organization ID (looks like `XXedwin@AdobeOrg`). |
-
-**Authentication — pick *one* of these two approaches:**
-
-- **Option A — let the server log in for you (recommended).** Provide `CLIENT_SECRET`, `TECHNICAL_ACCOUNT_ID`, `IMS`, and `SCOPES`. The server uses these to fetch an access token automatically and refreshes it as needed. In this case you can leave `ACCESS_TOKEN` blank.
-- **Option B — supply your own token.** Paste a token you already obtained into `ACCESS_TOKEN` and leave the Option A fields blank. Note the server **cannot refresh** this token, so it stops working once the token expires and you'll need to upload a new one.
-
-**Formatting / informational:**
-
-- **`SCOPES`** must be a JSON **array of strings** (e.g. `["openid", "AdobeID", ...]`), not a single comma-separated string.
-- **`name`** is just a label for the credential set. After you upload the file it's displayed on the landing page so you can confirm you loaded the right one.
-- **`type`** and **`enabled`** come from Adobe's Postman export — leave them as they are.
-
 > Credentials are stored in memory only. They are never written to disk, logged, or returned through tools.
 
 As soon as the file is loaded, the server validates the credentials, auto-detects your **tenant namespace** — displayed in a banner directly below this step so you can confirm the right tenant before continuing — and discovers the sandboxes the credentials can access, which populates the dropdown in the next step.

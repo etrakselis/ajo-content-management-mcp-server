@@ -27,6 +27,15 @@ Then open **http://localhost:3000**.
 
 > **Can't reach the page?** The server binds to loopback only by design. If `localhost` doesn't resolve, try **http://127.0.0.1:3000**.
 
+```bash
+docker compose logs -f     # watch logs (Ctrl+C to stop watching)
+docker compose pull        # fetch the latest published image
+docker compose up -d       # start (or restart after a pull)
+docker compose down        # stop and remove the container
+```
+
+> **Pin a version** for reproducibility: edit `docker-compose.yml` and replace `:latest` with a specific tag, e.g. `ghcr.io/etrakselis/ajo-content-mcp:1.0.0`.
+
 ---
 
 ## 2. Configure (in the browser)
@@ -43,8 +52,6 @@ Details for each field are in the **[Configuration section of the main README](h
 ---
 
 ## 3. Connect your client
-
-Point your MCP client at **http://localhost:3000/mcp**. Per-client setup (Claude Code, Claude Desktop, Cursor, Codex) is in the **[Client Connection Guide](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#client-connection-guide)**.
 
 ### Claude Desktop
 
@@ -73,18 +80,7 @@ Add the following to your Claude Desktop config file, then restart Claude Deskto
 
 > **`npx` not found after installing Node?** Claude Desktop uses the GUI app's `PATH`, which on macOS often differs from your terminal's (common with `nvm` or Homebrew installs). Fix it by installing Node via the official `.pkg` (macOS) / `.msi` (Windows) installer, or use the absolute path: find it with `which npx` (macOS) / `where npx` (Windows) and set e.g. `"command": "/usr/local/bin/npx"`.
 
----
-
-## Everyday commands
-
-```bash
-docker compose logs -f     # watch logs (Ctrl+C to stop watching)
-docker compose pull        # fetch the latest published image
-docker compose up -d       # start (or restart after a pull)
-docker compose down        # stop and remove the container
-```
-
-> **Pin a version** for reproducibility: edit `docker-compose.yml` and replace `:latest` with a specific tag, e.g. `ghcr.io/etrakselis/ajo-content-mcp:1.0.0`.
+For other clients (Claude Code, Cursor, Codex), see the **[Client Connection Guide](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#client-connection-guide)**.
 
 ---
 
