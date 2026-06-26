@@ -27,6 +27,8 @@ Then open **http://localhost:3000**.
 
 > **Can't reach the page?** The server binds to loopback only by design. If `localhost` doesn't resolve, try **http://127.0.0.1:3000**.
 
+### Everyday commands
+
 ```bash
 docker compose logs -f     # watch logs (Ctrl+C to stop watching)
 docker compose pull        # fetch the latest published image
