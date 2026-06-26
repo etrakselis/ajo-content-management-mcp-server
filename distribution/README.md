@@ -28,8 +28,14 @@ git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/aj
 **Windows** (Command Prompt or PowerShell):
 ```
 git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/ajo_content_mgmt_mcp.git
+```
+```
 cd ajo_content_mgmt_mcp
+```
+```
 git sparse-checkout set distribution
+```
+```
 cd distribution
 ```
 
