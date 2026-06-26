@@ -101,9 +101,21 @@ npx --version
 ```
 You do **not** need to install `mcp-remote` separately — `npx -y mcp-remote` downloads and caches it on first run.
 
-Add the following to your Claude Desktop config file, then restart Claude Desktop:
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+Add the following to your Claude Desktop config file, then restart Claude Desktop. Navigate to the folder containing the file using the command for your OS:
+
+**macOS** (Terminal):
+```bash
+cd ~/Library/Application\ Support/Claude
+```
+
+**Windows** (Command Prompt):
+```
+cd %APPDATA%\Claude
+```
+**Windows** (PowerShell):
+```
+cd $env:APPDATA\Claude
+```
 
 ```json
 {
