@@ -13,6 +13,17 @@ Run the **AJO Content MCP Server** from its pre-built container image — no sou
 
 ---
 
+## 0. Get this folder
+
+If you haven't already, clone the repository and navigate into the distribution folder:
+
+```bash
+git clone https://github.com/etrakselis/ajo_content_mgmt_mcp.git
+cd ajo_content_mgmt_mcp/distribution
+```
+
+---
+
 ## 1. Start the server
 
 From this folder (the one containing `docker-compose.yml`):
@@ -40,7 +51,7 @@ docker compose down        # stop and remove the container
 
 ---
 
-## 2. Configure (in the browser)
+## 2. Configure MCP Server (in the browser)
 
 The setup UI reveals one step at a time:
 
