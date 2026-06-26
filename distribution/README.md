@@ -125,7 +125,7 @@ If the file is empty or new:
       "args": [
         "-y",
         "mcp-remote@latest",
-        "http://127.0.0.1:3000/mcp"
+        "http://localhost:3000/mcp"
       ]
     }
   }
@@ -145,7 +145,7 @@ If the file already has other servers or settings, add the new entry inside the 
       "args": [
         "-y",
         "mcp-remote@latest",
-        "http://127.0.0.1:3000/mcp"
+        "http://localhost:3000/mcp"
       ]
     }
   },
