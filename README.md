@@ -28,7 +28,7 @@ A production-grade **Model Context Protocol (MCP) server** that connects LLM-pow
 
 ## Overview
 
-This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 38 tools covering the full template and fragment lifecycle, folder and tag organization (the Unified Tags/Folders API), read-only Experience Platform Schema Registry (XDM) lookups, a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec and the personalization syntax library), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 44 tools covering the full template and fragment lifecycle, folder and tag organization (the Unified Tags/Folders API), read-only Experience Platform Schema Registry (XDM) lookups, a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec and the personalization syntax library), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
 
 The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{_yourtenant.profile.person.firstName}}`. Complementing them, the **authoring reference** tools teach the LLM the exact output formats AJO expects: `get_visual_designer_requirements` returns the native HTML serialization spec so generated email stays editable in the drag-and-drop designer, and `get_personalization_syntax` returns AJO's native personalization expression language (helper functions, conditionals, loops, dataset lookup) so expressions use real AJO constructs rather than generic Handlebars/Liquid.
 
@@ -69,6 +69,7 @@ Organize content into a navigable tree (Unified Folders API). A folder is addres
 | `delete_folder` | Delete a folder — irreversible *(write, destructive)* |
 | `list_subfolders` | List a folder's children to walk the tree |
 | `validate_folder` | Check whether a folder is eligible to hold objects |
+| `ensure_folder_path` | Idempotently create a multi-level folder path, reusing existing levels *(write)* |
 
 ### Tags & tag categories (organization)
 Classify content for discovery (Unified Tags API). A tag belongs to exactly one category (`Uncategorized` if unspecified). Requires the Unified Tags/Folders API on the credential's Developer Console project. **Tag categories are read-only here** — creating/updating/deleting them requires system/product administrator privileges the typical MCP principal lacks, so those operations are intentionally not exposed; create tags in `Uncategorized` (omit `tagCategoryId`) for the non-admin path.
@@ -100,11 +101,18 @@ Reference content the LLM fetches to produce output in the exact format AJO expe
 |------|-------------|
 | `get_visual_designer_requirements` | The complete native-HTML serialization spec for the AJO Visual Email Designer (rules, structure/component catalog, required `<head>`). Call before authoring email HTML so it stays in drag-and-drop mode. |
 | `get_personalization_syntax` | The AJO-native personalization syntax library (expression language, helper functions, operators, contextual-data iteration, dataset lookup). Served one category at a time. Call before writing `{{ }}` / `{%= %}` expressions. |
+| `get_personalization_guidance` | AJO personalization strategy guide — when and what to personalize (discovery process, data-source resolution, iteration rules, coverage checklist). Call before authoring any dynamic content. |
+
+### AEM Assets — read-only
+| Tool | Description |
+|------|-------------|
+| `get_aem_image_embed_instructions` | Returns the step-by-step procedure for resolving the three AJO media-library embed attributes (`data-medialibrary-id`, `data-mediarepo-id`, `data-medialibrary-source`) of an AEM DAM image. Call before embedding any AEM-hosted image into content. |
 
 ### Server Context — read-only
 | Tool | Description |
 |------|-------------|
 | `get_server_context` | Reports who/what the server is acting as (author, sandbox, tenant, org, write-access) plus the full grouped tool catalog. |
+| `get_naming_convention` | Returns the administrator-defined naming convention enforced when creating or renaming templates, fragments, folders, and tags. Call before assigning any name. |
 
 ### GitHub Integration — optional
 When a GitHub repository is configured (see [GitHub Integration](#github-integration-optional)), two additional tools are exposed.
@@ -895,6 +903,12 @@ The API only supports replacing the folder name; the tool builds the JSON-Patch 
 ```
 Irreversible — confirmed every time.
 
+#### `ensure_folder_path` *(write)*
+```json
+{ "folderType": "fragment", "path": ["NV", "BIS", "Wishlist"] }
+```
+Idempotently creates a multi-level folder path, creating only the levels that don't already exist and reusing existing ones. Use this instead of calling `create_folder` level-by-level — it removes the create → duplicate-error → list-subfolders → retry loop that nested folder creation otherwise requires. Returns the leaf folder id and a per-level report of which folders were created vs. reused.
+
 ### Tags & tag categories (Unified Tags API)
 
 Classify content for discovery. A **tag** belongs to exactly one **tag category** (`Uncategorized` if none is given at create time). The `property` argument on the list tools is a filter attribute (e.g. `tagCategoryId=<id>`, `name`, `archived`) — **not** the FIQL grammar used by the content list tools. **Requires the Unified Tags/Folders API enabled on the credential's Developer Console project.**
@@ -981,6 +995,12 @@ Returns who/what the server is operating as — `authorEmail` (self-declared at 
 
 It also returns `tools` — the full catalog of every tool this server exposes, grouped by domain (`[{ group, tools: [{ name, title }] }]`). This is the reliable way for a client to discover all capabilities by exact name in a single call, which matters when the client defers tools and a fuzzy tool search ranks one below its result cutoff. The same catalog is also rendered into the server `instructions` at connection time, so the two channels cover each other (instructions need no tool call but are dropped by some clients; this tool result is high-salience but requires the call).
 
+#### `get_naming_convention` *(read)*
+```json
+{}
+```
+Returns the administrator-defined naming convention that the server enforces when creating or renaming content templates, fragments, folders, and tags. Call before assigning any name to ensure compliance. Returns `{ enabled, rules }` — `rules` is the full convention in Markdown when a convention is configured, or `null` when none is set.
+
 ### GitHub integration tools
 
 These tools are only exposed when the [GitHub Integration](#github-integration-optional) is enabled. They are read-only from the perspective of AJO — they interact with GitHub, not with AJO's Content API.
@@ -1018,6 +1038,18 @@ With **no argument**, returns the index: a syntax primer plus the menu of catego
 { "category": "dates" }
 ```
 Categories: `core`, `helpers`, `operators`, `strings`, `dates`, `arrays`, `aggregation`, `arithmetic`, `objects`, `maps`, `context-iteration`, `dataset-lookup` (or `all` for the entire library). Covers AJO-native personalization **syntax** — expression language, helper functions, conditionals, loops, dataset lookup. This is syntax only; get the real attribute **paths** from the Schema Registry tools or the `discover-personalization-paths` prompt, and never guess paths or emit JavaScript/Liquid/Jinja.
+
+#### `get_personalization_guidance` *(read)*
+```json
+{}
+```
+Returns the AJO personalization strategy guide — **when** and **what** to personalize while authoring content. Covers the discovery process, data-source resolution order (profile → journey context → event payload → dataset lookup), detecting collections that require iteration, what fields to personalize (customer, transaction, event, offer, URLs, images, dates), conditional content, and a final coverage/validation checklist. This is the strategy layer; pair it with `get_personalization_syntax` (how to write expressions) and the Schema Registry tools (real attribute paths).
+
+#### `get_aem_image_embed_instructions` *(read)*
+```json
+{}
+```
+Returns the step-by-step procedure for resolving the three AJO media-library embed attributes required when inserting an AEM DAM image into content: `data-medialibrary-id` (the asset's `jcr:uuid` in URN form), `data-mediarepo-id` (the AEM author host), and `data-medialibrary-source` (`"aem"`). Without the correct values the image will not resolve from the media library. Call this before embedding any AEM-hosted image via `create_content_fragment`, `update_content_fragment`, `create_content_template`, or `update_content_template`. The guide explains how to obtain the values through a separate AEM MCP server.
 
 ---
 
