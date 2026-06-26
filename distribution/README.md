@@ -16,6 +16,8 @@ Run the **AJO Content MCP Server** from its pre-built container image — no sou
 
 ---
 
+## Steps
+
 ## 0. Get this folder
 
 If you haven't already, clone the repository and navigate into the distribution folder.
