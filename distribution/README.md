@@ -114,10 +114,28 @@ cd %APPDATA%\Claude
 cd $env:APPDATA\Claude
 ```
 
-**3. Add the following to `claude_desktop_config.json`, save the file, then restart Claude Desktop:**
+**3. Add the server entry to `claude_desktop_config.json`, save the file, then restart Claude Desktop.**
+
+If the file is empty or new:
 ```json
 {
   "mcpServers": {
+    "et-ajo-content-mgmt": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:3000/mcp"]
+    }
+  }
+}
+```
+
+If the file already has other servers, add the new entry inside the existing `mcpServers` block:
+```json
+{
+  "mcpServers": {
+    "some-other-server": {
+      "command": "...",
+      "args": ["..."]
+    },
     "et-ajo-content-mgmt": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "http://localhost:3000/mcp"]
