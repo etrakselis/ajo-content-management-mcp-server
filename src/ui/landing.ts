@@ -3,7 +3,7 @@ export const landingPageHtml = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ET AJO Content MCP</title>
+  <title>ET AJO CONTENT MGMT MCP</title>
   <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAABL1BMVEUAAADjHADqDwDqEQDrFADrDwDqEQDqEADqDwD/AADqEQDpDwDqEQDrEADrFADqEADqEADnEADpEADqDwD/AADqEADqEADfAADrEQDqEADqEADrEADqEADqEADqEADrEQDqEADsDgDqEADpEAD/AADsEwDqEADqEADwDwDqEADqEQDqEADpCwDpDwDqEADrFADpEADqEQD/AADqEADqEQDbAADqEADqEAD/AADoEADoDwDpEADpEADqEADqEADrDQDpEADqDgDrEADqEADoEQDnDADqEADqEADrEAD/AADqEADqEADuEQDpEQDrEQDqEADpEADqEADqDwDqDgDqDwDrEADpDwDqDwDqDwDrEADuEQDqEADoDwDqEQDqDwDpEADrDQDrEADqEADqEAD///8XdvSxAAAAY3RSTlMACYeIDWRszNYBPUSorxn6/CCAhgXk6whZX8S878owS5I2neEDKf6hEfV7+Bd2+xpdegLeqgfq4gRPQ45SutwnvSVzwCwVlPCiBunzDzuKbdX0dyTXu0WVVLAe5SFKhaQmfW7io+08AAAAAWJLR0Rkwtq4CQAAAAlwSFlzAAAA6AAAAOgBhtX2rwAAAAd0SU1FB+gIFBUtLabQ30cAAAEtSURBVDjLrZJXQ8IwFIUjRQQRRUXcewKKW3Erbhy4wAEimv//H0y4p22Slic9L733nC+jSRj7T7UELFKwCdDKoVAToM0GwhHfvJ07ivoCHS4Q88s7u1wg3u0D9HBFvd480acCyX4PMMA1DXqAIQqGR+g7auZjGDk+gWLSAKbInp6ZnaNqXs8XUmSnnbUyixqwRG52mbEVrLGq5mvrZG6IenOL6u2cAuxg1K5s9tDsK8ABWYeNWzzCNo/d/ARWntpTTHHmAPj3zLl+qBd2Hrwk4wr9dYH6m1sYIYy4s0fcwyhSG3mg9vFJKi82+ow9vdDTi+r3KOcpoS43gJgOvArrDfW7zD/iOpBMMJar4OlVBWBxQ5/CrKEOiKMvmMCXMq14enXL1Ldc+AdNnf1Zv9MjogPfmGNPAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI0LTA4LTIwVDIxOjQ1OjQ1KzAwOjAwMdr8AwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNC0wOC0yMFQyMTo0NTo0NSswMDowMECHRL8AAAAZdEVYdFNvZnR3YXJlAHd3dy5pbmtzY2FwZS5vcmeb7jwaAAAAV3pUWHRSYXcgcHJvZmlsZSB0eXBlIGlwdGMAAHic4/IMCHFWKCjKT8vMSeVSAAMjCy5jCxMjE0uTFAMTIESANMNkAyOzVCDL2NTIxMzEHMQHy4BIoEouAOoXEXTyQjWVAAAAAElFTkSuQmCC" />
   <style>
     :root {
@@ -25,7 +25,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       min-height: 100vh;
     }
     header {
-      background: #3D3D3D;
+      background: linear-gradient(to bottom, #464646, #363636);
       padding: 16px 48px;
       display: flex;
       align-items: center;
@@ -33,7 +33,9 @@ export const landingPageHtml = `<!DOCTYPE html>
       position: sticky;
       top: 0;
       z-index: 100;
-      border-bottom: 1px solid rgba(255,255,255,0.12);
+      border-top: 1px solid rgba(250, 15, 0, 0.55);
+      border-bottom: 1px solid rgba(250, 15, 0, 0.55);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.07);
     }
     .setup-tracker {
       position: absolute;
@@ -58,15 +60,23 @@ export const landingPageHtml = `<!DOCTYPE html>
       width: 10px;
       height: 10px;
       border-radius: 50%;
-      background: rgba(255,255,255,0.2);
-      transition: background 0.4s ease;
+      background: rgba(255,255,255,0.15);
+      border: 2px solid rgba(255,255,255,0.15);
+      transition: background 0.4s ease, border-color 0.4s ease;
     }
-    .setup-dot.done { background: var(--adobe-red); }
+    .setup-dot.done { background: var(--adobe-red); border-color: var(--adobe-red); }
     .setup-tracker-pct {
       font-size: 12px;
       font-weight: 700;
       color: rgba(255,255,255,0.65);
       min-width: 36px;
+    }
+    .logo-container {
+      position: absolute;
+      left: 48px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
     .logo-mark {
       width: 30px;
@@ -74,12 +84,24 @@ export const landingPageHtml = `<!DOCTYPE html>
       border-radius: 3px;
       display: block;
       object-fit: contain;
-      position: absolute;
-      left: 48px;
+    }
+    .logo-et {
+      color: white;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      line-height: 1;
+      align-self: center;
+    }
+    .logo-et-initials {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      opacity: 0.75;
     }
     .logo-text {
       color: white;
-      font-size: 20px;
+      font-size: 22px;
       font-weight: 600;
       letter-spacing: -0.01em;
       line-height: 1;
@@ -110,25 +132,27 @@ export const landingPageHtml = `<!DOCTYPE html>
     .btn-about {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 4px 8px;
-      background: rgba(255,255,255,0.12);
+      gap: 3px;
+      padding: 2px 5px;
+      background: rgba(255,255,255,0.35);
       color: rgba(255,255,255,0.9);
       border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 6px;
-      font-size: 13px;
+      border-radius: 4px;
+      font-size: 10px;
       font-weight: 500;
       font-family: inherit;
+      line-height: 1;
       cursor: pointer;
       text-decoration: none;
       transition: background 0.15s;
       position: relative;
+      align-self: center;
     }
     .btn-about::before {
       content: '';
       position: absolute;
       inset: -1px;
-      border-radius: 7px;
+      border-radius: 6px;
       padding: 1px;
       background: conic-gradient(from var(--btn-angle), transparent 80%, #FA0F00 88%, transparent 95%);
       -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
@@ -138,36 +162,113 @@ export const landingPageHtml = `<!DOCTYPE html>
       pointer-events: none;
     }
     .btn-about:hover { background: rgba(255,255,255,0.2); }
-    .btn-about svg { width: 15px; height: 15px; opacity: 0.85; }
+    .btn-about svg { width: 10px; height: 10px; opacity: 0.85; }
     main {
       max-width: 960px;
       margin: 0 auto;
-      padding: 48px 24px 80px;
+      padding: 24px 24px 80px;
     }
     .hero {
       margin-bottom: 40px;
+      background: #1a1a1a;
+      border: 1px solid #2f2f2f;
+      border-radius: 10px;
+      padding: 0;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+    }
+    .hero::before {
+      content: '';
+      display: block;
+      height: 38px;
+      background-color: #2a2a2a;
+      border-bottom: 1px solid #3a3a3a;
+      background-image:
+        radial-gradient(circle at 14px 50%, #FF5F57 5px, transparent 5px),
+        radial-gradient(circle at 30px 50%, #FEBC2E 5px, transparent 5px),
+        radial-gradient(circle at 46px 50%, #28C840 5px, transparent 5px);
+      background-repeat: no-repeat;
     }
     .hero h1 {
-      font-size: 28px;
-      font-weight: 700;
-      color: var(--adobe-dark);
-      letter-spacing: -0.02em;
-      line-height: 1.2;
-      margin-bottom: 10px;
+      font-size: 13px;
+      font-weight: 400;
+      color: #50FA7B;
+      font-family: 'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+      letter-spacing: 0;
+      line-height: 1.5;
+      margin-bottom: 0;
+      padding: 16px 24px 6px;
+    }
+    .hero h1::before {
+      content: '$ ';
+      color: #6272A4;
     }
     .hero p {
-      font-size: 15px;
-      color: var(--adobe-mid);
-      line-height: 1.6;
+      font-size: 13px;
+      color: #ABABAB;
+      font-family: 'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+      line-height: 1.7;
+      text-align: left;
+      padding: 0 24px 20px;
     }
-    .step { animation: stepReveal 0.35s ease both; scroll-margin-top: 70px; }
+    .step { animation: stepReveal 0.35s ease both; scroll-margin-top: 70px; position: relative; }
     .step.hidden { display: none; }
+    @keyframes traceWire {
+      from { background-position: 0 200%; }
+      to   { background-position: 0 -100%; }
+    }
+    .step::before {
+      content: '';
+      position: absolute;
+      right: -14px;
+      top: 0;
+      bottom: -20px;
+      width: 1px;
+      background: linear-gradient(
+        to bottom,
+        var(--adobe-border) 0%,
+        var(--adobe-border) 42%,
+        #FA0F00 50%,
+        var(--adobe-border) 58%,
+        var(--adobe-border) 100%
+      );
+      background-size: 100% 300%;
+      background-position: 0 200%;
+      pointer-events: none;
+    }
+    .step.wire-active::before {
+      animation: traceWire 3s linear infinite;
+    }
+    .step.wire-active:hover::before {
+      animation-play-state: paused;
+    }
+    .step:last-of-type::before {
+      bottom: 24px;
+    }
+    .step::after {
+      content: '';
+      position: absolute;
+      right: -17px;
+      top: 7px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1.5px solid var(--adobe-border);
+      pointer-events: none;
+      z-index: 1;
+      transition: background 0.3s ease, border-color 0.3s ease;
+    }
+    .step.step-done::after {
+      background: var(--adobe-red);
+      border-color: var(--adobe-red);
+    }
     .tenant-banner {
       display: flex;
       align-items: center;
       gap: 14px;
       padding: 14px 18px;
-      margin-bottom: 20px;
+      margin-top: 16px;
       border: 1px solid rgba(38,142,108,0.3);
       background: rgba(38,142,108,0.05);
       border-radius: 8px;
@@ -201,6 +302,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       letter-spacing: 0.08em;
       color: var(--adobe-red);
       margin-bottom: 8px;
+      text-align: right;
     }
     .card {
       background: var(--surface);
@@ -208,6 +310,17 @@ export const landingPageHtml = `<!DOCTYPE html>
       border-radius: 8px;
       padding: 24px;
       margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.07);
+      transition: transform 0.4s ease, box-shadow 0.4s ease;
+      transform-style: preserve-3d;
+    }
+    .card:hover {
+      transform: perspective(900px) rotateY(4deg) translateZ(10px);
+      box-shadow: -14px 6px 28px rgba(0,0,0,0.13), 0 4px 12px rgba(0,0,0,0.08);
+    }
+    #step6.server-active .card:hover {
+      transform: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.07);
     }
     .card h2 {
       font-size: 16px;
@@ -364,36 +477,13 @@ export const landingPageHtml = `<!DOCTYPE html>
     .btn-primary.btn-breathing:not(:disabled) {
       animation: btnBreathe 2.5s ease-in-out infinite;
     }
-    @property --card-angle {
-      syntax: '<angle>';
-      initial-value: 0deg;
-      inherits: false;
-    }
-    @keyframes traceCard {
-      to { --card-angle: 360deg; }
-    }
-    .card-trace {
-      position: relative;
-    }
-    .card-trace::after {
-      content: '';
-      position: absolute;
-      inset: -1px;
-      border-radius: 9px;
-      padding: 1px;
-      background: conic-gradient(from var(--card-angle), transparent 80%, #FA0F00 88%, transparent 95%);
-      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-      -webkit-mask-composite: xor;
-      mask-composite: exclude;
-      animation: traceCard 2s linear infinite;
-      pointer-events: none;
-    }
     .status-panel {
       display: none;
       background: var(--surface);
       border: 1px solid var(--adobe-border);
       border-radius: 8px;
       overflow: hidden;
+      margin-top: 20px;
     }
     .status-panel.show { display: block; }
     .status-header {
@@ -622,9 +712,9 @@ export const landingPageHtml = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <img class="logo-mark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAABL1BMVEUAAADjHADqDwDqEQDrFADrDwDqEQDqEADqDwD/AADqEQDpDwDqEQDrEADrFADqEADqEADnEADpEADqDwD/AADqEADqEADfAADrEQDqEADqEADrEADqEADqEADqEADrEQDqEADsDgDqEADpEAD/AADsEwDqEADqEADwDwDqEADqEQDqEADpCwDpDwDqEADrFADpEADqEQD/AADqEADqEQDbAADqEADqEAD/AADoEADoDwDpEADpEADqEADqEADrDQDpEADqDgDrEADqEADoEQDnDADqEADqEADrEAD/AADqEADqEADuEQDpEQDrEQDqEADpEADqEADqDwDqDgDqDwDrEADpDwDqDwDqDwDrEADuEQDqEADoDwDqEQDqDwDpEADrDQDrEADqEADqEAD///8XdvSxAAAAY3RSTlMACYeIDWRszNYBPUSorxn6/CCAhgXk6whZX8S878owS5I2neEDKf6hEfV7+Bd2+xpdegLeqgfq4gRPQ45SutwnvSVzwCwVlPCiBunzDzuKbdX0dyTXu0WVVLAe5SFKhaQmfW7io+08AAAAAWJLR0Rkwtq4CQAAAAlwSFlzAAAA6AAAAOgBhtX2rwAAAAd0SU1FB+gIFBUtLabQ30cAAAEtSURBVDjLrZJXQ8IwFIUjRQQRRUXcewKKW3Erbhy4wAEimv//H0y4p22Slic9L733nC+jSRj7T7UELFKwCdDKoVAToM0GwhHfvJ07ivoCHS4Q88s7u1wg3u0D9HBFvd480acCyX4PMMA1DXqAIQqGR+g7auZjGDk+gWLSAKbInp6ZnaNqXs8XUmSnnbUyixqwRG52mbEVrLGq5mvrZG6IenOL6u2cAuxg1K5s9tDsK8ABWYeNWzzCNo/d/ARWntpTTHHmAPj3zLl+qBd2Hrwk4wr9dYH6m1sYIYy4s0fcwyhSG3mg9vFJKi82+ow9vdDTi+r3KOcpoS43gJgOvArrDfW7zD/iOpBMMJar4OlVBWBxQ5/CrKEOiKMvmMCXMq14enXL1Ldc+AdNnf1Zv9MjogPfmGNPAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI0LTA4LTIwVDIxOjQ1OjQ1KzAwOjAwMdr8AwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNC0wOC0yMFQyMTo0NTo0NSswMDowMECHRL8AAAAZdEVYdFNvZnR3YXJlAHd3dy5pbmtzY2FwZS5vcmeb7jwaAAAAV3pUWHRSYXcgcHJvZmlsZSB0eXBlIGlwdGMAAHic4/IMCHFWKCjKT8vMSeVSAAMjCy5jCxMjE0uTFAMTIESANMNkAyOzVCDL2NTIxMzEHMQHy4BIoEouAOoXEXTyQjWVAAAAAElFTkSuQmCC" alt="ET AJO Content MCP logo" />
-    <div class="header-actions">
-      <span class="logo-text">ET AJO Content MCP</span>
+    <div class="logo-container">
+      <img class="logo-mark" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAABL1BMVEUAAADjHADqDwDqEQDrFADrDwDqEQDqEADqDwD/AADqEQDpDwDqEQDrEADrFADqEADqEADnEADpEADqDwD/AADqEADqEADfAADrEQDqEADqEADrEADqEADqEADqEADrEQDqEADsDgDqEADpEAD/AADsEwDqEADqEADwDwDqEADqEQDqEADpCwDpDwDqEADrFADpEADqEQD/AADqEADqEQDbAADqEADqEAD/AADoEADoDwDpEADpEADqEADqEADrDQDpEADqDgDrEADqEADoEQDnDADqEADqEADrEAD/AADqEADqEADuEQDpEQDrEQDqEADpEADqEADqDwDqDgDqDwDrEADpDwDqDwDqDwDrEADuEQDqEADoDwDqEQDqDwDpEADrDQDrEADqEADqEAD///8XdvSxAAAAY3RSTlMACYeIDWRszNYBPUSorxn6/CCAhgXk6whZX8S878owS5I2neEDKf6hEfV7+Bd2+xpdegLeqgfq4gRPQ45SutwnvSVzwCwVlPCiBunzDzuKbdX0dyTXu0WVVLAe5SFKhaQmfW7io+08AAAAAWJLR0Rkwtq4CQAAAAlwSFlzAAAA6AAAAOgBhtX2rwAAAAd0SU1FB+gIFBUtLabQ30cAAAEtSURBVDjLrZJXQ8IwFIUjRQQRRUXcewKKW3Erbhy4wAEimv//H0y4p22Slic9L733nC+jSRj7T7UELFKwCdDKoVAToM0GwhHfvJ07ivoCHS4Q88s7u1wg3u0D9HBFvd480acCyX4PMMA1DXqAIQqGR+g7auZjGDk+gWLSAKbInp6ZnaNqXs8XUmSnnbUyixqwRG52mbEVrLGq5mvrZG6IenOL6u2cAuxg1K5s9tDsK8ABWYeNWzzCNo/d/ARWntpTTHHmAPj3zLl+qBd2Hrwk4wr9dYH6m1sYIYy4s0fcwyhSG3mg9vFJKi82+ow9vdDTi+r3KOcpoS43gJgOvArrDfW7zD/iOpBMMJar4OlVBWBxQ5/CrKEOiKMvmMCXMq14enXL1Ldc+AdNnf1Zv9MjogPfmGNPAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI0LTA4LTIwVDIxOjQ1OjQ1KzAwOjAwMdr8AwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNC0wOC0yMFQyMTo0NTo0NSswMDowMECHRL8AAAAZdEVYdFNvZnR3YXJlAHd3dy5pbmtzY2FwZS5vcmeb7jwaAAAAV3pUWHRSYXcgcHJvZmlsZSB0eXBlIGlwdGMAAHic4/IMCHFWKCjKT8vMSeVSAAMjCy5jCxMjE0uTFAMTIESANMNkAyOzVCDL2NTIxMzEHMQHy4BIoEouAOoXEXTyQjWVAAAAAElFTkSuQmCC" alt="ET AJO CONTENT MCP logo" />
+      <span class="logo-et"><span class="logo-et-initials">ET MCP SERVER</span></span>
       <a class="btn-about" href="https://github.com/etrakselis/ajo_content_mgmt_mcp#table-of-contents" target="_blank" rel="noopener noreferrer">
         <svg viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.604-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836a9.59 9.59 0 012.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
@@ -632,8 +722,11 @@ export const landingPageHtml = `<!DOCTYPE html>
         About
       </a>
     </div>
+    <div class="header-actions">
+      <span class="logo-text">AJO CONTENT MANAGEMENT</span>
+    </div>
     <div class="setup-tracker" id="setupTracker">
-      <span class="setup-tracker-label">Server Configuration Steps Completed</span>
+      <span class="setup-tracker-label">Config Steps Completed</span>
       <div class="setup-tracker-dots">
         <span class="setup-dot" id="sdot1"></span>
         <span class="setup-dot" id="sdot2"></span>
@@ -647,7 +740,7 @@ export const landingPageHtml = `<!DOCTYPE html>
   <main>
     <div class="hero">
       <h1>Connect to Adobe Journey Optimizer</h1>
-      <p>Upload your credentials file and define the sandbox to activate the MCP server. LLM clients can then manage content templates and fragments via standardized tools.</p>
+      <p>Upload your AJO API credentials file, select a sandbox, and specify an author to activate the MCP server. LLM clients can then manage content templates, fragments, folders, and tags via standardized tools.</p>
     </div>
 
     <div class="reset-notice" id="resetNotice">
@@ -663,7 +756,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     <div class="step-label">Step 1 — Credentials</div>
     <div class="card">
       <h2>Upload environment file</h2>
-      <p>Drag and drop your <code>oauth_server_to_server.json</code> file or click to browse. Credentials are stored in memory only — never written to disk or logged.</p>
+      <p>Select your <code>oauth_server_to_server.json</code> file. Credentials are stored in memory only — never written to disk or logged.</p>
       <div class="dropzone" id="dropzone">
         <input type="file" id="fileInput" accept=".json" />
         <div class="dropzone-icon">
@@ -684,27 +777,26 @@ export const landingPageHtml = `<!DOCTYPE html>
         </span>
         <button class="replace-btn" id="replaceFileBtn" type="button">Replace</button>
       </div>
-    </div>
 
-    </section>
-
-    <!-- Tenant identity — revealed as soon as credentials are analyzed, so the
-         user can confirm the tenant before continuing. -->
-    <div class="tenant-banner" id="tenantBanner" style="display:none">
-      <div class="tenant-banner-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-3"/>
-        </svg>
-      </div>
-      <div class="tenant-banner-text">
-        <span class="tenant-banner-label">Tenant namespace</span>
-        <span class="tenant-banner-value" id="tenantValue">—</span>
-        <div class="tenant-banner-sub" id="tenantOrgRow" style="display:none">
-          <span class="tenant-banner-label">Organization</span>
-          <span class="tenant-banner-org" id="orgValue">—</span>
+      <!-- Tenant identity — revealed as soon as credentials are analyzed -->
+      <div class="tenant-banner" id="tenantBanner" style="display:none">
+        <div class="tenant-banner-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-3"/>
+          </svg>
+        </div>
+        <div class="tenant-banner-text">
+          <span class="tenant-banner-label">Tenant namespace</span>
+          <span class="tenant-banner-value" id="tenantValue">—</span>
+          <div class="tenant-banner-sub" id="tenantOrgRow" style="display:none">
+            <span class="tenant-banner-label">Organization</span>
+            <span class="tenant-banner-org" id="orgValue">—</span>
+          </div>
         </div>
       </div>
     </div>
+
+    </section>
 
     <!-- Step 2: Sandbox -->
     <section class="step hidden" id="step2" data-step-name="Sandbox">
@@ -882,16 +974,6 @@ export const landingPageHtml = `<!DOCTYPE html>
         </button>
       </div>
 
-      <!-- Connection summary — shown right below the button once the server is
-           active. Tenant namespace and sandbox are already shown above (banner +
-           Step 2), so only the access mode is surfaced here. -->
-      <div class="conn-info" id="connInfo">
-        <div class="conn-row">
-          <span class="conn-key">Access mode</span>
-          <span class="conn-val" id="connAccess">—</span>
-        </div>
-      </div>
-
       <!-- Shown after re-activation when clients were connected under the previous config -->
       <div class="config-change-notice" id="configChangeNotice">
         <strong>Restart your MCP client(s).</strong> The server configuration changed since clients last connected. Previously connected clients (Claude Desktop, Claude Code, Cursor, etc.) must be restarted to pick up the updated settings.
@@ -907,35 +989,36 @@ export const landingPageHtml = `<!DOCTYPE html>
         <input type="text" id="orgInput" placeholder="e.g. Adobe, Acme Corp" autocomplete="off" />
         <span class="hint">Your company or AJO customer name. Shown to the LLM to identify the tenant.</span>
       </div>
+
+      <!-- Status Panel (shown after start) -->
+      <div class="status-panel" id="statusPanel">
+        <div class="status-header">
+          <div class="status-dot"></div>
+          <span class="status-title">MCP Server Active</span>
+          <span id="connAccess" style="margin-left:auto;font-size:12px;font-weight:600;color:var(--adobe-mid);"></span>
+        </div>
+        <div class="endpoints">
+          <div class="endpoint-row">
+            <span class="endpoint-label">HTTP</span>
+            <span class="endpoint-value" id="httpEndpoint">http://localhost:3000/mcp</span>
+          </div>
+          <div class="endpoint-row">
+            <span class="endpoint-label">STDIO</span>
+            <span class="endpoint-value">stdin / stdout (always active alongside HTTP)</span>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="connect-section">
+          <h3>Recently connected client(s) (idle http clients get removed after 10 seconds, stdio clients are always shown unless the app is closed)</h3>
+          <div class="clients-list" id="clientsList">
+            <div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>
+          </div>
+          <p class="clients-hint">See the <a href="https://github.com/etrakselis/ajo_content_mgmt_mcp#client-connection-guide" target="_blank" rel="noopener noreferrer" style="color:var(--adobe-red);text-decoration:none;font-weight:600"><strong>README</strong></a> on GitHub for (Claude Code/Desktop, Cursor, Codex…) connection guide for per-client setup instructions.</p>
+        </div>
+      </div>
     </div>
 
     </section>
-
-    <!-- Status Panel (shown after start) -->
-    <div class="status-panel" id="statusPanel">
-      <div class="status-header">
-        <div class="status-dot"></div>
-        <span class="status-title">MCP Server Active</span>
-      </div>
-      <div class="endpoints">
-        <div class="endpoint-row">
-          <span class="endpoint-label">HTTP</span>
-          <span class="endpoint-value" id="httpEndpoint">http://localhost:3000/mcp</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="endpoint-label">STDIO</span>
-          <span class="endpoint-value">stdin / stdout (always active alongside HTTP)</span>
-        </div>
-      </div>
-      <div class="divider"></div>
-      <div class="connect-section">
-        <h3>Recently connected client(s) (idle http clients get removed after 10 seconds, stdio clients are always shown unless the app is closed)</h3>
-        <div class="clients-list" id="clientsList">
-          <div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>
-        </div>
-        <p class="clients-hint">See the <a href="https://github.com/etrakselis/ajo_content_mgmt_mcp#client-connection-guide" target="_blank" rel="noopener noreferrer" style="color:var(--adobe-red);text-decoration:none;font-weight:600"><strong>README</strong></a> on GitHub for (Claude Code/Desktop, Cursor, Codex…) connection guide for per-client setup instructions.</p>
-      </div>
-    </div>
   </main>
 
   <script>
@@ -1126,6 +1209,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
       needsOrg = false;
       serverActive = false;
+      document.getElementById('step6').classList.remove('step-done', 'server-active');
       activeSandbox = '';
       document.getElementById('clientRestartNotice').classList.remove('show');
       document.getElementById('configChangeNotice').classList.remove('show');
@@ -1137,7 +1221,6 @@ export const landingPageHtml = `<!DOCTYPE html>
       btn.disabled = false;
       btn.classList.remove('btn-trace');
       document.getElementById('statusPanel').classList.remove('show');
-      document.getElementById('connInfo').classList.remove('show');
       document.getElementById('orgFallback').classList.remove('show');
       document.getElementById('orgInput').value = '';
       document.getElementById('errorMsg').classList.remove('show');
@@ -1404,6 +1487,18 @@ export const landingPageHtml = `<!DOCTYPE html>
     // Reveal steps one at a time: Step 1 is always shown; Step 2 appears once
     // credentials are loaded; Steps 3 & 4 appear once a sandbox is chosen.
     // Removing/replacing credentials (or a server reset) collapses back.
+    // ─── Sequential wire tracer ───────────────────────────────────────────────
+    let activeWireStep = null;
+
+    function startWireLoop(stepEl) {
+      if (activeWireStep) activeWireStep.classList.remove('wire-active');
+      activeWireStep = stepEl || null;
+      if (activeWireStep) activeWireStep.classList.add('wire-active');
+    }
+
+    // Kick off with step 1 (always visible on load)
+    startWireLoop(document.getElementById('step1'));
+
     function syncSteps() {
       const hasCreds = !!credentials;
       const hasSandbox = !!getSandboxName();
@@ -1436,13 +1531,18 @@ export const landingPageHtml = `<!DOCTYPE html>
       // last still-visible step so the trace never gets stuck on a hidden card.
       const newlyVisible = Array.from(steps).find(s => wasHidden[s.id] && !s.classList.contains('hidden'));
       const newlyHidden  = Array.from(steps).find(s => !wasHidden[s.id] && s.classList.contains('hidden'));
+      // Mark completed steps (all visible steps except the last)
+      const visibleSteps = Array.from(steps).filter(s => !s.classList.contains('hidden'));
+      steps.forEach(s => s.classList.remove('step-done'));
+      visibleSteps.slice(0, -1).forEach(s => s.classList.add('step-done'));
+
       if (newlyVisible) {
-        const lastVisible = Array.from(steps).filter(s => !s.classList.contains('hidden')).pop();
+        const lastVisible = visibleSteps[visibleSteps.length - 1];
         setTimeout(() => (lastVisible || newlyVisible).scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
-        updateCardTrace(newlyVisible);
+        startWireLoop(newlyVisible);
       } else if (newlyHidden) {
-        const lastVisible = Array.from(steps).filter(s => !s.classList.contains('hidden')).pop();
-        updateCardTrace(lastVisible || null);
+        const lastVisible = visibleSteps[visibleSteps.length - 1];
+        startWireLoop(lastVisible || null);
       }
     }
 
@@ -1479,24 +1579,6 @@ export const landingPageHtml = `<!DOCTYPE html>
       const pct = [s1, s2, s3, s4].filter(Boolean).length * 25;
       document.getElementById('setupPct').textContent = pct + '%';
       document.getElementById('setupTracker').style.display = s4 ? 'none' : '';
-    }
-
-    function updateCardTrace(step) {
-      document.querySelectorAll('.card').forEach(c => c.classList.remove('card-trace'));
-      if (serverActive || !step || step.id === 'step6') return;
-      // step5 (naming convention) and stepGithub (GitHub integration) are paired optional
-      // steps that appear and disappear together — trace both simultaneously so neither
-      // is overlooked when the user is deciding which to configure.
-      const PAIRED = new Set(['step5', 'stepGithub']);
-      const stepsToTrace = PAIRED.has(step.id)
-        ? Array.from(document.querySelectorAll('.step')).filter(
-            s => PAIRED.has(s.id) && !s.classList.contains('hidden')
-          )
-        : [step];
-      stepsToTrace.forEach(s => {
-        const cards = s.querySelectorAll('.card');
-        if (cards.length) cards[cards.length - 1].classList.add('card-trace');
-      });
     }
 
     function checkReady() {
@@ -1605,8 +1687,8 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('httpEndpoint').textContent = serverUrl + '/mcp';
       document.getElementById('statusPanel').classList.add('show');
       setAccessModeDisplay(data.writesAllowed);
-      document.getElementById('connInfo').classList.add('show');
-      updateCardTrace(null);
+      startWireLoop(null);
+      document.getElementById('step6').classList.add('step-done', 'server-active');
       if (hadConnectedClients) {
         document.getElementById('configChangeNotice').classList.add('show');
         hadConnectedClients = false;
@@ -1645,7 +1727,6 @@ export const landingPageHtml = `<!DOCTYPE html>
     function setAccessModeDisplay(writesAllowed) {
       const el = document.getElementById('connAccess');
       el.textContent = writesAllowed === false ? 'Read-only' : 'Read & write';
-      el.classList.add('warn');
     }
 
     // ─── Naming convention ─────────────────────────────────────────────────────
@@ -1815,7 +1896,7 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     // The write toggle drives step visibility (naming convention only appears when
     // writes are on) and, once the server is active, flips the access mode live.
-    updateCardTrace(document.getElementById('step1'));
+    startWireLoop(document.getElementById('step1'));
 
     document.getElementById('writeToggle').addEventListener('change', async (e) => {
       // Turning writes off makes naming convention and GitHub integration irrelevant
