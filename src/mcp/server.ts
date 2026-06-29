@@ -92,6 +92,8 @@ import { getAemImageEmbedInstructionsDefinition, handleGetAemImageEmbedInstructi
 import { getPersonalizationSyntaxDefinition, handleGetPersonalizationSyntax, getPersonalizationGuidanceDefinition, handleGetPersonalizationGuidance } from '../tools/personalization.js';
 // GitHub integration tools
 import { checkPRStatusDefinition, handleCheckPRStatus, deployMergedChangesDefinition, handleDeployMergedChanges } from '../tools/github.js';
+// Cross-sandbox content promotion (plan + phased executor)
+import { planPromotionDefinition, handlePlanPromotion, promoteAssetsDefinition, handlePromoteAssets } from '../tools/promotion.js';
 import { buildToolCatalog, formatToolCatalog } from './tool-catalog.js';
 import {
   CreateTemplateSchema, UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema,
@@ -157,7 +159,10 @@ const ALL_TOOLS = [
   getPersonalizationGuidanceDefinition,
   // GitHub integration — check PR status, deploy merged PR to AJO
   checkPRStatusDefinition,
-  deployMergedChangesDefinition
+  deployMergedChangesDefinition,
+  // Cross-sandbox promotion — read-only planner + phased executor
+  planPromotionDefinition,
+  promoteAssetsDefinition
 ];
 
 // Catalog derived from the live tool list (so it never drifts). Registered into
@@ -516,7 +521,12 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   get_personalization_guidance: handleGetPersonalizationGuidance,
   // GitHub integration
   check_pr_status: handleCheckPRStatus,
-  deploy_merged_changes: handleDeployMergedChanges
+  deploy_merged_changes: handleDeployMergedChanges,
+  // Cross-sandbox promotion — plan (read-only) + phased executor.
+  // NOT in WRITE_TOOLS: it writes to a per-call target sandbox, so it self-enforces
+  // the read-only gate and a target-aware write confirmation (see tools/promotion.ts).
+  plan_promotion: handlePlanPromotion,
+  promote_assets: handlePromoteAssets
 };
 
 export function createMcpServer(transport: TransportKind = 'http'): Server {

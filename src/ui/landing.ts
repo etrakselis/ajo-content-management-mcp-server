@@ -33,7 +33,6 @@ export const landingPageHtml = `<!DOCTYPE html>
       position: sticky;
       top: 0;
       z-index: 100;
-      border-top: 1px solid rgba(250, 15, 0, 0.55);
       border-bottom: 1px solid rgba(250, 15, 0, 0.55);
       box-shadow: 0 4px 14px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.07);
     }
@@ -43,6 +42,22 @@ export const landingPageHtml = `<!DOCTYPE html>
       display: flex;
       align-items: center;
       gap: 12px;
+    }
+    .header-active-badge {
+      position: absolute;
+      right: 48px;
+      display: none;
+      align-items: center;
+      gap: 8px;
+    }
+    .header-active-badge.show { display: flex; }
+    .header-active-badge .status-dot { background: #34D399; box-shadow: 0 0 6px #34D399; }
+    .header-active-badge-label {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.9);
     }
     .setup-tracker-label {
       font-size: 12px;
@@ -170,38 +185,46 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     .hero {
       margin-bottom: 40px;
-      background: #1a1a1a;
-      border: 1px solid #2f2f2f;
+      background: linear-gradient(to bottom, #464646, #363636);
+      border: 1px solid rgba(250, 15, 0, 0.55);
       border-radius: 10px;
       padding: 0;
-      overflow: hidden;
+      position: relative;
       box-shadow: 0 4px 20px rgba(0,0,0,0.12);
     }
     .hero::before {
       content: '';
-      display: block;
-      height: 38px;
-      background-color: #2a2a2a;
-      border-bottom: 1px solid #3a3a3a;
-      background-image:
-        radial-gradient(circle at 14px 50%, #FF5F57 5px, transparent 5px),
-        radial-gradient(circle at 30px 50%, #FEBC2E 5px, transparent 5px),
-        radial-gradient(circle at 46px 50%, #28C840 5px, transparent 5px);
-      background-repeat: no-repeat;
+      position: absolute;
+      left: 50%;
+      top: -24px;
+      width: 1px;
+      height: 24px;
+      background: linear-gradient(
+        to bottom,
+        var(--adobe-border) 0%,
+        var(--adobe-border) 42%,
+        #FA0F00 50%,
+        var(--adobe-border) 58%,
+        var(--adobe-border) 100%
+      );
+      background-size: 100% 300%;
+      background-position: 0 200%;
+      animation: traceWire 1.5s linear 1 forwards;
+      pointer-events: none;
     }
     .hero h1 {
       font-size: 13px;
       font-weight: 400;
-      color: #50FA7B;
+      color: var(--adobe-red);
       font-family: 'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
       letter-spacing: 0;
       line-height: 1.5;
       margin-bottom: 0;
-      padding: 16px 24px 6px;
+      padding: 20px 24px 6px;
     }
     .hero h1::before {
       content: '$ ';
-      color: #6272A4;
+      color: white;
     }
     .hero p {
       font-size: 13px;
@@ -396,6 +419,8 @@ export const landingPageHtml = `<!DOCTYPE html>
       background: rgba(38, 142, 108, 0.06);
     }
     input[type="text"]:focus, input[type="email"]:focus { border-color: var(--adobe-red); }
+    #sandboxInput, #authorEmailInput { max-width: 420px; }
+    #sandboxSelect { width: 420px; }
     input:-webkit-autofill,
     input:-webkit-autofill:hover,
     input:-webkit-autofill:focus {
@@ -534,6 +559,9 @@ export const landingPageHtml = `<!DOCTYPE html>
     .divider { height: 1px; background: var(--adobe-border); margin: 0 24px; }
     .connect-section { padding: 20px 24px; }
     .connect-section h3 { font-size: 13px; font-weight: 600; margin-bottom: 14px; }
+    .access-mode-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+    .access-mode-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--adobe-mid); }
+    .access-mode-value { font-size: 12px; font-weight: 600; color: var(--adobe-warn); }
     .error-msg { font-size: 13px; color: #C9252D; padding: 12px; background: rgba(201,37,45,0.06); border-radius: 6px; display: none; }
     .error-msg.show { display: block; }
     .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; }
@@ -734,6 +762,10 @@ export const landingPageHtml = `<!DOCTYPE html>
         <span class="setup-dot" id="sdot4"></span>
       </div>
       <span class="setup-tracker-pct" id="setupPct">0%</span>
+    </div>
+    <div class="header-active-badge" id="headerActiveBadge">
+      <div class="status-dot"></div>
+      <span class="header-active-badge-label">MCP Server Active</span>
     </div>
   </header>
 
@@ -992,11 +1024,6 @@ export const landingPageHtml = `<!DOCTYPE html>
 
       <!-- Status Panel (shown after start) -->
       <div class="status-panel" id="statusPanel">
-        <div class="status-header">
-          <div class="status-dot"></div>
-          <span class="status-title">MCP Server Active</span>
-          <span id="connAccess" style="margin-left:auto;font-size:12px;font-weight:600;color:var(--adobe-mid);"></span>
-        </div>
         <div class="endpoints">
           <div class="endpoint-row">
             <span class="endpoint-label">HTTP</span>
@@ -1009,6 +1036,7 @@ export const landingPageHtml = `<!DOCTYPE html>
         </div>
         <div class="divider"></div>
         <div class="connect-section">
+          <div class="access-mode-row"><span class="access-mode-label">Access mode</span><span id="connAccess" class="access-mode-value"></span></div>
           <h3>Recently connected client(s) (idle http clients get removed after 10 seconds, stdio clients are always shown unless the app is closed)</h3>
           <div class="clients-list" id="clientsList">
             <div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>
@@ -1210,6 +1238,8 @@ export const landingPageHtml = `<!DOCTYPE html>
       needsOrg = false;
       serverActive = false;
       document.getElementById('step6').classList.remove('step-done', 'server-active');
+      document.getElementById('headerActiveBadge').classList.remove('show');
+      document.getElementById('setupTracker').style.display = '';
       activeSandbox = '';
       document.getElementById('clientRestartNotice').classList.remove('show');
       document.getElementById('configChangeNotice').classList.remove('show');
@@ -1689,6 +1719,8 @@ export const landingPageHtml = `<!DOCTYPE html>
       setAccessModeDisplay(data.writesAllowed);
       startWireLoop(null);
       document.getElementById('step6').classList.add('step-done', 'server-active');
+      document.getElementById('setupTracker').style.display = 'none';
+      document.getElementById('headerActiveBadge').classList.add('show');
       if (hadConnectedClients) {
         document.getElementById('configChangeNotice').classList.add('show');
         hadConnectedClients = false;
@@ -1724,10 +1756,6 @@ export const landingPageHtml = `<!DOCTYPE html>
       startBtn.style.background = 'var(--adobe-mid)';
     }
 
-    function setAccessModeDisplay(writesAllowed) {
-      const el = document.getElementById('connAccess');
-      el.textContent = writesAllowed === false ? 'Read-only' : 'Read & write';
-    }
 
     // ─── Naming convention ─────────────────────────────────────────────────────
 
@@ -1897,6 +1925,11 @@ export const landingPageHtml = `<!DOCTYPE html>
     // The write toggle drives step visibility (naming convention only appears when
     // writes are on) and, once the server is active, flips the access mode live.
     startWireLoop(document.getElementById('step1'));
+
+    function setAccessModeDisplay(writesAllowed) {
+      const el = document.getElementById('connAccess');
+      el.textContent = writesAllowed === false ? 'Read-only' : 'Read & write';
+    }
 
     document.getElementById('writeToggle').addEventListener('change', async (e) => {
       // Turning writes off makes naming convention and GitHub integration irrelevant

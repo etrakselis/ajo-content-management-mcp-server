@@ -1,4 +1,4 @@
-import { isClientConfigured, getConfiguredGitHubIntegration, getConfiguredSandboxName, getConfiguredAuthorEmail } from '../adobe/client.js';
+import { isClientConfigured, getConfiguredGitHubIntegration, getConfiguredSandboxName, getConfiguredAuthorEmail, findContentIdByName } from '../adobe/client.js';
 import { checkPRStatus, readMergedPRContent } from '../github/sync.js';
 import { notConfiguredError, withTelemetry, buildOutputSchema } from './utils.js';
 
@@ -129,6 +129,10 @@ When a write tool is called in approval-gate mode, this server creates a GitHub 
 
 Call check_pr_status first to confirm the PR is merged before deploying.
 
+Content creates are idempotent: deploying a PR whose content fragment/template already exists in the sandbox (by name) reuses it (result.reused: true) instead of creating a duplicate — so re-deploying the same merged PR is a no-op.
+
+NOTE: for cross-sandbox PROMOTION PRs (opened by promote_assets, branch prefix "ajo-promote-"), do NOT use this tool — re-invoke promote_assets after merging and it deploys + advances the phased flow. (Deploying one here is still safe thanks to the dedup above, but it bypasses the phase orchestration.)
+
 [Write operation] This tool writes to AJO — it requires write access to be enabled. It bypasses the PR approval gate (it IS the deployment step, not a new change).
 
 Example usage: { "prUrl": "https://github.com/owner/repo/pull/42" }
@@ -178,6 +182,21 @@ export async function handleDeployMergedChanges(args: unknown) {
           result: { error: `Unknown operation "${op.toolName}" — no handler registered for it.` }
         });
         continue;
+      }
+      // Idempotent deploy: re-applying a content CREATE whose asset already exists
+      // (same PR deployed twice) reuses it instead of duplicating — AJO does not
+      // enforce name uniqueness, so a blind create would produce a duplicate.
+      if (op.toolName === 'create_content_fragment' || op.toolName === 'create_content_template') {
+        const name = typeof op.args.name === 'string' ? op.args.name : undefined;
+        const type = op.toolName === 'create_content_template' ? 'template' : 'fragment';
+        const existing = name ? await findContentIdByName(type, name) : undefined;
+        if (existing) {
+          results.push({
+            toolName: op.toolName, filePath: op.filePath, success: true,
+            result: { success: true, id: existing, reused: true, message: `Reused existing ${type} "${name}" (${existing}) — skipped a duplicate create.` }
+          });
+          continue;
+        }
       }
       try {
         const result = await handler(op.args);

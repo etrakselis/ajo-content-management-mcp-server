@@ -171,7 +171,7 @@ Returns: { _page: { count, next }, items: [{ id, name, templateType, channels, .
       limit: { type: 'number', description: 'Max items to return (1-1000, default 20)' },
       start: { type: 'string', description: 'Pagination cursor from previous response _page.next' },
       orderBy: { type: 'string', description: 'Sort field. Prefix with + (asc) or - (desc). E.g. "-modifiedAt"' },
-      property: { type: 'array', items: { type: 'string' }, description: 'FIQL filter expressions. Operators: == (equals), != (not equals), ~^ (starts with, case-insensitive), ~ (contains, case-insensitive). E.g. ["name~^Test", "channels==email", "templateType==html"]' }
+      property: { type: 'array', items: { type: 'string' }, description: 'FIQL filter expressions. Operators: == (equals), != (not equals), ~^ (start-anchored regex / starts-with, case-insensitive), ~ (contains, case-insensitive). ==/!= are NOT supported on "name" (AJO returns CJMMAS-1051) — use ~^ or ~ for name; an EXACT name match is "name~^<name>$" (the trailing $ end-anchors the regex). E.g. ["name~^Test$", "channels==email", "templateType==html"]' }
     }
   }
 };
@@ -220,7 +220,7 @@ ${FRAGMENT_EMBED_NOTE}
 
 PERSONALIZATION: use the 'discover-personalization-paths' prompt / get_personalization_guidance for WHAT & WHEN, the XDM tools (list_xdm_field_groups / get_xdm_union_schema) for WHICH real attribute paths exist — never guess paths like {{profile.person.firstName}}; tenant-custom attributes live under "profile._tenantId." — and get_personalization_syntax for HOW. Use only real AJO constructs (never JavaScript/Liquid/Jinja or invented functions).
 
-DUPLICATE CHECK (before creating): check by name with ONE server-side filtered list call — list_content_templates({ property: ["name==<exact name>"] }) for an exact match, or ["name~^<prefix>"] for a family — rather than listing everything (~^ is case-insensitive starts-with).
+DUPLICATE CHECK (before creating): check by name with ONE server-side filtered list call. On the name field, the operator ~^ is a START-ANCHORED REGEX, so an EXACT match is list_content_templates({ property: ["name~^<exact name>$"] }) — the trailing $ end-anchors it (e.g. ["name~^NV_BIS_Restock$"]). Omit the $ to match a whole family (prefix). NOTE: the equality operator name== is NOT supported by the AJO content API (CJMMAS-1051 "Operator not supported on the specified field") — always use ~^ for name; == works on type/channels/templateType.
 
 ORGANIZATION: tagIds tags the template (goes in the create body); parentFolderId files it (applied via an automatic follow-up PATCH — the create body doesn't accept it; folderType "content-template", create one with create_folder). If folder placement fails the create still succeeds (see warnings) and can be retried with patch_content_template.
 

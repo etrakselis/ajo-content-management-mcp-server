@@ -191,6 +191,94 @@ export function scanSelfFragmentIds(data: unknown): string[] {
   return out;
 }
 
+// ─── Cross-sandbox promotion helpers ───────────────────────────────────────────
+// These transform a content body so it can be re-created in a DIFFERENT sandbox,
+// where every environment-local UUID must be re-resolved. They walk the actual
+// string leaves of the parsed object (not the JSON-serialized form), so they cope
+// with whichever per-channel field holds the markup. Quotes may be plain (") or
+// backslash-escaped (\") depending on the field, hence the \\? in each pattern.
+
+// Apply a string→string transform to every string leaf of a value, structurally
+// cloning so the input is never mutated.
+function mapStringLeaves(value: unknown, fn: (s: string) => string): unknown {
+  if (typeof value === 'string') return fn(value);
+  if (Array.isArray(value)) return value.map(v => mapStringLeaves(v, fn));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, mapStringLeaves(v, fn)])
+    );
+  }
+  return value;
+}
+
+// Match a {{ fragment ... }} embed helper and capture the whole block so its inner
+// attributes can be inspected/rewritten without disturbing surrounding markup.
+const FRAGMENT_HELPER_BLOCK_RE = /\{\{\s*fragment\b[^{}]*?\}\}/g;
+const HELPER_ID_ATTR_RE = /\bid\s*=\s*\\?"([^"\\]+)\\?"/;
+const HELPER_NAME_ATTR_RE = /\bname\s*=\s*\\?"([^"\\]+)\\?"/;
+const VALID_FRAGMENT_REF = new RegExp(`^(ajo|aem|external):(${FRAGMENT_UUID})$`);
+
+export interface NamedFragmentRef { reference: string; source: string; id: string; name?: string; }
+
+// Like scanFragmentEmbeds, but also captures each embed's name= attribute (the
+// stable cross-sandbox identifier). De-duplicated by reference.
+export function scanFragmentEmbedsWithNames(data: unknown): NamedFragmentRef[] {
+  let serialized: string;
+  try { serialized = JSON.stringify(data) ?? ''; } catch { return []; }
+  const out: NamedFragmentRef[] = [];
+  const seen = new Set<string>();
+  let block: RegExpExecArray | null;
+  FRAGMENT_HELPER_BLOCK_RE.lastIndex = 0;
+  while ((block = FRAGMENT_HELPER_BLOCK_RE.exec(serialized)) !== null) {
+    const idMatch = HELPER_ID_ATTR_RE.exec(block[0]);
+    if (!idMatch) continue;
+    const reference = idMatch[1];
+    const valid = VALID_FRAGMENT_REF.exec(reference);
+    if (!valid || seen.has(reference)) continue;
+    seen.add(reference);
+    const nameMatch = HELPER_NAME_ATTR_RE.exec(block[0]);
+    out.push({ reference, source: valid[1], id: valid[2], ...(nameMatch ? { name: nameMatch[1] } : {}) });
+  }
+  return out;
+}
+
+// Rewrite ajo: embed-helper ids in a content body using a source-id → target-id map.
+// Only ids present in the map are changed; aem:/external: refs and unmapped ids are
+// left untouched. The name= attribute is preserved.
+export function rewriteFragmentEmbedIds(data: unknown, idMap: Map<string, string>): unknown {
+  if (idMap.size === 0) return data;
+  return mapStringLeaves(data, s => {
+    if (!s.includes('{{')) return s; // fast path: no helpers in this leaf
+    return s.replace(FRAGMENT_HELPER_BLOCK_RE, block =>
+      block.replace(HELPER_ID_ATTR_RE, (attr, ref: string) => {
+        const m = VALID_FRAGMENT_REF.exec(ref);
+        if (!m || m[1] !== 'ajo') return attr;
+        const target = idMap.get(m[2]);
+        return target ? attr.replace(ref, `ajo:${target}`) : attr;
+      })
+    );
+  });
+}
+
+// Reset a fragment's OWN self-reference (data-fragment-id="ajo:<uuid>") to the
+// "ajo:SELF" sentinel so the target server assigns a fresh id on create. Leaves an
+// already-sentinel value untouched and does not touch {{ fragment }} embed ids.
+const SELF_REF_CONCRETE_RE = new RegExp(`data-fragment-id=\\\\?"ajo:${FRAGMENT_UUID}\\\\?"`, 'g');
+export function resetSelfFragmentId(data: unknown): unknown {
+  return mapStringLeaves(data, s =>
+    s.includes('data-fragment-id') ? s.replace(SELF_REF_CONCRETE_RE, 'data-fragment-id="ajo:SELF"') : s
+  );
+}
+
+// Strip the <meta name="acr-content-status" …> tag AJO injects at export time.
+// AJO rejects it on create/update with a 400, so it must not be carried over.
+const ACR_CONTENT_STATUS_META_RE = /<meta\s+[^>]*name=\\?"acr-content-status\\?"[^>]*>\s*/gi;
+export function stripAcrContentStatus(data: unknown): unknown {
+  return mapStringLeaves(data, s =>
+    s.includes('acr-content-status') ? s.replace(ACR_CONTENT_STATUS_META_RE, '') : s
+  );
+}
+
 // JSON-Patch paths whose target member may not exist yet on a content object
 // (a freshly created fragment/template has no parentFolderId, tagIds, or labels).
 // Per RFC 6902 `replace` requires the member to already exist, so AJO rejects it

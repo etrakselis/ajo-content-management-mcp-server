@@ -13,22 +13,23 @@ A production-grade **Model Context Protocol (MCP) server** that connects LLM-pow
 5. [Run](#run)
 6. [MCP Server Configuration](#mcp-server-configuration)
 7. [GitHub Integration (optional)](#github-integration-optional)
-8. [Client Connection Guide](#client-connection-guide)
-9. [Available Tools — Detailed](#available-tools--detailed)
-10. [MCP Resources](#mcp-resources)
-11. [MCP Prompts](#mcp-prompts)
-12. [Observability](#observability)
-13. [Security](#security)
-14. [Development](#development)
-15. [Troubleshooting](#troubleshooting)
-16. [Architecture](#architecture)
-17. [License](#license)
+8. [Cross-Sandbox Promotion](#cross-sandbox-promotion-promote_assets)
+9. [Client Connection Guide](#client-connection-guide)
+10. [Available Tools — Detailed](#available-tools--detailed)
+11. [MCP Resources](#mcp-resources)
+12. [MCP Prompts](#mcp-prompts)
+13. [Observability](#observability)
+14. [Security](#security)
+15. [Development](#development)
+16. [Troubleshooting](#troubleshooting)
+17. [Architecture](#architecture)
+18. [License](#license)
 
 ---
 
 ## Overview
 
-This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 44 tools covering the full template and fragment lifecycle, folder and tag organization (the Unified Tags/Folders API), read-only Experience Platform Schema Registry (XDM) lookups, a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec and the personalization syntax library), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 46 tools covering the full template and fragment lifecycle, folder and tag organization (the Unified Tags/Folders API), read-only Experience Platform Schema Registry (XDM) lookups, cross-sandbox content promotion (dev → prod), a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec and the personalization syntax library), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
 
 The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{_yourtenant.profile.person.firstName}}`. Complementing them, the **authoring reference** tools teach the LLM the exact output formats AJO expects: `get_visual_designer_requirements` returns the native HTML serialization spec so generated email stays editable in the drag-and-drop designer, and `get_personalization_syntax` returns AJO's native personalization expression language (helper functions, conditionals, loops, dataset lookup) so expressions use real AJO constructs rather than generic Handlebars/Liquid.
 
@@ -120,6 +121,13 @@ When a GitHub repository is configured (see [GitHub Integration](#github-integra
 |------|-------------|
 | `check_pr_status` | Check whether a GitHub pull request is open, merged, or closed, and get its merge commit SHA. |
 | `deploy_merged_changes` | Read the payload from a merged PR and re-execute the AJO write operations it describes, applying approved changes to AJO. |
+
+### Cross-Sandbox Promotion
+Promote content from one sandbox to another (e.g. dev → prod) without re-authoring. See [Cross-Sandbox Promotion](#cross-sandbox-promotion-promote_assets) for the full workflow.
+| Tool | Description |
+|------|-------------|
+| `plan_promotion` | *(read-only)* Build a promotion plan: the full dependency closure, phase order, per-asset folder/embed info, and whether each asset already exists in the target. Writes nothing. |
+| `promote_assets` | Promote fragments/templates to a target sandbox, re-resolving every environment-local UUID (embeds, folders, tags, self-references) by name/path. Phased + resumable; runs through the PR approval gate. |
 
 ---
 
@@ -605,7 +613,7 @@ Each AJO write produces one JSON file whose path mirrors the sandbox and folder 
 
 The `{ajo-folder-path}` is resolved by walking the AJO folder hierarchy (e.g. a template in the `BIS › Wishlist` folder under `NV` produces `content-templates/NV/BIS/Wishlist/`). If an asset has no parent folder, it's placed directly under the asset-type directory. The filename is the asset's name (not its UUID), so the repo is human-readable without any ID lookups.
 
-Every file contains a `_meta` block with the operation name, timestamp, author email, sandbox, and tenant namespace, followed by the tool arguments used to produce the asset. Delete/archive operations write a **tombstone record** — the file stays in the repo (preserving history) but its content is replaced with a record showing what was removed and when.
+Every file contains a `_meta` block with the operation name, timestamp, author email, sandbox, tenant namespace, and — when the asset is tagged — the tag **names** (`tagNames`, so the repo is self-describing for cross-sandbox promotion, since the raw `tagIds` are environment-local UUIDs), followed by the tool arguments used to produce the asset. Delete/archive operations write a **tombstone record** — the file stays in the repo (preserving history) but its content is replaced with a record showing what was removed and when.
 
 **Example commit for `create_content_fragment`** (fragment named `NV_BIS_Wishlist_Hero` in folder `NV › BIS › Wishlist`):
 ```json
@@ -616,7 +624,8 @@ Every file contains a `_meta` block with the operation name, timestamp, author e
     "updatedAt": "2026-06-22T14:32:00.000Z",
     "updatedBy": "alice@example.com",
     "sandbox": "my-sandbox",
-    "tenant": "_mytenant"
+    "tenant": "_mytenant",
+    "tagNames": ["brand-nv", "section-hero"]
   },
   "name": "NV_BIS_Wishlist_Hero",
   "type": "html",
@@ -643,6 +652,86 @@ This file lands at `my-sandbox/content-fragments/NV/BIS/Wishlist/NV_BIS_Wishlist
 > "Create a content fragment for our new promo banner, but open a PR for review instead of writing directly."
 
 > "Is the GitHub integration enabled? What repo is it pointing to?"
+
+---
+
+## Cross-Sandbox Promotion (`promote_assets`)
+
+Move content fragments and content templates into a target AJO sandbox — typically **dev → prod** — without re-authoring anything. Two tools do this: `plan_promotion` (a read-only preview) and `promote_assets` (the executor).
+
+**The GitHub repo is the source of truth.** Content is read from the committed JSON files under the *source sandbox's repo subtree* (on the default branch — i.e. reviewed, merged content), **not** from a live source AJO sandbox. So promotion contacts only **one** AJO sandbox at runtime — the target. The credential needs **write access to the target sandbox + read access to the repo**; it does **not** need access to the source sandbox at all.
+
+> This also fixes a latent fragment-shape bug: the repo file holds the original `create` args (the dual-field shape — `fragment.content` = render snippet, `editorContext["wysiwyg-content"]` = full document), whereas a live `get_content_fragment` returns the full document in `content`. Reading from the repo promotes exactly what `create` expects.
+
+### Why it's not just a copy
+
+Every UUID in a fragment or template is **environment-local** — it means something only in the sandbox it was created in. Names and folder paths are the only stable identifiers across sandboxes. So promotion never copies source ids into the target; it reads the repo content, discards source UUIDs, and **re-resolves every cross-reference against the target** (and asserts no source UUID survives the rewiring before staging):
+
+| Reference | In the repo content it holds… | Re-resolved to… |
+|-----------|-------------------------------|-----------------|
+| Embedded fragment (`{{ fragment id="ajo:…" name="X" }}`) | source fragment UUID | the embed is matched by **`name`** to that fragment's repo file (promoted first); the helper id is rewritten to the **target** fragment's new id |
+| Fragment self-reference (`data-fragment-id="ajo:…"`) | source fragment UUID | the `ajo:SELF` sentinel; the target assigns a fresh id on create |
+| `parentFolderId` | source folder UUID | the folder path from the **repo file path** is re-created in the target (`ensure_folder_path`); the target leaf id is used |
+| `tagIds` | source tag UUIDs | resolved by **name** in the target (from `_meta.tagNames` in the repo file), creating any that are missing |
+
+AJO's export-only `<meta name="acr-content-status">` tag is stripped (AJO rejects it on create). Fragments are **not** auto-published — promotion makes them embeddable, not live.
+
+### Single sandbox, one credential
+
+The IMS/OAuth credential is org/tenant-scoped, not sandbox-scoped. Because content comes from the repo, promotion only ever calls the **target** sandbox — `promote_assets` runs a preflight read against the target and fails fast with a clear permissions error if the credential can't reach it. `sourceSandbox` is just **which repo subtree to read** (it defaults to the server's configured sandbox name); it is never an AJO call.
+
+> **You do not switch the server's sandbox to promote.** Promotion targets `targetSandbox` directly via a per-call override; the MCP server's configured sandbox is irrelevant to where content lands. Switching the server's active sandbox to the target at `http://localhost:3000` is only useful **afterward**, to browse or verify the promoted assets with the other tools. Every `promote_assets` response includes a `targetSandboxNote` restating this.
+
+### Prerequisites
+
+- **GitHub integration configured**, with the source content already committed to the repo (it gets there automatically when the source assets are created/updated through this server in audit-trail or approval-gate mode). A referenced asset missing from the repo fails with `SOURCE_FILE_NOT_FOUND` — there is no live-source fallback.
+- For real (non-dry-run) promotion, GitHub must be in **PR Approval Gate mode** — each promoted asset is proposed as its own PR for human review. (`dryRun: true` works in any mode.)
+- Write access enabled, and the credential has access to the **target** sandbox.
+
+### The phased workflow
+
+A template's embed can't be wired until the fragment it embeds is **live** in the target, so promotion runs in dependency phases — leaf fragments first, then their consumers. `promote_assets` is **stateless and resumable**: each call re-derives where it is from (a) what already exists in the target and (b) the PRs it previously opened, then advances. You call it repeatedly, merging the PRs it returns, until it reports `complete`.
+
+```
+1.  plan_promotion          → preview the closure, phases, and blockers (writes nothing)
+2.  promote_assets          → opens PR(s) for the leaf fragments        → status: awaiting_merge
+       (human reviews + merges the fragment PRs on GitHub)
+3.  promote_assets          → deploys the merged fragments to the target,
+                              then opens PR(s) for the templates         → status: awaiting_merge
+       (human reviews + merges the template PRs)
+4.  promote_assets          → deploys the merged templates               → status: complete
+```
+
+### Updating already-promoted content
+
+Re-promotion handles changes too. For an asset that already exists in the target, `promote_assets` compares a **content fingerprint** (`sourceContentHash`, recorded in `_meta` of the asset's last promotion file in the repo) against the current source:
+
+- **Source unchanged** → reported `unchanged`, skipped (re-running a finished promotion is a no-op — nothing duplicated, no PRs).
+- **Source changed** → an `update` PR is opened (a `PUT` that overwrites the target asset). The target asset's UUID is preserved; its content is replaced. The target `etag` is fetched fresh at deploy time (never baked into the PR, where it could go stale before the PR is merged), with a one-shot retry on an etag conflict.
+
+The comparison is **source-vs-source** (this run's source content vs. what was committed at the last promotion), which is immune to AJO re-serializing content on the target — so an unchanged asset never produces a spurious update. Each promotion PR is stamped with a `ajo-promotion-deployed` GitHub **label** once applied, which is how the resumable executor knows a merged update was deployed (target liveness can't tell you that — the asset is already live).
+
+**Idempotent deploy / no duplicates.** AJO does not enforce name uniqueness for fragments — two identically-named fragments can coexist — so deploys dedup by name themselves: when a `create` is applied and a same-named asset already exists in the target, it is **reused** (returned with `action: "reused"`), never duplicated. This holds whether the same merged PR is deployed twice, or you manually run `deploy_merged_changes` on a phase-1 PR and *then* call `promote_assets` to advance. **Best practice: don't run `deploy_merged_changes` on promotion PRs at all — re-invoke `promote_assets` after merging and it deploys and advances the phases for you** (the dedup just makes a mistake here harmless).
+
+> The first re-promotion of assets that were promoted **before** this fingerprinting existed (no recorded hash) opens one update PR each, re-asserting the source — harmless, and a one-time event. A target asset edited directly (outside promotion) is **not** auto-reverted; promotion only acts when the *source* changes. If a promotion PR is closed without merging, that asset (and its dependents) is reported as a blocker and not re-opened until you merge or delete the rejected PR.
+
+### Confirmation
+
+Promotion writes to the **target** sandbox, so the first (and each subsequent) non-dry-run call is held with `WRITE_CONFIRMATION_REQUIRED` naming the target. Confirm the target with the user, then re-invoke with `confirmWrite: true`. Use `dryRun: true` (or `plan_promotion`) to validate without writing.
+
+> A dry run creates nothing, so a template's embed of an **in-batch** fragment legitimately still holds the source id (there's no target id to rewire to yet) — this is reported as a **warning** naming the phase where it gets rewired, not a blocker. A surviving id for a fragment that is **neither in the batch nor live in the target** (a genuinely dangling embed) is still a blocker. The real phased run rewires every in-batch embed before its write, where the surviving-id guard stays strict.
+
+### Example prompts
+
+> "Plan a promotion of the template `NV_BIS_RestockAlert` from this sandbox to `prod` — show me what it would create."
+
+> "Promote the fragment `NV_BIS_Wishlist_Hero` and everything it depends on to `prod`."
+
+> "I've merged the fragment PRs — continue the promotion of `NV_BIS_RestockAlert` to `prod`."
+
+> "I changed the `NV_BIS_RestockAlert_Hero` fragment in dev — re-promote it to `prod` so prod picks up the edit."
+
+> "Do a dry run of promoting `NV_BIS_RestockAlert` to `prod` and tell me about any blockers."
 
 ---
 
@@ -1019,6 +1108,22 @@ Reads the JSON payloads from a merged pull request (created by the PR Approval G
 
 The `_meta` block is stripped before the args are passed to the AJO tool, so only the original content payload reaches the API. Each operation goes through the normal write-confirmation gate (and is logged to the audit trail if it succeeds).
 
+### Cross-sandbox promotion
+
+See [Cross-Sandbox Promotion](#cross-sandbox-promotion-promote_assets) for the full workflow and rationale.
+
+#### `plan_promotion` *(read)*
+```json
+{ "templateName": "NV_BIS_RestockAlert", "sourceSandbox": "etrakselis-sandbox", "targetSandbox": "prod" }
+```
+Builds a read-only plan from **repo content** (no source-sandbox calls): the dependency closure (template → embedded fragments → nested fragments, matched by embed name), the phase order, each asset's repo path / target folder path / embeds, and whether it already exists in the target (`targetStatus: absent | present`). Surfaces blockers (`SOURCE_FILE_NOT_FOUND`, an embed name with no repo file, malformed helpers) before any write. Provide exactly one of `templateName`, `fragmentName`, or `names`; `sourceSandbox` is the repo subtree to read (defaults to the configured sandbox name); optional `sourceRef` selects a branch/tag/commit (default: the repo's default branch). Requires GitHub configured + target read access.
+
+#### `promote_assets` *(write)*
+```json
+{ "templateName": "NV_BIS_RestockAlert", "sourceSandbox": "etrakselis-sandbox", "targetSandbox": "prod", "confirmWrite": true }
+```
+Promotes the selection to `targetSandbox`, reading content from the **GitHub repo** (not the source sandbox) and re-resolving every environment-local UUID against the target (embeds matched by name → target fragment ids, self-reference → `ajo:SELF`, folder path from the repo file path re-created in target, tags resolved/created from `_meta.tagNames`). Contacts only the target AJO sandbox. Requires GitHub configured (and **PR Approval Gate mode** for real writes) — each asset is proposed as its own PR. Phased and resumable: each call deploys any of its merged PRs and opens PRs for the next assets whose dependencies are now live; call again until `status: complete`. Requires `confirmWrite: true` (after the target is confirmed with the user); `dryRun: true` validates without writing. Absent assets are **created**; already-present assets are **updated** when their repo source changed since the last promotion (via a `sourceContentHash` fingerprint), else reported `unchanged` — never duplicated. See [Updating already-promoted content](#updating-already-promoted-content).
+
 ### Authoring references
 
 Read-only reference content, delivered as tools so the model can fetch it on its own even in clients that can't read MCP resources directly (e.g. Claude Desktop). The `create_*` / `update_*` tools' descriptions point the model here before it authors HTML or personalization.
@@ -1266,10 +1371,13 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── templates.ts        Content template tool definitions + handlers
 │   │   ├── fragments.ts        Content fragment tool definitions + handlers
 │   │   ├── github.ts           check_pr_status and deploy_merged_changes tool definitions + handlers
+│   │   ├── promotion.ts        plan_promotion + promote_assets tool definitions + handlers (cross-sandbox)
 │   │   ├── schema-registry.ts  XDM schema / field group / union lookup tools (read-only)
 │   │   ├── visual-designer.ts  get_visual_designer_requirements tool — AJO email HTML spec (read-only)
 │   │   ├── personalization.ts  get_personalization_syntax tool — AJO personalization syntax library (read-only)
 │   │   └── context.ts          get_server_context tool — reports author/sandbox/tenant (read-only)
+│   ├── promotion/
+│   │   └── engine.ts           Cross-sandbox promotion engine — dependency graph, phased PRs, payload rebuild
 │   ├── github/
 │   │   ├── client.ts           GitHub REST API client — PAT auth, repo/file/branch/PR operations
 │   │   ├── sync.ts             Audit-trail commit and PR approval-gate logic (commitAuditTrail, createApprovalPR, readMergedPRContent)
@@ -1278,6 +1386,7 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   └── ajo-personalization-syntax-library.md  Personalization syntax library (shipped asset, served by get_personalization_syntax)
 │   ├── adobe/
 │   │   ├── client.ts           AJO Content API client (axios + retry, injects auth headers)
+│   │   ├── sandbox-context.ts  Per-call sandbox override (AsyncLocalStorage) for cross-sandbox reads/writes
 │   │   └── schema-registry-client.ts  AEP Schema Registry (XDM) read client
 │   ├── auth/
 │   │   └── token-manager.ts    Adobe IMS token acquisition with caching + refresh

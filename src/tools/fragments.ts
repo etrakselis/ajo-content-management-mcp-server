@@ -253,7 +253,8 @@ Returns a paginated list, with optional filtering and sorting by date.
 
 FILTERING (property, FIQL):
 - Server-filterable fields (passed to AJO): id, name, type, channels, createdAt, createdBy.
-  Operators: == (equals), != (not equals), ~^ (starts with), ~ (contains). NOTE: ~^ and ~ are CASE-INSENSITIVE.
+  Operators: == (equals), != (not equals), ~^ (START-ANCHORED REGEX; doubles as starts-with), ~ (contains). NOTE: ~^ and ~ are CASE-INSENSITIVE.
+  IMPORTANT: ==/!= are NOT supported on the "name" field (AJO returns CJMMAS-1051 "Operator not supported on the specified field") — filter name with ~^ or ~. Since ~^ is a start-anchored regex, an EXACT name match is "name~^<name>$" (trailing $ end-anchors it); omit $ for a prefix/family match. == works on the other fields (e.g. type==html).
 - status (e.g. DRAFT, PUBLISHED) is NOT server-filterable — but the server applies it for you: it scans fragments
   and returns up to "limit" matches. A status-filtered result is NOT cursor-paginated (no resumable next): raise
   "limit" to get more matches. For very large libraries the scan is bounded; "truncated": true flags that the cap
@@ -274,7 +275,7 @@ Returns: { _page: { count, next }, items: [{ id, name, type, status, channels, .
       limit: { type: 'number', description: 'Max items to return (1-1000, default 20). For a status filter this is the max number of matches returned from the scan.' },
       start: { type: 'string', description: 'Pagination cursor from previous _page.next. Ignored for status-filtered queries (those scan from the beginning and are not cursor-paginated).' },
       orderBy: { type: 'string', description: 'Sort field with +/- prefix. E.g. "-modifiedAt"' },
-      property: { type: 'array', items: { type: 'string' }, description: 'FIQL filter expressions. Server fields: id, name, type, channels, createdAt, createdBy. Operators: == (equals), != (not equals), ~^ (starts with, case-insensitive), ~ (contains, case-insensitive). status==/!=/~^/~ is supported too but applied client-side (see description). E.g. ["type==html", "status==PUBLISHED"]' }
+      property: { type: 'array', items: { type: 'string' }, description: 'FIQL filter expressions. Server fields: id, name, type, channels, createdAt, createdBy. Operators: == (equals), != (not equals), ~^ (start-anchored regex / starts-with, case-insensitive), ~ (contains, case-insensitive). ==/!= are NOT supported on "name" (AJO returns CJMMAS-1051) — use ~^ or ~ for name; an EXACT name match is "name~^<name>$" (the trailing $ end-anchors the regex). status==/!=/~^/~ is supported too but applied client-side (see description). E.g. ["type==html", "name~^Welcome$", "status==PUBLISHED"]' }
     }
   }
 };
@@ -420,7 +421,7 @@ Example usage (Expression fragment — tenant-custom field):
 
 Personalization (3-step flow): (1) call get_personalization_guidance to decide WHAT/WHEN to personalize (find every dynamic value, resolve its data source, detect collections that need iteration, review coverage). (2) Find WHICH real attribute paths exist: standard XDM profile attributes use the "profile." prefix (e.g. {{profile.person.name.firstName}}); tenant-custom attributes sit under "profile._tenantId." (e.g. {{profile._acssandboxustwo.loyaltyTier}}). Do NOT root standard XDM fields (person, homeAddress, etc.) under the tenant namespace — only attributes your org added in a custom field group belong there. Use the 'discover-personalization-paths' prompt, or call list_xdm_union_schemas → get_xdm_union_schema (full=false) → get_xdm_field_group on each ref, to confirm real attribute paths. (3) For HOW to write it — the AJO-native expression SYNTAX (conditionals, loops, date/string/array helpers, datasetLookup, etc.) — call get_personalization_syntax (no arg for the index, then a category). Use only real AJO constructs — never JavaScript/Liquid/Jinja or invented function names.
 
-DUPLICATE CHECK (before creating): to avoid a duplicate, check for an existing fragment by name with ONE server-side filtered list call — list_content_fragments({ property: ["name==<exact name>"] }) for an exact match, or ["name~^<prefix>"] to see whether any asset in a family already exists — rather than listing everything and scanning client-side (name, type, channels, createdAt, createdBy are server-filterable; ~^ is case-insensitive starts-with).
+DUPLICATE CHECK (before creating): to avoid a duplicate, check for an existing fragment by name with ONE server-side filtered list call. On the name field, the operator ~^ is a START-ANCHORED REGEX, so an EXACT match is list_content_fragments({ property: ["name~^<exact name>$"] }) — the trailing $ end-anchors it (e.g. ["name~^NV_BIS_Restock_Hero$"]). Omit the $ to match a whole family (prefix). NOTE: the equality operator name== is NOT supported by the AJO content API (it returns CJMMAS-1051 "Operator not supported on the specified field") — always use ~^ for name; == works on type/channels/id. (name, type, channels, createdAt, createdBy are server-filterable.)
 
 ORGANIZATION: pass tagIds to tag the new fragment and parentFolderId to file it into a folder. tagIds goes in the create body directly; parentFolderId is applied by the server via an automatic follow-up step (the AJO create body does not accept it). For a fragment folder the folderType is "fragment" (create one with create_folder). If folder placement fails the create still succeeds (see warnings) and can be retried with patch_content_fragment.
 

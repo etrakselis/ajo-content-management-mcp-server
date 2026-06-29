@@ -15,7 +15,12 @@
 import axios, { Method } from 'axios';
 import { tokenManager } from '../auth/token-manager.js';
 import { getConfiguredApiKey, getConfiguredImsOrg, getConfiguredSandboxName } from './client.js';
+import { getActiveSandboxOverride } from './sandbox-context.js';
 import { logger } from '../telemetry/index.js';
+
+// The sandbox a folder/tag request should target: a withSandbox() override
+// (cross-sandbox promotion) when present, otherwise the configured sandbox.
+const effectiveSandbox = (): string => getActiveSandboxOverride() ?? getConfiguredSandboxName() ?? '';
 
 const BASE_URL = process.env.AJO_UNIFIED_TAGS_BASE_URL ?? 'https://experience.adobe.io';
 
@@ -38,7 +43,7 @@ async function utRequest<T = unknown>(method: Method, path: string, opts: Reques
       Authorization: `Bearer ${token}`,
       'x-api-key': getConfiguredApiKey() ?? '',
       'x-gw-ims-org-id': getConfiguredImsOrg() ?? '',
-      'x-sandbox-name': getConfiguredSandboxName() ?? '',
+      'x-sandbox-name': effectiveSandbox(),
       ...(opts.withBody ? { 'Content-Type': 'application/json' } : {}),
       Accept: 'application/json'
     },
@@ -91,13 +96,16 @@ export const getSubfolders = (folderType: string, folderId: string) =>
 export const validateFolder = (folderType: string, folderId: string) =>
   utRequest('get', `/unifiedfolders/folders/${enc(folderType)}/${enc(folderId)}/validate`);
 
-// Resolve a folder UUID to its full human-readable path (e.g. "Campaigns/Email/Holiday 2026").
-// Results are cached per sandbox+folderType+folderId so repeated commits don't re-fetch.
-const folderPathCache = new Map<string, string>();
+// Resolve a folder UUID to its ordered name segments (root → leaf), e.g.
+// ["Campaigns", "Email", "Holiday 2026"]. Results are cached per
+// effective-sandbox + folderType + folderId so repeated lookups don't re-fetch.
+// The cache key uses the EFFECTIVE sandbox (honoring a withSandbox() override) so a
+// source-sandbox lookup and a target-sandbox lookup of the same folderId never
+// collide during cross-sandbox promotion.
+const folderPathCache = new Map<string, string[]>();
 
-export async function resolveAjoFolderPath(folderType: string, folderId: string): Promise<string> {
-  const sandbox = getConfiguredSandboxName() ?? '';
-  const cacheKey = `${sandbox}:${folderType}:${folderId}`;
+export async function resolveAjoFolderSegments(folderType: string, folderId: string): Promise<string[]> {
+  const cacheKey = `${effectiveSandbox()}:${folderType}:${folderId}`;
   if (folderPathCache.has(cacheKey)) return folderPathCache.get(cacheKey)!;
 
   const segments: string[] = [];
@@ -106,7 +114,7 @@ export async function resolveAjoFolderPath(folderType: string, folderId: string)
     const folder = await getFolder(folderType, currentId) as Record<string, unknown>;
     const name = typeof folder.name === 'string' ? folder.name : undefined;
     if (!name) {
-      logger.warn('resolveAjoFolderPath: unexpected folder response shape', { folderType, folderId: currentId, keys: Object.keys(folder) });
+      logger.warn('resolveAjoFolderSegments: unexpected folder response shape', { folderType, folderId: currentId, keys: Object.keys(folder) });
       break;
     }
     segments.unshift(name);
@@ -114,9 +122,13 @@ export async function resolveAjoFolderPath(folderType: string, folderId: string)
     currentId = typeof parent === 'string' ? parent : undefined;
   }
 
-  const path = segments.join('/');
-  folderPathCache.set(cacheKey, path);
-  return path;
+  folderPathCache.set(cacheKey, segments);
+  return segments;
+}
+
+// Same resolution as a single "/"-joined string (GitHub repo path form).
+export async function resolveAjoFolderPath(folderType: string, folderId: string): Promise<string> {
+  return (await resolveAjoFolderSegments(folderType, folderId)).join('/');
 }
 
 // ── Tag categories (read-only) ────────────────────────────────────────────────

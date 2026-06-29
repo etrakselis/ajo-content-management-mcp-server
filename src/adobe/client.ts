@@ -3,6 +3,7 @@ import axiosRetry from 'axios-retry';
 import { v4 as uuidv4 } from 'uuid';
 import { tokenManager } from '../auth/token-manager.js';
 import { logger, adobeApiErrorCounter } from '../telemetry/index.js';
+import { getActiveSandboxOverride } from './sandbox-context.js';
 import type { GitHubConfig } from '../github/types.js';
 
 export type { GitHubConfig };
@@ -92,7 +93,9 @@ export function configureAdobeClient(config: AdobeClientConfig): void {
     config.headers['Authorization'] = `Bearer ${token}`;
     config.headers['x-api-key'] = clientConfig!.apiKey;
     config.headers['x-gw-ims-org-id'] = clientConfig!.imsOrg;
-    config.headers['x-sandbox-name'] = clientConfig!.sandboxName;
+    // A withSandbox() override (cross-sandbox promotion) takes precedence over the
+    // configured sandbox; outside any override this is just clientConfig.sandboxName.
+    config.headers['x-sandbox-name'] = getActiveSandboxOverride() ?? clientConfig!.sandboxName;
     config.headers['x-request-id'] = uuidv4();
     return config;
   });
@@ -294,6 +297,31 @@ async function resolveNewEtag(
   } catch {
     return undefined;
   }
+}
+
+// Resolve a content asset's id by EXACT name in the active sandbox, or undefined.
+//
+// The AJO content API's `name` field supports only a regex operator (`name~^`, which
+// is a START-ANCHORED regex — verified on the live API) and "contains" (`name~`); the
+// equality operator `name==` is rejected with CJMMAS-1051 "Operator not supported on
+// the specified field". So an exact match is `name~^<name>$`: `~^` anchors the start,
+// the trailing `$` anchors the end. Regex metacharacters in the name are escaped so a
+// name like `Foo(Bar` can't form an invalid regex (governance names [A-Za-z0-9_] are
+// unaffected). A client-side exact (case-insensitive) match remains as a safety net.
+// Shared by promotion (target dedup/lookup) and the merged-PR deploy path.
+const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export async function findContentIdByName(
+  type: 'fragment' | 'template', name: string
+): Promise<string | undefined> {
+  const exact = name.trim();
+  const filter = `name~^${escapeRegex(exact)}$`; // start-anchored regex + end anchor = exact
+  const res = (type === 'template'
+    ? await listTemplates({ property: [filter], limit: 50 })
+    : await listFragments({ property: [filter], limit: 50 })) as { items?: Array<Record<string, unknown>> };
+  const target = exact.toLowerCase();
+  const match = (res.items ?? []).find(it => typeof it.name === 'string' && it.name.trim().toLowerCase() === target);
+  return typeof match?.id === 'string' ? match.id : undefined;
 }
 
 // ─── Templates ───────────────────────────────────────────────────────────────

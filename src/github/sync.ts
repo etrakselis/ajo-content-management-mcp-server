@@ -3,7 +3,32 @@ import {
   getFileSha, getBranchSha, createBranch, commitFile,
   createPullRequest, getPullRequest, getPRFiles, getFileContent, parsePRUrl
 } from './client.js';
+import { getTag } from '../adobe/unified-tags-client.js';
+import { withSandbox } from '../adobe/sandbox-context.js';
 import { logger } from '../telemetry/index.js';
+
+// Resolve an asset's tagIds (UUIDs) to tag NAMES so the committed file is
+// self-describing — cross-sandbox promotion reads names from _meta.tagNames since
+// UUIDs are environment-local. Best-effort: a tag that can't be resolved is dropped
+// (never blocks the commit). Resolved against the sandbox the write targeted.
+async function resolveTagNames(sandboxName: string, args: Record<string, unknown>): Promise<string[]> {
+  const ids = Array.isArray(args.tagIds) ? args.tagIds.filter((t): t is string => typeof t === 'string') : [];
+  if (ids.length === 0) return [];
+  try {
+    return await withSandbox(sandboxName, async () => {
+      const names: string[] = [];
+      for (const id of ids) {
+        try {
+          const tag = await getTag(id) as { name?: string };
+          if (typeof tag?.name === 'string' && tag.name) names.push(tag.name);
+        } catch { /* skip this tag */ }
+      }
+      return names;
+    });
+  } catch {
+    return [];
+  }
+}
 
 // ─── Path helpers ──────────────────────────────────────────────────────────────
 
@@ -92,6 +117,7 @@ export async function commitAuditTrail(
         );
       }
     } else {
+      const tagNames = await resolveTagNames(sandboxName, args);
       const payload = {
         _meta: {
           operation: toolName,
@@ -99,7 +125,8 @@ export async function commitAuditTrail(
           updatedAt: new Date().toISOString(),
           updatedBy: authorEmail,
           sandbox: sandboxName,
-          ...(tenant ? { tenant } : {})
+          ...(tenant ? { tenant } : {}),
+          ...(tagNames.length ? { tagNames } : {})
         },
         ...args
       };
@@ -139,34 +166,50 @@ export async function createApprovalPR(
   args: Record<string, unknown>,
   authorEmail: string,
   ajoFolderPath?: string,
-  tenant?: string
+  tenant?: string,
+  // Optional explicit head-branch name. Cross-sandbox promotion supplies a
+  // deterministic, asset-encoding branch (ajo-promote-<type>-<name>-<ts>) so it can
+  // rediscover its own PRs across phases without storing state. Defaults to the
+  // timestamped per-tool branch used by ordinary approval-gate writes.
+  branchName?: string,
+  // Optional extra fields merged into the committed file's _meta (cross-sandbox
+  // promotion records sourceContentHash here for source-changed detection on re-run).
+  extraMeta?: Record<string, unknown>
 ): Promise<{ prNumber: number; prUrl: string; filePath: string }> {
   const { token, owner, repo, defaultBranch } = config;
 
   const argId = extractId(args);
   const argName = typeof args.name === 'string' ? args.name : argId ?? 'unknown';
   const filePath = assetFilePath(sandboxName, toolName, argId, argName, ajoFolderPath);
-  const branch = makeBranchName(toolName);
+  const branch = branchName ?? makeBranchName(toolName);
 
   const baseSha = await getBranchSha(token, owner, repo, defaultBranch);
   await createBranch(token, owner, repo, branch, baseSha);
 
+  const tagNames = await resolveTagNames(sandboxName, args);
   const payload = {
     _meta: {
       operation: toolName,
       requestedBy: authorEmail,
       requestedAt: new Date().toISOString(),
       sandbox: sandboxName,
-      ...(tenant ? { tenant } : {})
+      ...(tenant ? { tenant } : {}),
+      ...(tagNames.length ? { tagNames } : {}),
+      ...(extraMeta ?? {})
     },
     ...args
   };
 
+  // If the file already exists on the branch (e.g. a re-promotion updating an asset
+  // that was previously promoted to this path), GitHub's contents PUT requires the
+  // current blob SHA to overwrite it; getFileSha returns null for a brand-new file.
+  const existingSha = await getFileSha(token, owner, repo, filePath, branch);
   await commitFile(
     token, owner, repo, filePath,
     JSON.stringify(payload, null, 2),
     `Proposed: ${toolName} — ${argName} [${authorEmail}]`,
-    branch
+    branch,
+    existingSha
   );
 
   const operationLabel = toolName.replace(/_/g, ' ');
@@ -289,4 +332,29 @@ export async function readMergedPRContent(
   }
 
   return results;
+}
+
+// ─── Cross-sandbox promotion: prior-state lookup ─────────────────────────────────
+
+// Read the _meta block of the last-promoted file for an asset from the repo's
+// default branch (the deterministic path created by createApprovalPR). Promotion
+// uses _meta.sourceContentHash to detect whether the SOURCE changed since the asset
+// was last promoted (source-vs-source comparison, immune to target re-serialization).
+// Returns null if no prior file exists (never promoted, or moved folder).
+export async function readPriorPromotionMeta(
+  config: GitHubConfig,
+  sandboxName: string,
+  toolName: string,
+  name: string,
+  ajoFolderPath?: string
+): Promise<Record<string, unknown> | null> {
+  const { token, owner, repo, defaultBranch } = config;
+  const filePath = assetFilePath(sandboxName, toolName, undefined, name, ajoFolderPath);
+  try {
+    const raw = await getFileContent(token, owner, repo, filePath, defaultBranch);
+    const parsed = JSON.parse(raw) as { _meta?: Record<string, unknown> };
+    return parsed._meta ?? null;
+  } catch {
+    return null; // not found / unreadable → treat as "no prior promotion"
+  }
 }

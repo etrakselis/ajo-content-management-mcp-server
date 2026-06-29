@@ -1,6 +1,7 @@
 import * as git from 'isomorphic-git';
 import gitHttp from 'isomorphic-git/http/node';
 import { Volume, createFsFromVolume } from 'memfs';
+import { logger } from '../telemetry/index.js';
 
 const GITHUB_API = 'https://api.github.com';
 
@@ -14,6 +15,10 @@ function ghHeaders(token: string): Record<string, string> {
 }
 
 async function ghRequest(token: string, path: string, options: RequestInit = {}): Promise<unknown> {
+  const method = (options.method ?? 'GET').toUpperCase();
+  // Log the exact outbound request (method + path, never the token) so a failing
+  // GitHub call names itself in the logs. Errors below include the upstream body.
+  logger.debug('GitHub API request', { method, path });
   const res = await fetch(`${GITHUB_API}${path}`, {
     ...options,
     headers: { ...ghHeaders(token), ...(options.headers as Record<string, string> ?? {}) }
@@ -22,7 +27,8 @@ async function ghRequest(token: string, path: string, options: RequestInit = {})
     const body = await res.text().catch(() => '');
     let msg: string;
     try { msg = (JSON.parse(body) as { message?: string }).message ?? body; } catch { msg = body; }
-    throw new Error(`GitHub API ${res.status}: ${msg}`);
+    logger.warn('GitHub API error', { method, path, status: res.status, message: msg });
+    throw new Error(`GitHub API ${res.status} on ${method} ${path}: ${msg}`);
   }
   const ct = res.headers.get('content-type') ?? '';
   if (ct.includes('json')) return res.json();
@@ -177,12 +183,66 @@ export interface GHPullRequest {
   html_url: string;
   title: string;
   merge_commit_sha: string | null;
+  labels?: Array<{ name: string }>;
 }
 
 export async function getPullRequest(
   token: string, owner: string, repo: string, prNumber: number
 ): Promise<GHPullRequest> {
   return ghRequest(token, `/repos/${owner}/${repo}/pulls/${prNumber}`) as Promise<GHPullRequest>;
+}
+
+// Ensure a repo label exists; a 422 means it already exists (idempotent). Used so
+// addLabelsToPr never fails on a not-yet-created label.
+export async function ensureLabelExists(
+  token: string, owner: string, repo: string, name: string, color = 'ededed'
+): Promise<void> {
+  try {
+    await ghRequest(token, `/repos/${owner}/${repo}/labels`, {
+      method: 'POST',
+      body: JSON.stringify({ name, color })
+    });
+  } catch (err) {
+    // 422 = already exists; anything else is a real failure worth surfacing.
+    if (!(err instanceof Error && /422/.test(err.message))) throw err;
+  }
+}
+
+export async function addLabelsToPr(
+  token: string, owner: string, repo: string, prNumber: number, labels: string[]
+): Promise<void> {
+  await ghRequest(token, `/repos/${owner}/${repo}/issues/${prNumber}/labels`, {
+    method: 'POST',
+    body: JSON.stringify({ labels })
+  });
+}
+
+// A PR as returned by the list endpoint. Unlike GET /pulls/{n}, the list payload
+// does NOT include `merged` or `merge_commit_sha` — a closed PR may or may not be
+// merged, so callers that need that distinction must re-fetch with getPullRequest.
+export interface GHPullRequestListItem {
+  number: number;
+  state: string; // "open" | "closed"
+  html_url: string;
+  title: string;
+  head: { ref: string };
+  labels?: Array<{ name: string }>;
+}
+
+// List pull requests, most-recently-updated first. Used by promotion to discover
+// the PRs it previously opened (matched by head-branch prefix) without storing any
+// state between phases. Single page (default 100) — promotion sets are small and
+// recent, so the newest page covers them.
+export async function listPullRequests(
+  token: string, owner: string, repo: string,
+  opts: { state?: 'open' | 'closed' | 'all'; perPage?: number } = {}
+): Promise<GHPullRequestListItem[]> {
+  const state = opts.state ?? 'all';
+  const perPage = opts.perPage ?? 100;
+  return ghRequest(
+    token,
+    `/repos/${owner}/${repo}/pulls?state=${state}&per_page=${perPage}&sort=updated&direction=desc`
+  ) as Promise<GHPullRequestListItem[]>;
 }
 
 export interface GHPRFile {
@@ -206,6 +266,20 @@ export async function getFileContent(
     return Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf8');
   }
   return data.content;
+}
+
+export interface GHTreeEntry { path: string; type: string; sha: string }
+
+// List a commit/tree's full file tree (recursive). Used by repo-sourced promotion to
+// locate asset JSON files by name without knowing their folder path up front.
+// `truncated` is true if the repo exceeds GitHub's tree-listing cap (very large repos).
+export async function listRepoTree(
+  token: string, owner: string, repo: string, treeSha: string
+): Promise<{ tree: GHTreeEntry[]; truncated: boolean }> {
+  const data = await ghRequest(
+    token, `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(treeSha)}?recursive=1`
+  ) as { tree?: GHTreeEntry[]; truncated?: boolean };
+  return { tree: data.tree ?? [], truncated: data.truncated ?? false };
 }
 
 export function parsePRUrl(prUrl: string): { owner: string; repo: string; prNumber: number } | null {
