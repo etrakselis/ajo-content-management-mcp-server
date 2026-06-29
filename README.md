@@ -1408,30 +1408,44 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── server.ts           MCP server factory, tool routing, resources, prompts, STDIO/HTTP setup
 │   │   ├── resources.ts        Static, collection, and templated resource definitions (ajo:// URIs)
 │   │   ├── prompts.ts          Guided workflow prompt definitions (discover-personalization-paths, etc.)
-│   │   ├── personalization-syntax.ts  Loads + splits the personalization syntax library asset into categories
+│   │   ├── personalization-syntax.ts        Loads + splits the personalization syntax library asset into categories
+│   │   ├── personalization-guidance.ts      Loads the AJO personalization scenarios/strategy guidance asset (get_personalization_guidance)
+│   │   ├── visual-designer-requirements.ts  Loads the AJO Visual Email Designer HTML spec asset (get_visual_designer_requirements)
+│   │   ├── aem-asset-instructions.ts        Loads the AEM image embed-attribute retrieval procedure (get_aem_image_embed_instructions)
 │   │   ├── tool-catalog.ts     Builds the grouped tool catalog (for get_server_context + instructions)
 │   │   ├── access-policy.ts    Runtime read-only / write-access toggle
+│   │   ├── sandbox-change.ts   Live sandbox-switch notifier — emits tools/resources list_changed when the active sandbox is reselected
+│   │   ├── github-audit-status.ts  Tracks the last GitHub audit-trail commit outcome (surfaced via get_server_context.lastAuditSync)
 │   │   ├── connected-clients.ts  Tracks which MCP clients are connected (for the landing page)
 │   │   └── sdk-types.d.ts      Local type declarations for the MCP SDK
 │   ├── tools/
 │   │   ├── templates.ts        Content template tool definitions + handlers
 │   │   ├── fragments.ts        Content fragment tool definitions + handlers
+│   │   ├── folders.ts          Folder organization tool definitions + handlers (Unified Folders API)
+│   │   ├── tags.ts             Tag & tag-category tool definitions + handlers (Unified Tags API)
 │   │   ├── github.ts           check_pr_status and deploy_merged_changes tool definitions + handlers
 │   │   ├── promotion.ts        plan_promotion / promote_assets (cross-sandbox) + list_repo_assets / deploy_repo_assets (same-sandbox repo→live) definitions + handlers
 │   │   ├── schema-registry.ts  XDM schema / field group / union lookup tools (read-only)
 │   │   ├── visual-designer.ts  get_visual_designer_requirements tool — AJO email HTML spec (read-only)
-│   │   ├── personalization.ts  get_personalization_syntax tool — AJO personalization syntax library (read-only)
-│   │   └── context.ts          get_server_context tool — reports author/sandbox/tenant (read-only)
+│   │   ├── aem-assets.ts       get_aem_image_embed_instructions tool — AEM image embed-attribute procedure (read-only)
+│   │   ├── personalization.ts  get_personalization_syntax + get_personalization_guidance tools (read-only)
+│   │   ├── context.ts          get_server_context + get_naming_convention tools (read-only)
+│   │   └── utils.ts            Shared tool helpers — output-schema envelope, telemetry wrapper, RESPONSE_TOO_LARGE guard, content-warning/embed scanners
 │   ├── promotion/
 │   │   └── engine.ts           Repo-sourced deploy engine — dependency graph, payload rebuild, cross-sandbox phased PRs (promote_assets) + same-sandbox direct deploy (deploy_repo_assets)
 │   ├── github/
 │   │   ├── client.ts           GitHub REST API client — PAT auth, repo/file/branch/PR operations
 │   │   ├── sync.ts             Audit-trail commit and PR approval-gate logic (commitAuditTrail, createApprovalPR, readMergedPRContent)
 │   │   └── types.ts            GitHubConfig type (token, owner, repo, defaultBranch, mode)
-│   ├── reference/
-│   │   └── ajo-personalization-syntax-library.md  Personalization syntax library (shipped asset, served by get_personalization_syntax)
+│   ├── reference/             Shipped Markdown assets, loaded by the mcp/ loaders above and served via the read-only reference tools
+│   │   ├── ajo-personalization-syntax-library.md      Personalization syntax library (get_personalization_syntax)
+│   │   ├── ajo-personalization-scenarios-guidance.md  Personalization strategy/scenarios guidance (get_personalization_guidance)
+│   │   ├── ajo-visual-designer-requirements.md        Visual Email Designer HTML spec (get_visual_designer_requirements)
+│   │   ├── aem-assetid-retrieval-instructions.md      AEM image embed-attribute retrieval procedure (get_aem_image_embed_instructions)
+│   │   └── ajo-content-asset-governance-rules.md      Content asset governance & naming-standard reference asset
 │   ├── adobe/
 │   │   ├── client.ts           AJO Content API client (axios + retry, injects auth headers)
+│   │   ├── unified-tags-client.ts  Unified Tags/Folders API client (tags, categories, folders, folder-path resolution)
 │   │   ├── sandbox-context.ts  Per-call sandbox override (AsyncLocalStorage) for cross-sandbox reads/writes
 │   │   └── schema-registry-client.ts  AEP Schema Registry (XDM) read client
 │   ├── auth/
@@ -1442,7 +1456,8 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── index.ts            Winston logging + Prometheus metrics registry
 │   │   └── audit.ts            Append-only JSONL audit trail for content writes
 │   └── ui/
-│       └── landing.ts          Single-page setup UI (HTML/CSS/JS), served at /
+│       ├── landing.ts          Single-page setup UI (HTML/CSS/JS), served at /
+│       └── naming-convention-default.ts  Default administrator naming-convention ruleset (pre-filled in the setup UI)
 ├── Dockerfile                  Multi-stage build (npm ci → tsc → slim runtime image)
 ├── docker-compose.yml          Builds the image and runs the container
 ├── package.json                Dependencies and scripts
