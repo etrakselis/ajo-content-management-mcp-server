@@ -169,4 +169,41 @@ For other clients (Claude Code, Cursor, Codex), see the **[Client Connection Gui
 
 ---
 
+## 4. Optional: reference AEM-hosted assets in AJO content
+
+If you want the LLM to embed images stored in AEM (Adobe Experience Manager) into AJO content fragments or templates, you need to do three additional things.
+
+### 4a. Upload your assets to an AJO/AEM folder
+
+Before the LLM can reference an image, the image must already exist in AEM and be accessible from your AJO sandbox.
+
+1. In AEM Assets (or via the AJO Assets picker), **create a dedicated folder** for the campaign or project — e.g. `summer-promo-2026`.
+2. **Upload your image files** into that folder.
+
+> Keep all assets for a given campaign in the same folder. This makes it easy to tell the LLM exactly where to look.
+
+### 4b. Add the AEM MCP connector to Claude Desktop
+
+The `et-ajo-content-mgmt` server handles AJO content, but it cannot browse AEM Assets on its own. You need the **Adobe Experience Manager** MCP connector running alongside it.
+
+Unlike the AJO server, the AEM connector is cloud-hosted and available directly from Claude Desktop's built-in connector library — no JSON config editing required.
+
+1. Open Claude Desktop and click the **connectors** icon to open the connector manager.
+2. Browse or search the MCP server library for **Adobe Experience Manager**.
+3. Select it and click **Connect** (you may be prompted to authenticate with your Adobe credentials).
+
+Once connected, you should see both connectors active in the connectors dropdown:
+
+<a href="../readme_images/claude-connector-aem-example.png"><img src="../readme_images/claude-connector-aem-example.png" alt="Claude Desktop connectors dropdown showing the AEM MCP connector connected" width="400"></a>
+
+### 4c. Tell the LLM which folder to use
+
+The LLM does not automatically know where your assets live. When you start a conversation that involves images, mention the folder name explicitly, for example:
+
+> *"The assets for this campaign are in the AEM folder named **summer-promo-2026**. Please use images from that folder when building the email template."*
+
+The LLM will then use the AEM connector to look up the available images in that folder and embed the correct asset URLs into the AJO content it creates.
+
+---
+
 Full documentation: **[github.com/etrakselis/ajo_content_mgmt_mcp](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md)**
