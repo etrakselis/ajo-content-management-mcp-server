@@ -15,15 +15,16 @@ A production-grade **Model Context Protocol (MCP) server** that connects LLM-pow
 7. [GitHub Integration (optional)](#github-integration-optional)
 8. [Cross-Sandbox Promotion](#cross-sandbox-promotion-promote_assets)
 9. [Client Connection Guide](#client-connection-guide)
-10. [Available Tools — Detailed](#available-tools--detailed)
-11. [MCP Resources](#mcp-resources)
-12. [MCP Prompts](#mcp-prompts)
-13. [Observability](#observability)
-14. [Security](#security)
-15. [Development](#development)
-16. [Troubleshooting](#troubleshooting)
-17. [Architecture](#architecture)
-18. [License](#license)
+10. [AEM Assets in AJO Content (optional)](#aem-assets-in-ajo-content-optional)
+11. [Available Tools — Detailed](#available-tools--detailed)
+12. [MCP Resources](#mcp-resources)
+13. [MCP Prompts](#mcp-prompts)
+14. [Observability](#observability)
+15. [Security](#security)
+16. [Development](#development)
+17. [Troubleshooting](#troubleshooting)
+18. [Architecture](#architecture)
+19. [License](#license)
 
 ---
 
@@ -850,6 +851,43 @@ Add the block above to `~/.codex/config.toml`, then restart Codex.
 MCP Endpoint: http://localhost:3000/mcp
 Protocol: Streamable HTTP (MCP 2024-11-05)
 ```
+
+---
+
+## AEM Assets in AJO Content (optional)
+
+If you want the LLM to embed images stored in AEM (Adobe Experience Manager) into AJO content fragments or templates, you need three things in place before starting a content-authoring conversation.
+
+### 1. Upload your assets to an AJO/AEM folder
+
+Before the LLM can reference an image, the image must already exist in AEM and be accessible from your AJO sandbox.
+
+1. In AEM Assets (or via the AJO Assets picker), **create a dedicated folder** for the campaign or project — e.g. `summer-promo-2026`.
+2. **Upload your image files** into that folder.
+
+> Keep all assets for a given campaign in the same folder. This makes it easy to tell the LLM exactly where to look.
+
+### 2. Add the AEM MCP connector to Claude Desktop
+
+The `et-ajo-content-mgmt` server handles AJO content, but it cannot browse AEM Assets on its own. You need the **Adobe Experience Manager** MCP connector running alongside it.
+
+The AEM connector is cloud-hosted and available directly from Claude Desktop's built-in connector library — no JSON config editing required.
+
+1. Open Claude Desktop and click the **connectors** icon to open the connector manager.
+2. Browse or search the MCP server library for **Adobe Experience Manager**.
+3. Select it and click **Connect** (you may be prompted to authenticate with your Adobe credentials).
+
+Once connected, you should see both connectors active in the connectors dropdown:
+
+<a href="readme_images/claude-connector-aem-example.png"><img src="readme_images/claude-connector-aem-example.png" alt="Claude Desktop connectors dropdown showing the AEM MCP connector connected" width="400"></a>
+
+### 3. Tell the LLM which folder to use
+
+The LLM does not automatically know where your assets live. When you start a conversation that involves images, mention the folder name explicitly, for example:
+
+> *"The assets for this campaign are in the AEM folder named **summer-promo-2026**. Please use images from that folder when building the email template."*
+
+The LLM will then use the AEM connector to look up the available images in that folder and embed the correct asset URLs into the AJO content it creates.
 
 ---
 
