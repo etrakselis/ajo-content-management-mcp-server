@@ -607,7 +607,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       color: var(--adobe-warn);
       line-height: 1.55;
     }
-    .reset-notice.show { display: block; }
+    .reset-notice.show { display: flex; align-items: center; gap: 12px; }
     .reset-notice strong { font-weight: 700; }
     .client-restart-notice {
       display: none;
@@ -776,7 +776,8 @@ export const landingPageHtml = `<!DOCTYPE html>
     </div>
 
     <div class="reset-notice" id="resetNotice">
-      <strong>The MCP server was restarted</strong> and is no longer configured (this happens when the container is rebuilt or restarted). Re-upload your credentials and start the server again to reconnect.
+      <span><strong>The MCP server was restarted</strong> and is no longer configured (this happens when the container is rebuilt or restarted). Re-upload your credentials and start the server again to reconnect.</span>
+      <button class="dismiss-btn" onclick="document.getElementById('resetNotice').classList.remove('show')">Dismiss</button>
     </div>
     <div class="client-restart-notice" id="clientRestartNotice">
       <strong>Restart your MCP client.</strong> A client was connected when this server went down. Once you've restarted the server here, you must also restart your MCP client (Claude Desktop, Claude Code, Cursor, etc.) so it can reinitialize the connection — the previous session cannot be recovered automatically.
