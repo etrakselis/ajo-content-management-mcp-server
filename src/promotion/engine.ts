@@ -249,6 +249,12 @@ async function buildGraphFromRepo(
       if (inTemplate) await addAsset('template', name);
       if (inFragment) await addAsset('fragment', name);
     }
+  } else {
+    // No selector → the WHOLE subtree (every template + fragment under it). Used by
+    // deploy_repo_assets to sync an entire subtree. (Dependencies are pulled in by
+    // recursion regardless, so this just seeds every top-level asset.)
+    for (const nk of index.byType.template.keys()) await addAsset('template', nk);
+    for (const nk of index.byType.fragment.keys()) await addAsset('fragment', nk);
   }
 
   // Phase levels: leaf = 1, else 1 + max(level of embedded fragments). Edges resolve
@@ -769,4 +775,132 @@ export async function executePromotion(
 function parsePRUrlNumber(prUrl: string): number | null {
   const m = prUrl.match(/\/pull\/(\d+)/);
   return m ? parseInt(m[1], 10) : null;
+}
+
+// ─── Same-sandbox repo → AJO deploy (list + sync) ────────────────────────────────
+//
+// Unlike promotion (cross-sandbox, opens per-asset PRs), this applies a repo subtree's
+// already-merged/approved content DIRECTLY to the SAME-named active sandbox — the
+// "deploy_merged_changes, but for a whole subtree" path. Direct write is appropriate
+// because the content is already reviewed (it's on the repo's default branch); there
+// is nothing new to gate. References are still re-resolved by name/path so a
+// re-created asset gets correct target ids. Idempotent: a present asset is reused, so
+// re-running deploys nothing new.
+
+export interface RepoAsset { name: string; type: AssetType; path: string }
+export interface RepoListing { sandbox: string; sourceRef: string; assets: RepoAsset[]; truncated: boolean }
+
+export async function listRepoAssets(sandbox: string, sourceRef?: string): Promise<RepoListing> {
+  const config = getConfiguredGitHubIntegration();
+  const ref = sourceRef ?? config?.defaultBranch ?? 'main';
+  if (!config) throw new PromotionError('GITHUB_NOT_CONFIGURED', 'GitHub integration is not configured — repo content cannot be listed.');
+  const index = await buildRepoIndex(config, sandbox, ref);
+  const assets: RepoAsset[] = [];
+  for (const t of ['fragment', 'template'] as AssetType[]) {
+    for (const path of index.byType[t].values()) {
+      assets.push({ name: path.slice(path.lastIndexOf('/') + 1).replace(/\.json$/, ''), type: t, path });
+    }
+  }
+  assets.sort((a, b) => a.path.localeCompare(b.path));
+  return { sandbox, sourceRef: ref, assets, truncated: index.truncated };
+}
+
+export interface RepoDeployResult {
+  sandbox: string;
+  sourceRef: string;
+  dryRun: boolean;
+  deployed: Array<{ name: string; type: AssetType; targetId: string; action: 'created' | 'reused' }>;
+  validated?: Array<{ name: string; type: AssetType; action: 'create' | 'reuse'; warnings: string[] }>;
+  idMap: Record<string, string>;
+  nextAction: string;
+  warnings: string[];
+  blockers: string[];
+}
+
+export async function deployRepoToSandbox(
+  selector: PromotionSelector, sandbox: string, dryRun: boolean, sourceRef?: string
+): Promise<RepoDeployResult> {
+  const config = getConfiguredGitHubIntegration()!; // caller guarantees configured
+  const ref = sourceRef ?? config.defaultBranch ?? 'main';
+  const index = await buildRepoIndex(config, sandbox, ref);
+  const graph = await buildGraphFromRepo(config, selector, index);
+  const warnings = [...graph.warnings];
+  const blockers = [...graph.blockers];
+  const live = await resolveLiveIds(graph, sandbox);
+  const deployed: RepoDeployResult['deployed'] = [];
+  const validated: NonNullable<RepoDeployResult['validated']> = [];
+  const blockedKeys = new Set<string>();
+
+  // ── Dry run: validate + report intended action, no writes ──
+  if (dryRun) {
+    for (const k of graph.order) {
+      const a = graph.assets.get(k)!;
+      if (live.has(k)) { validated.push({ name: a.name, type: a.type, action: 'reuse', warnings: [] }); continue; }
+      const embedIdMap = new Map<string, string>();
+      for (const e of a.embeds) { const tid = live.get(key('fragment', e.name)); if (tid) embedIdMap.set(e.sourceId, tid); }
+      const args = rebuildArgs(a, embedIdMap, undefined, []);
+      // A surviving source id for an in-batch fragment not yet live is expected in a dry
+      // run (it gets created + rewired in the real pass); a truly dangling id is a blocker.
+      for (const uuid of findLeakedSourceUuids(args, a)) {
+        const emb = a.embeds.find(e => e.sourceId === uuid);
+        const depKey = emb ? key('fragment', emb.name) : undefined;
+        if (depKey && graph.assets.has(depKey) && !live.has(depKey)) {
+          warnings.push(`${a.name}: embed "${emb!.name}" (source id ${uuid}) will be created and rewired during the real deploy (expected in a dry run).`);
+        } else {
+          blockers.push(`${a.name}: source UUID ${uuid} survived rewiring and is not an in-subtree dependency — would not deploy (dangling embed).`);
+        }
+      }
+      const handler = DEPLOY_HANDLERS[createToolFor(a.type)];
+      const res = await withSandbox(sandbox, async () => handler({ ...args, validateOnly: true })) as { warnings?: string[] };
+      validated.push({ name: a.name, type: a.type, action: 'create', warnings: res.warnings ?? [] });
+    }
+    const toCreate = validated.filter(v => v.action === 'create').length;
+    return {
+      sandbox, sourceRef: ref, dryRun: true, deployed, validated,
+      idMap: Object.fromEntries(live),
+      nextAction: blockers.length
+        ? 'Resolve the blockers above, then re-run the dry run.'
+        : `Dry run only — nothing written. Re-run without dryRun (with confirmWrite) to deploy ${toCreate} new asset(s); ${validated.length - toCreate} already present would be reused.`,
+      warnings, blockers
+    };
+  }
+
+  // ── Real deploy: apply directly to the active sandbox in dependency order ──
+  // (Deepest first, so a fragment is live before any template that embeds it.)
+  await withSandbox(sandbox, async () => {
+    for (const k of graph.order) {
+      const a = graph.assets.get(k)!;
+      if (a.embeds.map(e => key('fragment', e.name)).some(dk => blockedKeys.has(dk))) {
+        blockedKeys.add(k); blockers.push(`${a.name}: a fragment it embeds is blocked, so it cannot be deployed.`); continue;
+      }
+      if (live.has(k)) { deployed.push({ name: a.name, type: a.type, targetId: live.get(k)!, action: 'reused' }); continue; }
+
+      const embedIdMap = new Map<string, string>();
+      let missing = false;
+      for (const e of a.embeds) { const tid = live.get(key('fragment', e.name)); if (tid) embedIdMap.set(e.sourceId, tid); else missing = true; }
+      if (missing) { blockers.push(`${a.name}: MISSING_DEPENDENCY — an embedded fragment is neither in this subtree nor already live in "${sandbox}".`); blockedKeys.add(k); continue; }
+
+      const folder = await ensureTargetFolder(a, sandbox);
+      if (folder.warning) warnings.push(folder.warning);
+      const tags = await resolveTargetTags(a, sandbox);
+      warnings.push(...tags.warnings);
+      const args = rebuildArgs(a, embedIdMap, folder.leafFolderId, tags.tagIds);
+      const leaked = findLeakedSourceUuids(args, a);
+      if (leaked.length) { blockers.push(`${a.name}: refusing to write — source UUID(s) survived rewiring (${leaked.join(', ')}).`); blockedKeys.add(k); continue; }
+
+      const applied = await deployOp({ toolName: createToolFor(a.type), args });
+      if (applied) { live.set(k, applied.id); deployed.push({ name: a.name, type: a.type, targetId: applied.id, action: applied.action === 'reused' ? 'reused' : 'created' }); }
+      else { blockers.push(`${a.name}: create failed in "${sandbox}".`); blockedKeys.add(k); }
+    }
+  });
+
+  const created = deployed.filter(d => d.action === 'created').length;
+  const reused = deployed.filter(d => d.action === 'reused').length;
+  const nextAction = blockers.length
+    ? `${created} asset(s) deployed, ${reused} already present; ${blockers.length} blocked — resolve the blockers and re-run.`
+    : created
+      ? `Deployed ${created} asset(s) to "${sandbox}" (${reused} already present, reused). Done.`
+      : `Nothing to deploy — all ${reused} asset(s) are already present in "${sandbox}".`;
+
+  return { sandbox, sourceRef: ref, dryRun: false, deployed, idMap: Object.fromEntries(live), nextAction, warnings, blockers };
 }

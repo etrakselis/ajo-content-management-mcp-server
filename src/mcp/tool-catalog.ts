@@ -28,7 +28,7 @@ const GROUPS: Array<{ group: string; match: (name: string) => boolean }> = [
   { group: 'XDM / Schema Registry (read-only)', match: n => n.includes('xdm') },
   { group: 'Folders (organization)', match: n => n.includes('folder') },
   { group: 'Tags & tag categories (organization)', match: n => n.includes('tag') },
-  { group: 'Cross-sandbox promotion', match: n => n.includes('promot') },
+  { group: 'Cross-sandbox promotion & repo deploy', match: n => n.includes('promot') || n.includes('repo') },
   { group: 'Server', match: () => true }
 ];
 

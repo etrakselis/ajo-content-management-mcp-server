@@ -29,7 +29,7 @@ A production-grade **Model Context Protocol (MCP) server** that connects LLM-pow
 
 ## Overview
 
-This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 46 tools covering the full template and fragment lifecycle, folder and tag organization (the Unified Tags/Folders API), read-only Experience Platform Schema Registry (XDM) lookups, cross-sandbox content promotion (dev → prod), a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec and the personalization syntax library), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 48 tools covering the full template and fragment lifecycle, folder and tag organization (the Unified Tags/Folders API), read-only Experience Platform Schema Registry (XDM) lookups, cross-sandbox content promotion (dev → prod) and same-sandbox repo→live deploy, a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec and the personalization syntax library), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
 
 The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{_yourtenant.profile.person.firstName}}`. Complementing them, the **authoring reference** tools teach the LLM the exact output formats AJO expects: `get_visual_designer_requirements` returns the native HTML serialization spec so generated email stays editable in the drag-and-drop designer, and `get_personalization_syntax` returns AJO's native personalization expression language (helper functions, conditionals, loops, dataset lookup) so expressions use real AJO constructs rather than generic Handlebars/Liquid.
 
@@ -122,12 +122,14 @@ When a GitHub repository is configured (see [GitHub Integration](#github-integra
 | `check_pr_status` | Check whether a GitHub pull request is open, merged, or closed, and get its merge commit SHA. |
 | `deploy_merged_changes` | Read the payload from a merged PR and re-execute the AJO write operations it describes, applying approved changes to AJO. |
 
-### Cross-Sandbox Promotion
-Promote content from one sandbox to another (e.g. dev → prod) without re-authoring. See [Cross-Sandbox Promotion](#cross-sandbox-promotion-promote_assets) for the full workflow.
+### Cross-Sandbox Promotion & Repo Deploy
+Push committed repo content into AJO. **Cross-sandbox** (dev → prod) uses the phased, PR-gated promotion tools; **same-sandbox** (deploy a subtree into its own live sandbox) uses the direct deploy tools. See [Cross-Sandbox Promotion](#cross-sandbox-promotion-promote_assets) and [Same-Sandbox Repo Deploy](#same-sandbox-repo-deploy-deploy_repo_assets) for the workflows.
 | Tool | Description |
 |------|-------------|
-| `plan_promotion` | *(read-only)* Build a promotion plan: the full dependency closure, phase order, per-asset folder/embed info, and whether each asset already exists in the target. Writes nothing. |
-| `promote_assets` | Promote fragments/templates to a target sandbox, re-resolving every environment-local UUID (embeds, folders, tags, self-references) by name/path. Phased + resumable; runs through the PR approval gate. |
+| `plan_promotion` | *(read-only)* Build a cross-sandbox promotion plan: the full dependency closure, phase order, per-asset folder/embed info, and whether each asset already exists in the target. Writes nothing. |
+| `promote_assets` | Promote fragments/templates into the **active** target sandbox — `targetSandbox` must be the sandbox currently selected in the UI (reselect it first; promotion can only write to the active sandbox, like every other tool), reading from a different source subtree (e.g. dev) in the repo. Re-resolves every environment-local UUID (embeds, folders, tags, self-references) by name/path. Phased + resumable; runs through the PR approval gate. |
+| `list_repo_assets` | *(read-only)* Enumerate the content fragments/templates committed under a sandbox's repo subtree. Use it to preview what exists in the repo or resolve names for a deploy. |
+| `deploy_repo_assets` | Deploy a repo subtree's already-merged content into the **same-named active** sandbox (repo → live). Direct write, idempotent (dedup by name), dependency-ordered. |
 
 ---
 
@@ -510,6 +512,7 @@ When write access is on, the server adds a second safety layer: before performin
 - **Other writes** (create, update, patch, publish) are confirmed **once per sandbox per session**, then remembered for the rest of that session.
 - **Decline or dismiss** the prompt and the operation is **not performed** — the tool returns a `WRITE_CANCELLED` error and the LLM is instructed not to retry unless you ask again.
 - Clients that **don't support elicitation** fall back to a **confirm-and-retry gate**: the first write is held with a `WRITE_CONFIRMATION_REQUIRED` error that instructs the LLM to confirm the target with you conversationally, then re-invoke the same tool with `confirmWrite: true`. The same destructive-vs-other cadence applies (destructive ops require the confirmation every time; other writes once per sandbox per session). The access-mode toggle is still enforced independently — this gate is about confirming the *target*, not granting write permission.
+  - `confirmWrite: true` is a **universal escape hatch**, honored regardless of whether the client advertises elicitation. This matters for clients that advertise the `elicitation` capability but can't actually surface or answer the dialog (it silently declines): without the escape hatch, destructive ops — which re-confirm on *every* call and so can't be cleared by a cached confirmation — would be permanently blocked. With it, the LLM confirms the target with you and re-invokes with `confirmWrite: true` to proceed (the `WRITE_CANCELLED` message says exactly this).
   - `confirmWrite` is declared as an **optional boolean** on every write tool's input schema. It has to be advertised this way because strict clients (e.g. Claude Desktop) validate arguments against the schema and silently drop any property that isn't declared — so a flag the LLM tacked on without it being in the schema would never reach the server, and the gate could never be cleared. Leave it unset on the first call (that's what triggers the hold); the server strips it from the arguments before they reach the underlying AJO API.
 
 ##### Client support for elicitation
@@ -613,7 +616,15 @@ Each AJO write produces one JSON file whose path mirrors the sandbox and folder 
 
 The `{ajo-folder-path}` is resolved by walking the AJO folder hierarchy (e.g. a template in the `BIS › Wishlist` folder under `NV` produces `content-templates/NV/BIS/Wishlist/`). If an asset has no parent folder, it's placed directly under the asset-type directory. The filename is the asset's name (not its UUID), so the repo is human-readable without any ID lookups.
 
-Every file contains a `_meta` block with the operation name, timestamp, author email, sandbox, tenant namespace, and — when the asset is tagged — the tag **names** (`tagNames`, so the repo is self-describing for cross-sandbox promotion, since the raw `tagIds` are environment-local UUIDs), followed by the tool arguments used to produce the asset. Delete/archive operations write a **tombstone record** — the file stays in the repo (preserving history) but its content is replaced with a record showing what was removed and when.
+Every file contains a `_meta` block with the operation name, timestamp, author email, sandbox, tenant namespace, and — when the asset is tagged — the tag **names** (`tagNames`, so the repo is self-describing for cross-sandbox promotion, since the raw `tagIds` are environment-local UUIDs), followed by the asset's content.
+
+The repo is a **content mirror** of the sandbox, so a sandbox change is never destructive to the repo:
+
+- **create / update** write the asset's full content.
+- **patch** (a metadata change) is applied onto the existing committed content — the content body is preserved, and the file stays an accurate snapshot.
+- **delete / archive** **never remove content**: the file keeps its content body and only gains a `_meta.deleted` marker (`deleted: true`, plus `deletedAt` / `deletedBy`). So a deleted asset can always be recreated from the repo file (and every prior version remains in git history regardless).
+
+Each operation always commits to the asset's canonical `{asset-name}.json` path (metadata ops resolve the name from the live asset), so there are never id-named files. In **PR Approval Gate** mode the committed file also carries the operation's arguments (id / etag / patches) so `deploy_merged_changes` can replay it — the deploy handler's input schema ignores the extra content fields, so the preserved content never disturbs the AJO call.
 
 **Example commit for `create_content_fragment`** (fragment named `NV_BIS_Wishlist_Hero` in folder `NV › BIS › Wishlist`):
 ```json
@@ -717,7 +728,7 @@ The comparison is **source-vs-source** (this run's source content vs. what was c
 
 ### Confirmation
 
-Promotion writes to the **target** sandbox, so the first (and each subsequent) non-dry-run call is held with `WRITE_CONFIRMATION_REQUIRED` naming the target. Confirm the target with the user, then re-invoke with `confirmWrite: true`. Use `dryRun: true` (or `plan_promotion`) to validate without writing.
+Promotion writes to the **target** sandbox, which **must be the sandbox currently selected in the UI**: `targetSandbox` has to equal the active sandbox, or the call is rejected with `TARGET_SANDBOX_NOT_ACTIVE` (the LLM is bounded by the UI selection for promotion exactly as for every other tool — there is no per-call cross-sandbox write). To promote into prod, **reselect prod as the active sandbox first**, then promote with `sourceSandbox` pointing at the dev repo subtree. The first (and each subsequent) non-dry-run call is then held with `WRITE_CONFIRMATION_REQUIRED` naming the target; confirm with the user, then re-invoke with `confirmWrite: true`. Use `dryRun: true` (or `plan_promotion`) to validate without writing.
 
 > A dry run creates nothing, so a template's embed of an **in-batch** fragment legitimately still holds the source id (there's no target id to rewire to yet) — this is reported as a **warning** naming the phase where it gets rewired, not a blocker. A surviving id for a fragment that is **neither in the batch nor live in the target** (a genuinely dangling embed) is still a blocker. The real phased run rewires every in-batch embed before its write, where the surviving-id guard stays strict.
 
@@ -732,6 +743,29 @@ Promotion writes to the **target** sandbox, so the first (and each subsequent) n
 > "I changed the `NV_BIS_RestockAlert_Hero` fragment in dev — re-promote it to `prod` so prod picks up the edit."
 
 > "Do a dry run of promoting `NV_BIS_RestockAlert` to `prod` and tell me about any blockers."
+
+---
+
+## Same-Sandbox Repo Deploy (`deploy_repo_assets`)
+
+Cross-sandbox promotion (above) requires `source ≠ target`. The related but distinct case is **deploying a sandbox's own committed repo content into that same live sandbox** — e.g. in approval-gate mode you've merged content PRs into the repo and now want it live in the sandbox without hunting down each PR URL. That's what `deploy_repo_assets` (+ the read-only `list_repo_assets`) do.
+
+**It's `deploy_merged_changes`, scaled to a whole subtree.** The repo content on the default branch is already reviewed/merged, so applying it to the active sandbox is a *deployment*, not a new change to gate — it writes **directly** to AJO (no new PR), exactly like `deploy_merged_changes`. References are still re-resolved by name/path (embeds → live fragment ids, folder path re-created, tags resolved/created, self-reference → `ajo:SELF`), so a re-created asset gets correct target ids.
+
+- **Same-sandbox only.** It reads the **active** sandbox's repo subtree and writes the **active** sandbox. For dev → prod, use `promote_assets`.
+- **Idempotent / dedup by name.** An asset that already exists is **reused** (`action: "reused"`), never duplicated — so re-running deploys nothing new (e.g. resuming a partial deploy). Absent assets are **created**, in dependency order (fragments before the templates that embed them).
+- **Gated like every write.** Honors write access and the confirmation gate (`WRITE_CONFIRMATION_REQUIRED` → re-invoke with `confirmWrite: true`). `dryRun: true` previews without writing.
+- **Scope.** Omit `names` to deploy the whole subtree; pass `names` to deploy specific assets (their embedded fragments are pulled in automatically). `sourceRef` selects a git ref (default: the repo default branch).
+
+> **Note:** `deploy_repo_assets` reuses (does not overwrite) an asset that already exists in the sandbox — its job is to make absent content live, idempotently. To push an *edit* of an already-live asset, deploy that asset's specific update PR with `deploy_merged_changes`.
+
+### Example prompts
+
+> "List what's in the `etrakselis-sandbox` subtree of the repo."
+
+> "Deploy everything in the repo's `etrakselis-sandbox` subtree into this sandbox — dry run first."
+
+> "Deploy the `NV_BIS_Restock` template and its fragments from the repo into this sandbox."
 
 ---
 
@@ -908,7 +942,7 @@ For an expression fragment: `"type": "expression"`, `"channels": ["shared"]`, `"
 ```json
 { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 ```
-Returns the fragment and its etag.
+Returns the fragment and its etag. If the fragment is large enough to exceed the ~1 MB MCP tool-result limit (e.g. a big Visual Designer document), the call returns a structured `RESPONSE_TOO_LARGE` error instead of a truncated/opaque result — the same guard protects `get_content_template`, `get_live_fragment`, and the by-UUID resource reads.
 
 #### `update_content_fragment` *(write)*
 Full replacement (PUT). Fetch first for the etag:
@@ -1000,7 +1034,7 @@ Idempotently creates a multi-level folder path, creating only the levels that do
 
 ### Tags & tag categories (Unified Tags API)
 
-Classify content for discovery. A **tag** belongs to exactly one **tag category** (`Uncategorized` if none is given at create time). The `property` argument on the list tools is a filter attribute (e.g. `tagCategoryId=<id>`, `name`, `archived`) — **not** the FIQL grammar used by the content list tools. **Requires the Unified Tags/Folders API enabled on the credential's Developer Console project.**
+Classify content for discovery. A **tag** belongs to exactly one **tag category** (`Uncategorized` if none is given at create time). Tags are **org-scoped** — shared across every sandbox in the org (unlike folders, which are per-sandbox): the same tag id appears in all sandboxes, and cross-sandbox promotion reuses a tag by name rather than creating a per-sandbox copy. The `property` argument on the list tools is a filter attribute (e.g. `tagCategoryId=<id>`, `name`, `archived`) — **not** the FIQL grammar used by the content list tools. **Requires the Unified Tags/Folders API enabled on the credential's Developer Console project.**
 
 > **Tag categories are read-only here.** Creating/updating/deleting a tag *category* requires system/product administrator privileges in AJO, which the typical MCP principal does not have — so those operations are intentionally **not exposed** (they would only ever return 403). Use the read tools to discover categories, and create tags in `Uncategorized` for the non-admin path. To bind a tag to content, see `patch_content_fragment` / `patch_content_template` (`/tagIds`).
 
@@ -1031,7 +1065,7 @@ Returns the valid/invalid split — useful before applying tag references to con
 ```json
 { "tagId": "8af14b1e-..." }
 ```
-Irreversible — confirmed every time. **AJO enforces two preconditions:** the tag must not be applied to any content (otherwise `403 "Associated Tag Count is not Zero"` — clear it from the `/tagIds` of every referencing fragment/template first) and it must be archived (otherwise `409 "Tag is not archived"` — `update_tag` with `archived: true` first). Full teardown order: clear associations → archive → delete. The server surfaces these as resource-specific hints (no stray template/fragment etag guidance).
+Irreversible — confirmed every time. **AJO enforces two preconditions:** the tag must not be applied to any content (otherwise `403 "Associated Tag Count is not Zero"` — clear it from the `/tagIds` of every referencing fragment/template first; since tags are org-scoped, that count spans **every** sandbox, so this includes promoted copies in other sandboxes) and it must be archived (otherwise `409 "Tag is not archived"` — `update_tag` with `archived: true` first). Full teardown order: clear associations → archive → delete. The server surfaces these as resource-specific hints (no stray template/fragment etag guidance).
 
 ### Schema Registry / XDM
 
@@ -1080,7 +1114,7 @@ The resolved Profile union is the complete attribute set available for personali
 ```json
 {}
 ```
-Returns who/what the server is operating as — `authorEmail` (self-declared at setup, unverified), `sandbox`, `tenantNamespace`, `orgName`, and `writeAccess`. Use it to answer "who is this running on behalf of?" or "which sandbox am I on?" without performing a content operation.
+Returns who/what the server is operating as — `authorEmail` (self-declared at setup, unverified), `sandbox`, `tenantNamespace`, `orgName`, `writeAccess`, and `writeConfirmed` (whether the write-confirmation gate is already cleared for this sandbox this session). When GitHub integration is configured it also returns `githubIntegration` — the active write mode (`approval-gate` | `audit-trail`) plus owner/repo/defaultBranch (never the token) — and, in audit-trail mode, `githubIntegration.lastAuditSync`: the outcome of the most recent fire-and-forget commit (`ok: false` means the AJO write succeeded but was **not** recorded in GitHub). Use it to answer "who is this running on behalf of?", "which sandbox am I on?", or "did the last GitHub sync succeed?" without performing a content operation.
 
 It also returns `tools` — the full catalog of every tool this server exposes, grouped by domain (`[{ group, tools: [{ name, title }] }]`). This is the reliable way for a client to discover all capabilities by exact name in a single call, which matters when the client defers tools and a fuzzy tool search ranks one below its result cutoff. The same catalog is also rendered into the server `instructions` at connection time, so the two channels cover each other (instructions need no tool call but are dropped by some clients; this tool result is high-salience but requires the call).
 
@@ -1116,13 +1150,25 @@ See [Cross-Sandbox Promotion](#cross-sandbox-promotion-promote_assets) for the f
 ```json
 { "templateName": "NV_BIS_RestockAlert", "sourceSandbox": "etrakselis-sandbox", "targetSandbox": "prod" }
 ```
-Builds a read-only plan from **repo content** (no source-sandbox calls): the dependency closure (template → embedded fragments → nested fragments, matched by embed name), the phase order, each asset's repo path / target folder path / embeds, and whether it already exists in the target (`targetStatus: absent | present`). Surfaces blockers (`SOURCE_FILE_NOT_FOUND`, an embed name with no repo file, malformed helpers) before any write. Provide exactly one of `templateName`, `fragmentName`, or `names`; `sourceSandbox` is the repo subtree to read (defaults to the configured sandbox name); optional `sourceRef` selects a branch/tag/commit (default: the repo's default branch). Requires GitHub configured + target read access.
+Builds a read-only plan from **repo content** (no source-sandbox calls): the dependency closure (template → embedded fragments → nested fragments, matched by embed name), the phase order, each asset's repo path / target folder path / embeds, and whether it already exists in the target (`targetStatus: absent | present`). Surfaces blockers (`SOURCE_FILE_NOT_FOUND`, an embed name with no repo file, malformed helpers) before any write. Provide exactly one of `templateName`, `fragmentName`, or `names`; `sourceSandbox` is the repo subtree to read (defaults to the configured sandbox name); optional `sourceRef` selects a branch/tag/commit (default: the repo's default branch). `targetSandbox` must be the active (UI-selected) sandbox (same restriction as `promote_assets`, else `TARGET_SANDBOX_NOT_ACTIVE`). Requires GitHub configured + target read access.
 
 #### `promote_assets` *(write)*
 ```json
 { "templateName": "NV_BIS_RestockAlert", "sourceSandbox": "etrakselis-sandbox", "targetSandbox": "prod", "confirmWrite": true }
 ```
-Promotes the selection to `targetSandbox`, reading content from the **GitHub repo** (not the source sandbox) and re-resolving every environment-local UUID against the target (embeds matched by name → target fragment ids, self-reference → `ajo:SELF`, folder path from the repo file path re-created in target, tags resolved/created from `_meta.tagNames`). Contacts only the target AJO sandbox. Requires GitHub configured (and **PR Approval Gate mode** for real writes) — each asset is proposed as its own PR. Phased and resumable: each call deploys any of its merged PRs and opens PRs for the next assets whose dependencies are now live; call again until `status: complete`. Requires `confirmWrite: true` (after the target is confirmed with the user); `dryRun: true` validates without writing. Absent assets are **created**; already-present assets are **updated** when their repo source changed since the last promotion (via a `sourceContentHash` fingerprint), else reported `unchanged` — never duplicated. See [Updating already-promoted content](#updating-already-promoted-content).
+Promotes the selection to `targetSandbox` — which **must be the active (UI-selected) sandbox** (reselect it first; a non-active target is rejected with `TARGET_SANDBOX_NOT_ACTIVE`) — reading content from the **GitHub repo** (not the source sandbox) and re-resolving every environment-local UUID against the target (embeds matched by name → target fragment ids, self-reference → `ajo:SELF`, folder path from the repo file path re-created in target, tags resolved/created from `_meta.tagNames`). Contacts only the target AJO sandbox. Requires GitHub configured (and **PR Approval Gate mode** for real writes) — each asset is proposed as its own PR. Phased and resumable: each call deploys any of its merged PRs and opens PRs for the next assets whose dependencies are now live; call again until `status: complete`. Requires `confirmWrite: true` (after the target is confirmed with the user); `dryRun: true` validates without writing. Absent assets are **created**; already-present assets are **updated** when their repo source changed since the last promotion (via a `sourceContentHash` fingerprint), else reported `unchanged` — never duplicated. See [Updating already-promoted content](#updating-already-promoted-content).
+
+#### `list_repo_assets` *(read)*
+```json
+{ "sourceSandbox": "etrakselis-sandbox" }
+```
+Enumerates the content fragments/templates committed under a sandbox's repo subtree (reads the repo, not AJO). `sourceSandbox` defaults to the active sandbox; `sourceRef` defaults to the repo default branch. Returns `{ sandbox, sourceRef, truncated, assets: [{ name, type, path }] }`. Use it to preview what's in the repo or resolve names for `deploy_repo_assets` / `promote_assets`.
+
+#### `deploy_repo_assets` *(write)*
+```json
+{ "names": ["NV_BIS_Restock"], "dryRun": true }
+```
+Deploys the **active** sandbox's repo subtree into the **active** AJO sandbox (same-sandbox repo → live) — the whole-subtree analog of `deploy_merged_changes`. Applies directly (no new PR — the repo content is already merged/approved), in dependency order, re-resolving embeds/folders/tags/self-references by name/path. Idempotent + dedup by name: an existing asset is **reused** (`action: "reused"`), never duplicated; absent assets are **created**. Omit `names` for the whole subtree. Requires GitHub configured + write access; held with `WRITE_CONFIRMATION_REQUIRED` until re-invoked with `confirmWrite: true`; `dryRun: true` previews. For dev → prod use `promote_assets` instead. See [Same-Sandbox Repo Deploy](#same-sandbox-repo-deploy-deploy_repo_assets).
 
 ### Authoring references
 
@@ -1371,13 +1417,13 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── templates.ts        Content template tool definitions + handlers
 │   │   ├── fragments.ts        Content fragment tool definitions + handlers
 │   │   ├── github.ts           check_pr_status and deploy_merged_changes tool definitions + handlers
-│   │   ├── promotion.ts        plan_promotion + promote_assets tool definitions + handlers (cross-sandbox)
+│   │   ├── promotion.ts        plan_promotion / promote_assets (cross-sandbox) + list_repo_assets / deploy_repo_assets (same-sandbox repo→live) definitions + handlers
 │   │   ├── schema-registry.ts  XDM schema / field group / union lookup tools (read-only)
 │   │   ├── visual-designer.ts  get_visual_designer_requirements tool — AJO email HTML spec (read-only)
 │   │   ├── personalization.ts  get_personalization_syntax tool — AJO personalization syntax library (read-only)
 │   │   └── context.ts          get_server_context tool — reports author/sandbox/tenant (read-only)
 │   ├── promotion/
-│   │   └── engine.ts           Cross-sandbox promotion engine — dependency graph, phased PRs, payload rebuild
+│   │   └── engine.ts           Repo-sourced deploy engine — dependency graph, payload rebuild, cross-sandbox phased PRs (promote_assets) + same-sandbox direct deploy (deploy_repo_assets)
 │   ├── github/
 │   │   ├── client.ts           GitHub REST API client — PAT auth, repo/file/branch/PR operations
 │   │   ├── sync.ts             Audit-trail commit and PR approval-gate logic (commitAuditTrail, createApprovalPR, readMergedPRContent)

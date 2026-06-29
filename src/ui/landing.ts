@@ -703,6 +703,16 @@ export const landingPageHtml = `<!DOCTYPE html>
     .log-output::-webkit-scrollbar-track { background: transparent; }
     .log-output::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
     .log-output::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
+    .log-output.streaming::after {
+      content: '▋';
+      display: inline-block;
+      margin-top: 2px;
+      color: #FFFFFF;
+      font-size: 12px;
+      line-height: 1;
+      animation: logBlink 1.1s step-end infinite;
+    }
+    @keyframes logBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
     .naming-section { padding-bottom: 20px; border-bottom: 1px solid var(--adobe-border); margin-bottom: 20px; }
     .naming-section:last-child { padding-bottom: 0; border-bottom: none; margin-bottom: 0; }
     .naming-editor-wrap { margin-top: 12px; }
@@ -2048,7 +2058,10 @@ export const landingPageHtml = `<!DOCTYPE html>
     function startLogStream() {
       if (logEventSource) return;
       const output = document.getElementById('logOutput');
-      if (output) output.innerHTML = '<div class="log-placeholder">Connecting…</div>';
+      if (output) {
+        output.innerHTML = '<div class="log-placeholder">Connecting…</div>';
+        output.classList.add('streaming');
+      }
       logEventSource = new EventSource('/api/logs');
       logEventSource.onopen = () => {
         const ph = document.getElementById('logOutput')?.querySelector('.log-placeholder');
@@ -2066,6 +2079,7 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     function stopLogStream() {
       if (logEventSource) { logEventSource.close(); logEventSource = null; }
+      document.getElementById('logOutput')?.classList.remove('streaming');
     }
 
     document.getElementById('logClearBtn').addEventListener('click', () => {

@@ -16,7 +16,7 @@ import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js';
 import { tokenManager } from '../auth/token-manager.js';
 import { isClientConfigured, getConfiguredSandboxName, getConfiguredOrgName, getConfiguredTenantId, getConfiguredAuthorEmail, getConfiguredNamingConvention, getConfiguredGitHubIntegration, listFragments, listTemplates, getFragment, getTemplate, buildError } from '../adobe/client.js';
 import { commitAuditTrail, createApprovalPR } from '../github/sync.js';
-import { resolveAjoFolderPath } from '../adobe/unified-tags-client.js';
+import { resolveAjoFolderPath, getTag, getFolder } from '../adobe/unified-tags-client.js';
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { onSandboxChanged } from './sandbox-change.js';
@@ -93,8 +93,8 @@ import { getAemImageEmbedInstructionsDefinition, handleGetAemImageEmbedInstructi
 import { getPersonalizationSyntaxDefinition, handleGetPersonalizationSyntax, getPersonalizationGuidanceDefinition, handleGetPersonalizationGuidance } from '../tools/personalization.js';
 // GitHub integration tools
 import { checkPRStatusDefinition, handleCheckPRStatus, deployMergedChangesDefinition, handleDeployMergedChanges } from '../tools/github.js';
-// Cross-sandbox content promotion (plan + phased executor)
-import { planPromotionDefinition, handlePlanPromotion, promoteAssetsDefinition, handlePromoteAssets } from '../tools/promotion.js';
+// Cross-sandbox content promotion (plan + phased executor) and same-sandbox repo deploy
+import { planPromotionDefinition, handlePlanPromotion, promoteAssetsDefinition, handlePromoteAssets, listRepoAssetsDefinition, handleListRepoAssets, deployRepoAssetsDefinition, handleDeployRepoAssets } from '../tools/promotion.js';
 import { buildToolCatalog, formatToolCatalog } from './tool-catalog.js';
 import {
   CreateTemplateSchema, UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema,
@@ -163,7 +163,10 @@ const ALL_TOOLS = [
   deployMergedChangesDefinition,
   // Cross-sandbox promotion — read-only planner + phased executor
   planPromotionDefinition,
-  promoteAssetsDefinition
+  promoteAssetsDefinition,
+  // Repo → active sandbox — enumerate a subtree + same-sandbox direct deploy
+  listRepoAssetsDefinition,
+  deployRepoAssetsDefinition
 ];
 
 // Catalog derived from the live tool list (so it never drifts). Registered into
@@ -243,6 +246,46 @@ async function resolveGitHubFolderPath(
     });
     return undefined;
   }
+}
+
+const asStr = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
+
+// Resolve an asset's canonical NAME (+ parentFolderId) for metadata ops — patch_/
+// archive_/delete_, which are addressed by id and carry no `name` in their args. The
+// GitHub commit then lands on the asset's canonical <sandbox>/<type>/<folder>/<name>.json
+// path instead of an orphan id-named file at the type-dir root. Read BEFORE the AJO
+// write because a hard delete makes the asset un-gettable afterward (audit-trail mode
+// commits post-write). create_/update_ already carry `name`, so this returns {} for
+// them (a no-op — their existing path resolution is unchanged). Best-effort: any failure
+// returns {} and the commit falls back to the previous id-based path.
+async function resolveCanonicalNaming(
+  toolName: string, args: unknown
+): Promise<{ name?: string; parentFolderId?: string }> {
+  const a = (args ?? {}) as Record<string, unknown>;
+  if (asStr(a.name)) return {}; // create/update already carry the name
+  try {
+    if (asStr(a.fragmentId)) {
+      const r = await getFragment(a.fragmentId as string) as { data?: Record<string, unknown> };
+      return { name: asStr(r.data?.name), parentFolderId: asStr(r.data?.parentFolderId) };
+    }
+    if (asStr(a.templateId)) {
+      const r = await getTemplate(a.templateId as string) as { data?: Record<string, unknown> };
+      return { name: asStr(r.data?.name), parentFolderId: asStr(r.data?.parentFolderId) };
+    }
+    if (asStr(a.tagId)) {
+      const t = await getTag(a.tagId as string) as Record<string, unknown>;
+      return { name: asStr(t?.name) };
+    }
+    if (asStr(a.folderId) && asStr(a.folderType)) {
+      const f = await getFolder(a.folderType as string, a.folderId as string) as Record<string, unknown>;
+      return { name: asStr(f?.name) };
+    }
+  } catch (err) {
+    logger.warn('Canonical naming resolution failed (non-fatal); commit falls back to the id-based path', {
+      tool: toolName, error: err instanceof Error ? err.message : String(err)
+    });
+  }
+  return {};
 }
 
 // Create tools that accept a validateOnly flag (dry-run: validate + return warnings
@@ -527,7 +570,12 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   // NOT in WRITE_TOOLS: it writes to a per-call target sandbox, so it self-enforces
   // the read-only gate and a target-aware write confirmation (see tools/promotion.ts).
   plan_promotion: handlePlanPromotion,
-  promote_assets: handlePromoteAssets
+  promote_assets: handlePromoteAssets,
+  // Repo → active sandbox — list a subtree (read) + same-sandbox direct deploy.
+  // deploy_repo_assets is NOT in WRITE_TOOLS either (it applies already-merged repo
+  // content directly, like deploy_merged_changes); it self-enforces read-only + confirm.
+  list_repo_assets: handleListRepoAssets,
+  deploy_repo_assets: handleDeployRepoAssets
 };
 
 export function createMcpServer(transport: TransportKind = 'http'): Server {
@@ -927,15 +975,35 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     // then the LLM calls deploy_merged_changes to apply the approved content to AJO.
     // deploy_merged_changes itself is exempt (it IS the deployment path).
     const githubConfig = getConfiguredGitHubIntegration();
+
+    // Resolve the asset's canonical name (+ folder) up-front — before any AJO write,
+    // since a hard delete makes the asset un-gettable afterward — so the GitHub commit
+    // for a metadata op (patch_/archive_/delete_) lands on the canonical <name>.json
+    // path instead of an orphan id-named file. No-op for create/update (they carry a
+    // name). Shared by both the approval-gate PR and the audit-trail commit below.
+    let canonicalName: string | undefined;
+    let canonicalFolderPath: string | undefined;
+    if (githubConfig && isWriteTool(name) && !dryRun && !GITHUB_BYPASS_TOOLS.has(name)) {
+      const naming = await resolveCanonicalNaming(name, stripConfirmFlag(args));
+      canonicalName = naming.name;
+      if (naming.parentFolderId) {
+        const ft = ajoFolderTypeFor(name);
+        if (ft) {
+          try { canonicalFolderPath = (await resolveAjoFolderPath(ft, naming.parentFolderId)) || undefined; }
+          catch { /* fall back to the per-call folder resolution below */ }
+        }
+      }
+    }
+
     if (githubConfig?.requireApproval && isWriteTool(name) && !dryRun && !GITHUB_BYPASS_TOOLS.has(name)) {
       const cleanArgs = (isWriteTool(name) ? stripConfirmFlag(args) : args) as Record<string, unknown>;
       const sandbox = getConfiguredSandboxName() ?? 'unknown';
       const author = getConfiguredAuthorEmail() ?? 'unknown';
       const prTenantId = getConfiguredTenantId();
       const prTenant = prTenantId ? `_${prTenantId}` : undefined;
-      const ajoFolderPathPR = await resolveGitHubFolderPath(name, args, undefined);
+      const ajoFolderPathPR = canonicalFolderPath ?? await resolveGitHubFolderPath(name, args, undefined);
       try {
-        const { prNumber, prUrl, filePath } = await createApprovalPR(githubConfig, sandbox, name, cleanArgs, author, ajoFolderPathPR, prTenant);
+        const { prNumber, prUrl, filePath } = await createApprovalPR(githubConfig, sandbox, name, cleanArgs, author, ajoFolderPathPR, prTenant, undefined, undefined, canonicalName);
         emitLog('info', `↗ ${name}: GitHub PR #${prNumber} created (approval gate)`, sessionId);
         return toToolResult({
           success: true,
@@ -1000,14 +1068,18 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
         const ghAuthor = activeAuthor ?? 'unknown';
         const ghTenant = activeTenantId ? `_${activeTenantId}` : undefined;
         emitLog('info', `↗ GitHub audit: committing "${name}" to ${githubConfig.owner}/${githubConfig.repo}`, sessionId);
-        resolveGitHubFolderPath(name, args, resultObj).then(ajoFolderPath =>
+        (canonicalFolderPath !== undefined
+          ? Promise.resolve(canonicalFolderPath)
+          : resolveGitHubFolderPath(name, args, resultObj)
+        ).then(ajoFolderPath =>
         commitAuditTrail(
           githubConfig, ghSandbox, name,
           (isWriteTool(name) ? stripConfirmFlag(args) : args) as Record<string, unknown>,
           resultObj as Record<string, unknown>,
           ghAuthor,
           ajoFolderPath,
-          ghTenant
+          ghTenant,
+          canonicalName
         )).then((committed) => {
           // Record the outcome so get_server_context can surface a failure to the
           // model on demand. This is the reliable channel: the emitLog below is only an

@@ -66,6 +66,57 @@ function extractId(args: Record<string, unknown>): string | undefined {
   return idKeys.map(k => args[k]).find((v): v is string => typeof v === 'string');
 }
 
+// ─── Content-mirror helpers ───────────────────────────────────────────────────
+// The repo is a content MIRROR of the sandbox. create/update keep the canonical
+// <name>.json holding full content; a patch applies its metadata change onto that
+// content so the file stays accurate; a delete/archive PRESERVES the content body and
+// only flags _meta.deleted — a sandbox delete NEVER removes content from the repo, so
+// the asset can always be recreated from the committed file. In approval-gate mode the
+// committed file also carries the operation's real args (id/etag/patches) so
+// deploy_merged_changes can still replay it — the deploy handlers' Zod schemas strip the
+// extra content fields, so the preserved content never disturbs the AJO call.
+
+const isDeleteOp = (toolName: string): boolean =>
+  toolName.startsWith('delete_') || toolName === 'archive_content_fragment';
+const isPatchOp = (toolName: string): boolean => toolName.startsWith('patch_');
+
+// The content-metadata JSON-Patch paths that patch_content_* supports.
+const PATCHABLE_FIELDS = new Set(['name', 'description', 'parentFolderId', 'tagIds', 'labels']);
+
+// Drop the _meta envelope, returning just the asset's content fields.
+function contentOf(payload: Record<string, unknown> | null): Record<string, unknown> {
+  if (!payload) return {};
+  const { _meta: _omit, ...content } = payload;
+  return content;
+}
+
+// Read the prior committed file (full payload incl _meta) from a ref, or null if absent.
+async function readCommittedPayload(
+  token: string, owner: string, repo: string, filePath: string, ref: string
+): Promise<Record<string, unknown> | null> {
+  try {
+    return JSON.parse(await getFileContent(token, owner, repo, filePath, ref)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+// Apply a content-metadata JSON-Patch (only the paths patch_content_* supports) to a
+// content object so the mirrored file reflects the change. add/replace set the field;
+// remove deletes it. Anything else (or a content field outside the supported set) is
+// ignored — the content body is otherwise carried through verbatim.
+function applyMetadataPatch(content: Record<string, unknown>, patches: unknown): Record<string, unknown> {
+  if (!Array.isArray(patches)) return content;
+  const out = { ...content };
+  for (const op of patches as Array<{ op?: string; path?: string; value?: unknown }>) {
+    const field = typeof op?.path === 'string' ? op.path.replace(/^\//, '') : '';
+    if (!PATCHABLE_FIELDS.has(field)) continue;
+    if (op.op === 'remove') delete out[field];
+    else out[field] = op.value;
+  }
+  return out;
+}
+
 // ─── Audit Trail (non-blocking) ──────────────────────────────────────────────
 
 /**
@@ -81,43 +132,59 @@ export async function commitAuditTrail(
   result: Record<string, unknown>,
   authorEmail: string,
   ajoFolderPath?: string,
-  tenant?: string
+  tenant?: string,
+  // The asset's canonical name, resolved by the caller for metadata ops (patch_/
+  // archive_/delete_) whose args carry only an id. Used ONLY to build the file path so
+  // the commit lands on the canonical <name>.json instead of an orphan id-named file;
+  // it is never added to the committed payload.
+  canonicalName?: string
 ): Promise<boolean> {
   const { token, owner, repo, defaultBranch } = config;
 
   try {
     const argId = extractId(args);
     const resultId = (result as { id?: string }).id ?? argId;
-    const argName = typeof args.name === 'string' ? args.name : undefined;
+    const argName = canonicalName ?? (typeof args.name === 'string' ? args.name : undefined);
     const filePath = assetFilePath(sandboxName, toolName, resultId ?? argId, argName, ajoFolderPath);
 
-    const isDelete = toolName.startsWith('delete_') || toolName === 'archive_content_fragment';
+    const existingSha = await getFileSha(token, owner, repo, filePath, defaultBranch);
 
-    if (isDelete) {
-      // For deletes/archives, overwrite the file with a tombstone record so the
-      // history shows WHAT was removed and WHEN, rather than having the file disappear.
-      const existingSha = await getFileSha(token, owner, repo, filePath, defaultBranch);
-      const tombstone = {
+    if (isDeleteOp(toolName)) {
+      // Content-PRESERVING delete: keep the committed content body and only flag it
+      // deleted — a sandbox delete never removes content from the repo. Nothing to do
+      // if there is no prior file (no content to preserve, and we won't fabricate one).
+      // (Audit-trail mode has no deploy step, so the file is a pure record/mirror.)
+      if (!existingSha) {
+        logger.info('GitHub audit trail: no prior file to flag deleted (skipped)', { tool: toolName, filePath, sandbox: sandboxName });
+        return true;
+      }
+      const prior = contentOf(await readCommittedPayload(token, owner, repo, filePath, defaultBranch));
+      const payload = {
         _meta: {
           operation: toolName,
+          deleted: true,
           deletedAt: new Date().toISOString(),
           deletedBy: authorEmail,
           sandbox: sandboxName,
           ...(tenant ? { tenant } : {}),
           ajoId: resultId ?? argId
-        }
+        },
+        ...prior
       };
-      if (existingSha) {
-        await commitFile(
-          token, owner, repo, filePath,
-          JSON.stringify(tombstone, null, 2),
-          `${toolName}: ${argName ?? resultId ?? argId ?? 'unknown'} [${authorEmail}]`,
-          defaultBranch,
-          existingSha
-        );
-      }
+      await commitFile(
+        token, owner, repo, filePath,
+        JSON.stringify(payload, null, 2),
+        `${toolName}: ${argName ?? resultId ?? argId ?? 'unknown'} [${authorEmail}]`,
+        defaultBranch,
+        existingSha
+      );
     } else {
+      // create/update carry full content in args; a patch mirrors its metadata change
+      // onto the prior content so the file stays an accurate snapshot (content preserved).
       const tagNames = await resolveTagNames(sandboxName, args);
+      const content = isPatchOp(toolName)
+        ? applyMetadataPatch(contentOf(await readCommittedPayload(token, owner, repo, filePath, defaultBranch)), (args as { patches?: unknown }).patches)
+        : { ...args };
       const payload = {
         _meta: {
           operation: toolName,
@@ -128,9 +195,8 @@ export async function commitAuditTrail(
           ...(tenant ? { tenant } : {}),
           ...(tagNames.length ? { tagNames } : {})
         },
-        ...args
+        ...content
       };
-      const existingSha = await getFileSha(token, owner, repo, filePath, defaultBranch);
       await commitFile(
         token, owner, repo, filePath,
         JSON.stringify(payload, null, 2),
@@ -174,12 +240,17 @@ export async function createApprovalPR(
   branchName?: string,
   // Optional extra fields merged into the committed file's _meta (cross-sandbox
   // promotion records sourceContentHash here for source-changed detection on re-run).
-  extraMeta?: Record<string, unknown>
+  extraMeta?: Record<string, unknown>,
+  // The asset's canonical name, resolved by the caller for metadata ops (patch_/
+  // archive_/delete_) whose args carry only an id. Used ONLY to build the file path so
+  // the PR commit lands on the canonical <name>.json (overwriting it with the tombstone)
+  // instead of an orphan id-named file; it is never added to the committed payload.
+  canonicalName?: string
 ): Promise<{ prNumber: number; prUrl: string; filePath: string }> {
   const { token, owner, repo, defaultBranch } = config;
 
   const argId = extractId(args);
-  const argName = typeof args.name === 'string' ? args.name : argId ?? 'unknown';
+  const argName = canonicalName ?? (typeof args.name === 'string' ? args.name : argId ?? 'unknown');
   const filePath = assetFilePath(sandboxName, toolName, argId, argName, ajoFolderPath);
   const branch = branchName ?? makeBranchName(toolName);
 
@@ -187,23 +258,37 @@ export async function createApprovalPR(
   await createBranch(token, owner, repo, branch, baseSha);
 
   const tagNames = await resolveTagNames(sandboxName, args);
-  const payload = {
-    _meta: {
-      operation: toolName,
-      requestedBy: authorEmail,
-      requestedAt: new Date().toISOString(),
-      sandbox: sandboxName,
-      ...(tenant ? { tenant } : {}),
-      ...(tagNames.length ? { tagNames } : {}),
-      ...(extraMeta ?? {})
-    },
-    ...args
+  const requestedAt = new Date().toISOString();
+  const meta: Record<string, unknown> = {
+    operation: toolName,
+    requestedBy: authorEmail,
+    requestedAt,
+    sandbox: sandboxName,
+    ...(tenant ? { tenant } : {}),
+    ...(tagNames.length ? { tagNames } : {}),
+    ...(extraMeta ?? {})
   };
 
-  // If the file already exists on the branch (e.g. a re-promotion updating an asset
-  // that was previously promoted to this path), GitHub's contents PUT requires the
-  // current blob SHA to overwrite it; getFileSha returns null for a brand-new file.
+  // The committed file MIRRORS the asset's content (so a sandbox change/delete never
+  // loses content from the repo) AND carries the operation's args so deploy_merged_changes
+  // can still replay it — the deploy handler's Zod schema strips the extra content fields.
+  //   • create/update → args ARE the full content
+  //   • patch         → apply the metadata change to the prior committed content (preserved)
+  //   • delete/archive→ keep the prior content body, only flag _meta.deleted (never removed)
+  // The prior content is read from the branch (== the default branch at creation time).
+  // getFileSha returns null for a brand-new file; a PUT then creates it.
   const existingSha = await getFileSha(token, owner, repo, filePath, branch);
+  let payload: Record<string, unknown>;
+  if (isDeleteOp(toolName)) {
+    const prior = existingSha ? contentOf(await readCommittedPayload(token, owner, repo, filePath, branch)) : {};
+    payload = { _meta: { ...meta, deleted: true, deletedAt: requestedAt, ajoId: argId }, ...prior, ...args };
+  } else if (isPatchOp(toolName)) {
+    const prior = existingSha ? contentOf(await readCommittedPayload(token, owner, repo, filePath, branch)) : {};
+    payload = { _meta: meta, ...applyMetadataPatch(prior, (args as { patches?: unknown }).patches), ...args };
+  } else {
+    payload = { _meta: meta, ...args };
+  }
+
   await commitFile(
     token, owner, repo, filePath,
     JSON.stringify(payload, null, 2),

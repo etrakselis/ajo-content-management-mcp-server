@@ -20,7 +20,7 @@ import {
 } from '../adobe/client.js';
 import { getWritesAllowed } from '../mcp/access-policy.js';
 import { withSandbox } from '../adobe/sandbox-context.js';
-import { planPromotion, executePromotion, PromotionError, type PromotionSelector } from '../promotion/engine.js';
+import { planPromotion, executePromotion, listRepoAssets, deployRepoToSandbox, PromotionError, type PromotionSelector } from '../promotion/engine.js';
 import { notConfiguredError, withTelemetry, buildOutputSchema } from './utils.js';
 
 const UI_BASE_URL = process.env.UI_BASE_URL ?? 'http://localhost:3000';
@@ -302,4 +302,141 @@ export async function handlePromoteAssets(args: unknown) {
 // cross-sandbox write; the UI selection bounds the LLM in every scenario.
 function targetSandboxNote(targetSandbox: string): string {
   return `Note on the target sandbox: promotion writes ONLY to the sandbox currently selected in the MCP server UI, and "${targetSandbox}" must be that active sandbox (the LLM is restricted to the active sandbox for promotion exactly as for every other tool). If a promotion is rejected with TARGET_SANDBOX_NOT_ACTIVE, ask the user to reselect "${targetSandbox}" as the active sandbox at ${UI_BASE_URL}, then retry.`;
+}
+
+// ─── list_repo_assets ──────────────────────────────────────────────────────────
+
+export const listRepoAssetsDefinition = {
+  name: 'list_repo_assets',
+  title: 'List Repo Content Assets',
+  outputSchema: buildOutputSchema({
+    sandbox: { type: 'string' },
+    sourceRef: { type: 'string' },
+    truncated: { type: 'boolean', description: 'true if the repo is large enough that the listing was capped.' },
+    assets: { type: 'array', items: { type: 'object' }, description: 'Committed assets under the subtree: [{ name, type: "fragment" | "template", path }].' }
+  }),
+  description: `List the content fragments/templates committed under a sandbox's subtree in the GitHub repo. READ-ONLY — it reads the repo, not AJO. Use it to see what content exists in the repo for a sandbox (e.g. before deploying it with deploy_repo_assets), or to resolve a vague "those assets" into concrete names to feed deploy_repo_assets / promote_assets.
+
+sourceSandbox is the repo subtree to list (defaults to the active sandbox); sourceRef is the git ref (defaults to the repo's default branch). Requires GitHub integration configured.
+
+Example usage: {} (active sandbox) or { "sourceSandbox": "etrakselis-sandbox" }
+
+Returns: { success: true, sandbox, sourceRef, truncated, assets: [{ name, type, path }] }`,
+  annotations: { readOnlyHint: true, openWorldHint: true },
+  inputSchema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    properties: {
+      sourceSandbox: { type: 'string' as const, description: 'Repo subtree to list, e.g. "etrakselis-sandbox". Defaults to the active sandbox.' },
+      sourceRef: { type: 'string' as const, description: 'Git ref (branch, tag, or commit sha). Defaults to the repo default branch.' }
+    }
+  }
+};
+
+export async function handleListRepoAssets(args: unknown) {
+  if (!isClientConfigured()) return notConfiguredError();
+  return withTelemetry('list_repo_assets', async () => {
+    const input = (args ?? {}) as { sourceSandbox?: string; sourceRef?: string };
+    if (!getConfiguredGitHubIntegration()) {
+      return { success: false, error: { code: 'GITHUB_NOT_CONFIGURED', message: `list_repo_assets reads content from the GitHub repo, so GitHub integration must be configured. Enable it on the setup page (${UI_BASE_URL}).` } };
+    }
+    const sandbox = input.sourceSandbox?.trim() || getConfiguredSandboxName() || '';
+    if (!sandbox) {
+      return { success: false, error: { code: 'VALIDATION_ERROR', message: 'No subtree to list (no active sandbox configured and no sourceSandbox supplied).' } };
+    }
+    try {
+      const listing = await listRepoAssets(sandbox, input.sourceRef?.trim() || undefined);
+      return { success: true, ...listing };
+    } catch (err) {
+      return promotionError(err);
+    }
+  }, args);
+}
+
+// ─── deploy_repo_assets ──────────────────────────────────────────────────────────
+
+export const deployRepoAssetsDefinition = {
+  name: 'deploy_repo_assets',
+  title: 'Deploy Repo Subtree to the Active Sandbox',
+  outputSchema: buildOutputSchema({
+    sandbox: { type: 'string' },
+    sourceRef: { type: 'string' },
+    dryRun: { type: 'boolean' },
+    deployed: { type: 'array', items: { type: 'object' }, description: 'Assets applied this call: [{ name, type, targetId, action: "created" | "reused" }].' },
+    validated: { type: 'array', items: { type: 'object' }, description: 'Dry-run only: per-asset validateOnly results [{ name, type, action: "create" | "reuse", warnings }].' },
+    idMap: { type: 'object', description: 'Accumulated "type:name" → live id.' },
+    nextAction: { type: 'string' },
+    warnings: { type: 'array', items: { type: 'string' } },
+    blockers: { type: 'array', items: { type: 'string' } }
+  }),
+  description: `Deploy the content committed under the ACTIVE sandbox's subtree in the GitHub repo INTO the active AJO sandbox — i.e. make the repo's approved content live. This is "deploy_merged_changes, but for the whole subtree" and is the SAME-sandbox path (repo subtree "<active>/…" → the "<active>" sandbox); for cross-sandbox (dev → prod) use promote_assets instead.
+
+It applies assets directly (dependency order: fragments before the templates that embed them), re-resolving every reference by name/path in the sandbox (embeds → live fragment ids, folder path re-created, tags resolved/created, self-reference → ajo:SELF). Idempotent + dedup by name: an asset that already exists is REUSED (action "reused"), never duplicated, so re-running deploys nothing new. Absent assets are created.
+
+Writes DIRECTLY to the active sandbox (no new PR): the repo content on the default branch is already reviewed/merged, so applying it is a deployment, not a new change to gate — analogous to deploy_merged_changes. Still honors write access + the confirmation gate: the first non-dry-run call is held with WRITE_CONFIRMATION_REQUIRED until you confirm and re-invoke with confirmWrite: true. Use dryRun: true (or list_repo_assets / plan-less preview) to see what it would do first.
+
+Optional names[] filters to specific assets (their embedded fragments are pulled in automatically); omit to deploy the whole subtree. sourceRef selects a git ref (default: repo default branch).
+
+Example usage: { "confirmWrite": true } (whole subtree) or { "names": ["NV_BIS_Restock"], "dryRun": true }
+
+Returns: { success: true, sandbox, sourceRef, dryRun, deployed, idMap, nextAction, warnings, blockers }`,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  inputSchema: {
+    type: 'object' as const,
+    additionalProperties: false,
+    properties: {
+      names: { type: 'array' as const, items: { type: 'string' as const }, description: 'Optional: only deploy these asset names (embedded fragments are pulled in automatically). Omit to deploy the whole subtree.' },
+      sourceRef: { type: 'string' as const, description: 'Git ref (branch, tag, or commit sha) to read from. Defaults to the repo default branch (only merged/approved content).' },
+      dryRun: { type: 'boolean' as const, description: 'If true, validates and reports what would be created/reused without writing anything.' },
+      confirmWrite: { type: 'boolean' as const, description: 'Required for a real (non-dry-run) deploy. Leave unset and the server returns WRITE_CONFIRMATION_REQUIRED naming the sandbox; after the user confirms, re-invoke with confirmWrite: true. Never set without the user’s explicit confirmation.' }
+    }
+  }
+};
+
+export async function handleDeployRepoAssets(args: unknown) {
+  if (!isClientConfigured()) return notConfiguredError();
+  return withTelemetry('deploy_repo_assets', async () => {
+    const input = (args ?? {}) as { names?: string[]; sourceRef?: string; dryRun?: boolean; confirmWrite?: boolean };
+    const dryRun = input.dryRun === true;
+
+    // Read-only gate (self-enforced — deploy_repo_assets is not a standard write tool).
+    if (!dryRun && !getWritesAllowed()) {
+      return { success: false, error: { code: 'READ_ONLY_MODE', message: `Write operations are disabled (read-only mode), so deploy_repo_assets cannot write. Enable write access at ${UI_BASE_URL} and retry.` } };
+    }
+    if (!getConfiguredGitHubIntegration()) {
+      return { success: false, error: { code: 'GITHUB_NOT_CONFIGURED', message: `deploy_repo_assets reads content from the GitHub repo, so GitHub integration must be configured. Enable it on the setup page (${UI_BASE_URL}).` } };
+    }
+    const sandbox = getConfiguredSandboxName();
+    if (!sandbox) {
+      return { success: false, error: { code: 'VALIDATION_ERROR', message: 'No active sandbox configured.' } };
+    }
+
+    // Verify the credential can reach the active sandbox (fail fast, not mid-run).
+    const denied = await preflightTarget(sandbox);
+    if (denied) return { success: false, error: denied };
+
+    const selector: PromotionSelector = input.names?.length ? { names: input.names.map(n => n.trim()) } : {};
+
+    // Write confirmation: deploy writes directly to the active sandbox.
+    if (!dryRun && input.confirmWrite !== true) {
+      const org = getConfiguredOrgName();
+      const tenantId = getConfiguredTenantId();
+      const parts = [org ? `org "${org}"` : null, tenantId ? `tenant "_${tenantId}"` : null, `sandbox "${sandbox}"`].filter(Boolean).join(', ');
+      return {
+        success: false,
+        error: {
+          code: 'WRITE_CONFIRMATION_REQUIRED',
+          message: `Confirm deploying the repo's "${sandbox}" subtree into ${parts}. This writes the repo's already-merged content directly to the active sandbox (existing assets are reused, not duplicated). ` +
+            `Confirm with the user that "${sandbox}" is the intended sandbox, then re-invoke deploy_repo_assets with the same arguments plus "confirmWrite": true. Do not set confirmWrite without the user's explicit confirmation. Tip: run with dryRun: true first to preview.`
+        }
+      };
+    }
+
+    try {
+      const result = await deployRepoToSandbox(selector, sandbox, dryRun, input.sourceRef?.trim() || undefined);
+      return { success: result.blockers.length === 0, ...result };
+    } catch (err) {
+      return promotionError(err);
+    }
+  }, args);
 }
