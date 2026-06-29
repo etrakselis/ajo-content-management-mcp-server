@@ -635,10 +635,10 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     .config-change-notice.show { display: block; }
     .config-change-notice strong { font-weight: 700; }
+    .reset-notice .refresh-btn,
     .config-change-notice .dismiss-btn,
-    .client-restart-notice .dismiss-btn {
+    .client-restart-notice .refresh-btn {
       display: block;
-      margin-top: 10px;
       padding: 4px 12px;
       background: #E8E8E8;
       border: 1px solid #D0D0D0;
@@ -648,9 +648,14 @@ export const landingPageHtml = `<!DOCTYPE html>
       font-size: 12px;
       font-weight: 500;
       font-family: inherit;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
+    .config-change-notice .dismiss-btn,
+    .client-restart-notice .refresh-btn { margin-top: 10px; }
+    .reset-notice .refresh-btn:hover,
     .config-change-notice .dismiss-btn:hover,
-    .client-restart-notice .dismiss-btn:hover { background: #DADADA; }
+    .client-restart-notice .refresh-btn:hover { background: #DADADA; }
     .org-fallback-note {
       font-size: 12px;
       color: var(--adobe-warn);
@@ -683,7 +688,9 @@ export const landingPageHtml = `<!DOCTYPE html>
     .log-clear-btn { font-size: 10px; padding: 2px 8px; background: transparent; border: 1px solid #3a3a3a; border-radius: 4px; color: rgba(255,255,255,0.35); cursor: pointer; font-family: inherit; transition: border-color 0.15s, color 0.15s; }
     .log-clear-btn:hover { border-color: #555; color: rgba(255,255,255,0.7); }
     .log-output { height: 240px; overflow-y: auto; padding: 8px 14px; line-height: 1.7; }
+    .log-entry { padding: 1px 0; }
     .log-line { display: flex; gap: 8px; align-items: baseline; }
+    .log-detail { margin: 3px 0 7px 16px; padding: 7px 11px; background: rgba(255,255,255,0.03); border-left: 2px solid #333; border-radius: 3px; color: #8a9aa5; font-family: inherit; font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; overflow-x: hidden; }
     .log-ts { color: #444; flex-shrink: 0; font-size: 10px; }
     .log-level { flex-shrink: 0; font-size: 10px; font-weight: 700; min-width: 45px; }
     .log-level-info  { color: #4FC3F7; }
@@ -694,8 +701,8 @@ export const landingPageHtml = `<!DOCTYPE html>
     .log-placeholder { color: #444; font-size: 11px; font-style: italic; padding: 4px 0; }
     .log-output::-webkit-scrollbar { width: 4px; }
     .log-output::-webkit-scrollbar-track { background: transparent; }
-    .log-output::-webkit-scrollbar-thumb { background: rgba(250,15,0,0.4); border-radius: 2px; }
-    .log-output::-webkit-scrollbar-thumb:hover { background: rgba(250,15,0,0.7); }
+    .log-output::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+    .log-output::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
     .naming-section { padding-bottom: 20px; border-bottom: 1px solid var(--adobe-border); margin-bottom: 20px; }
     .naming-section:last-child { padding-bottom: 0; border-bottom: none; margin-bottom: 0; }
     .naming-editor-wrap { margin-top: 12px; }
@@ -796,11 +803,11 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     <div class="reset-notice" id="resetNotice">
       <span><strong>The MCP server was restarted</strong> and is no longer configured (this happens when the container is rebuilt or restarted). Re-upload your credentials and start the server again to reconnect.</span>
-      <button class="dismiss-btn" onclick="document.getElementById('resetNotice').classList.remove('show')">Dismiss</button>
+      <button class="refresh-btn" onclick="window.location.reload()">↻ Refresh page</button>
     </div>
     <div class="client-restart-notice" id="clientRestartNotice">
       <strong>Restart your MCP client.</strong> A client was connected when this server went down. Once you've restarted the server here, you must also restart your MCP client (Claude Desktop, Claude Code, Cursor, etc.) so it can reinitialize the connection — the previous session cannot be recovered automatically.
-      <button class="dismiss-btn" onclick="document.getElementById('clientRestartNotice').classList.remove('show')">Dismiss</button>
+      <button class="refresh-btn" onclick="window.location.reload()">↻ Refresh page</button>
     </div>
 
     <!-- Step 1: Credentials -->
@@ -1065,7 +1072,10 @@ export const landingPageHtml = `<!DOCTYPE html>
           <div class="log-viewer">
             <div class="log-viewer-header">
               <span class="log-viewer-title">Live Server Logs</span>
-              <button class="log-clear-btn" id="logClearBtn">Clear</button>
+              <div style="display:flex;gap:6px;">
+                <button class="log-clear-btn" id="logCopyBtn">Copy</button>
+                <button class="log-clear-btn" id="logClearBtn">Clear</button>
+              </div>
             </div>
             <div class="log-output" id="logOutput">
               <div class="log-placeholder">Log stream will appear here once the server is active.</div>
@@ -1999,14 +2009,39 @@ export const landingPageHtml = `<!DOCTYPE html>
         ? new Date(entry.timestamp).toLocaleTimeString('en-US', { hour12: false })
         : '';
       const level = (entry.level || 'info').toLowerCase();
+
+      // Everything beyond the standard fields is contextual metadata — tool
+      // input/output payloads, requestId, toolName, error details, etc. Render it
+      // as an indented JSON block so the user sees the full picture, not just the
+      // one-line message.
+      const extras = {};
+      let hasExtras = false;
+      Object.keys(entry).forEach(function (k) {
+        if (k !== 'level' && k !== 'message' && k !== 'timestamp') {
+          extras[k] = entry[k];
+          hasExtras = true;
+        }
+      });
+
+      const wrap = document.createElement('div');
+      wrap.className = 'log-entry';
       const line = document.createElement('div');
       line.className = 'log-line';
       line.innerHTML =
         \`<span class="log-ts">\${ts}</span>\` +
         \`<span class="log-level log-level-\${level}">[\${level.toUpperCase()}]</span>\` +
         \`<span class="log-msg">\${escapeHtml(entry.message || '')}</span>\`;
-      output.appendChild(line);
-      while (output.children.length > 500) output.removeChild(output.firstChild);
+      wrap.appendChild(line);
+
+      if (hasExtras) {
+        const detail = document.createElement('pre');
+        detail.className = 'log-detail';
+        detail.textContent = JSON.stringify(extras, null, 2);
+        wrap.appendChild(detail);
+      }
+
+      output.appendChild(wrap);
+      while (output.children.length > 600) output.removeChild(output.firstChild);
       if (logAutoScroll) output.scrollTop = output.scrollHeight;
     }
 
@@ -2036,6 +2071,27 @@ export const landingPageHtml = `<!DOCTYPE html>
     document.getElementById('logClearBtn').addEventListener('click', () => {
       const output = document.getElementById('logOutput');
       if (output) output.innerHTML = '';
+    });
+
+    document.getElementById('logCopyBtn').addEventListener('click', () => {
+      const output = document.getElementById('logOutput');
+      if (!output) return;
+      const text = Array.from(output.querySelectorAll('.log-entry'))
+        .map(entry => {
+          const ts  = entry.querySelector('.log-ts')?.textContent?.trim() || '';
+          const lvl = entry.querySelector('.log-level')?.textContent?.trim() || '';
+          const msg = entry.querySelector('.log-msg')?.textContent?.trim() || '';
+          const detail = entry.querySelector('.log-detail')?.textContent || '';
+          const head = [ts, lvl, msg].filter(Boolean).join(' ');
+          return detail.trim() ? head + '\\n' + detail : head;
+        })
+        .join('\\n');
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById('logCopyBtn');
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+      }).catch(() => {});
     });
   </script>
 </body>

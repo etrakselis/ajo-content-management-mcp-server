@@ -14,6 +14,7 @@ import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, 
 const TAG_HINT =
   `Tags classify business objects for discovery; tag categories group related tags into meaningful sets. ` +
   `A tag belongs to exactly one category (the "Uncategorized" category if none is given at create time). ` +
+  `Tags are ORG-SCOPED — shared across ALL sandboxes in the org (unlike folders, which are per-sandbox): the same tag id appears in every sandbox, and cross-sandbox promotion reuses it by name rather than creating a per-sandbox copy. ` +
   `Requires the Unified Tags/Folders API to be enabled on the credential's Developer Console project (else 403).`;
 
 // NOTE: tag CATEGORY mutation (create/update/delete) is intentionally NOT exposed by
@@ -33,7 +34,9 @@ function tagError(err: unknown) {
   e.message = e.message.replace(/\s*\(Stale etag:[\s\S]*?\)/, '').trimEnd();
   if (/associated tag count is not zero/i.test(e.message)) {
     e.message += ' This tag is still applied to content; remove it from every fragment/template that references it ' +
-      '(patch_content_fragment / patch_content_template, resending /tagIds without this tag) before deleting it.';
+      '(patch_content_fragment / patch_content_template, resending /tagIds without this tag) before deleting it. ' +
+      'NOTE: tags are org-scoped (shared across sandboxes), so this count includes PROMOTED COPIES in other sandboxes — ' +
+      'it stays non-zero until the tag is cleared from referencing content in every sandbox it was promoted to, not just the active one.';
   } else if (/not archived/i.test(e.message)) {
     e.message += ' AJO requires a tag to be archived before it can be deleted: call update_tag with archived: true first, ' +
       'then retry delete_tag (also make sure the tag is no longer applied to any content).';
@@ -82,7 +85,7 @@ export async function handleListTagCategories(args: unknown) {
     } catch (err) {
       return { success: false, error: tagError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── get_tag_category ────────────────────────────────────────────────────────
@@ -116,7 +119,7 @@ export async function handleGetTagCategory(args: unknown) {
     } catch (err) {
       return { success: false, error: tagError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── list_tags ─────────────────────────────────────────────────────────────────
@@ -147,7 +150,7 @@ export async function handleListTags(args: unknown) {
     } catch (err) {
       return { success: false, error: tagError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── create_tag ────────────────────────────────────────────────────────────────
@@ -189,7 +192,7 @@ export async function handleCreateTag(args: unknown) {
     } catch (err) {
       return { success: false, error: tagError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── get_tag ─────────────────────────────────────────────────────────────────
@@ -223,7 +226,7 @@ export async function handleGetTag(args: unknown) {
     } catch (err) {
       return { success: false, error: tagError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── update_tag ────────────────────────────────────────────────────────────────
@@ -278,7 +281,7 @@ export async function handleUpdateTag(args: unknown) {
     } catch (err) {
       return { success: false, error: tagError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── delete_tag ────────────────────────────────────────────────────────────────
@@ -290,9 +293,9 @@ export const deleteTagDefinition = {
   description: `Delete a tag. ⚠ Irreversible — confirm with the user first. (To keep a tag but hide it from active use, archive it via update_tag with archived: true instead.) ${TAG_HINT}
 
 PRECONDITIONS (AJO enforces these, returning errors otherwise):
-1. The tag must NOT be applied to any content — otherwise 403 "Associated Tag Count is not Zero". Remove it from the tagIds of every referencing fragment/template first (patch_content_fragment / patch_content_template, resending /tagIds without this tag).
-2. The tag must be ARCHIVED first — otherwise 409 "Tag is not archived". Call update_tag with archived: true, then delete.
-So the full teardown order is: clear associations → update_tag { archived: true } → delete_tag.
+1. The tag must NOT be applied to any content in ANY sandbox — otherwise 403 "Associated Tag Count is not Zero". Because tags are ORG-SCOPED (shared across sandboxes), the association count spans EVERY sandbox, including copies created by cross-sandbox promotion. So remove the tag from the tagIds of every referencing fragment/template in every sandbox it was promoted to — not just the active one — using patch_content_fragment / patch_content_template (resend /tagIds without this tag). (Clearing tagIds releases the association even on a later-archived fragment; an archived fragment with tagIds: [] does NOT block deletion — a lingering count almost always means a promoted copy in another sandbox still carries the tag.)
+2. The tag must be ARCHIVED first — otherwise 409 "Tag is not archived". Call update_tag with archived: true, then delete. (archived is also org-wide — archiving in one sandbox archives the shared tag everywhere.)
+So the full teardown order is: clear associations in EVERY sandbox → update_tag { archived: true } → delete_tag.
 
 Example usage: { "tagId": "8af14b1e-..." }
 
@@ -321,7 +324,7 @@ export async function handleDeleteTag(args: unknown) {
     } catch (err) {
       return { success: false, error: tagError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── validate_tags ─────────────────────────────────────────────────────────────
@@ -359,5 +362,5 @@ export async function handleValidateTags(args: unknown) {
     } catch (err) {
       return { success: false, error: tagError(err) };
     }
-  });
+  }, args);
 }

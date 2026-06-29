@@ -86,7 +86,7 @@ export async function handleGetPersonalizationSyntax(args?: unknown) {
         }
       };
     }
-  });
+  }, args);
 }
 
 // ─── get_personalization_guidance ─────────────────────────────────────────────
@@ -129,5 +129,5 @@ Returns: { success: true, guidance: "<full guidance text>" }`,
 export async function handleGetPersonalizationGuidance(_args?: unknown) {
   return withTelemetry('get_personalization_guidance', async () => {
     return { success: true, guidance: getPersonalizationGuidance() };
-  });
+  }, _args);
 }

@@ -401,15 +401,15 @@ export const TEMPLATE_OBJECT = {
 export const FRAGMENT_LIST = listSchemaOf(FRAGMENT_PROPS, 'content fragment');
 export const TEMPLATE_LIST = listSchemaOf(TEMPLATE_PROPS, 'content template');
 
-export async function withTelemetry<T>(toolName: string, fn: () => Promise<T>): Promise<T> {
+export async function withTelemetry<T>(toolName: string, fn: () => Promise<T>, input?: unknown): Promise<T> {
   const requestId = uuidv4();
   const log = createRequestLogger(requestId, toolName);
   const end = toolCallDuration.startTimer({ tool: toolName });
-  log.info(`Tool called: ${toolName}`);
+  log.info(`Tool called: ${toolName}`, ...(input !== undefined ? [{ input }] : []));
   try {
     const result = await fn();
     toolCallCounter.inc({ tool: toolName, status: 'success' });
-    log.info(`Tool succeeded: ${toolName}`);
+    log.info(`Tool succeeded: ${toolName}`, { output: result });
     return result;
   } catch (err) {
     toolCallCounter.inc({ tool: toolName, status: 'error' });

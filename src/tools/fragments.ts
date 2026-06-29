@@ -362,7 +362,7 @@ export async function handleListContentFragments(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── create_content_fragment ──────────────────────────────────────────────────
@@ -513,7 +513,7 @@ export async function handleCreateContentFragment(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── get_content_fragment ─────────────────────────────────────────────────────
@@ -561,7 +561,7 @@ export async function handleGetContentFragment(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── update_content_fragment ──────────────────────────────────────────────────
@@ -682,7 +682,7 @@ export async function handleUpdateContentFragment(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── patch_content_fragment ───────────────────────────────────────────────────
@@ -746,7 +746,7 @@ export async function handlePatchContentFragment(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── publish_content_fragment ────────────────────────────────────────────────
@@ -791,7 +791,7 @@ export async function handlePublishContentFragment(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── get_live_fragment ────────────────────────────────────────────────────────
@@ -834,7 +834,7 @@ export async function handleGetLiveFragment(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── get_fragment_publication_status ─────────────────────────────────────────
@@ -884,7 +884,7 @@ export async function handleGetFragmentPublicationStatus(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── archive_content_fragment ─────────────────────────────────────────────────
@@ -904,7 +904,7 @@ active library and can no longer be used in new campaigns or journeys.
 ⚠ Archiving does NOT clear the fragment's tag associations. An archived fragment still counts as an active
 association for its tags, so delete_tag on any of those tags fails with 403 "Associated Tag Count is not Zero".
 If you intend to delete the tags applied to this fragment, first patch the fragment to clear them
-(patch_content_fragment with { "op": "replace"/"add", "path": "/tagIds", "value": [] }) — before or after archiving.
+(patch_content_fragment with { "op": "replace"/"add", "path": "/tagIds", "value": [] }) — before or after archiving. NOTE: tags are ORG-SCOPED (shared across sandboxes), so if this fragment was promoted to other sandboxes the SAME tag is referenced by those promoted copies — clear it from them too (in each sandbox) before delete_tag will succeed; clearing it only here leaves the org-wide association count non-zero. (Clearing tagIds does release the association even after archiving — an archived fragment with tagIds: [] is not itself a blocker.)
 
 No etag is required. This operation bypasses optimistic locking (the internal GraphQL mutation
 accepts an empty etag), so no concurrent-modification check is performed. Confirm the fragment ID
@@ -937,5 +937,5 @@ export async function handleArchiveContentFragment(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }

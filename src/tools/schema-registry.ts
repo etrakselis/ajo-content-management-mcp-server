@@ -67,7 +67,7 @@ export async function handleListXdmSchemas(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── get_xdm_schema ────────────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ export async function handleGetXdmSchema(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── list_xdm_field_groups ──────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ export async function handleListXdmFieldGroups(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── get_xdm_field_group ─────────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ export async function handleGetXdmFieldGroup(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── list_xdm_union_schemas ──────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ export async function handleListXdmUnionSchemas(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── get_xdm_union_schema ─────────────────────────────────────────────────────────
@@ -255,5 +255,5 @@ export async function handleGetXdmUnionSchema(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }

@@ -164,7 +164,7 @@ export async function handleGetServerContext(_args?: unknown) {
         resources: RESOURCE_ACCESS_CATALOG
       }
     };
-  });
+  }, _args);
 }
 
 // ─── get_naming_convention ────────────────────────────────────────────────────
@@ -199,5 +199,5 @@ export async function handleGetNamingConvention(_args?: unknown) {
       return { success: true, enabled: false, rules: null };
     }
     return { success: true, enabled: true, rules: convention.markdown.trim() };
-  });
+  }, _args);
 }

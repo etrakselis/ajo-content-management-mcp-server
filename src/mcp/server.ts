@@ -325,12 +325,12 @@ const stripConfirmFlag = (args: unknown): unknown => {
 function confirmPropFor(toolName: string) {
   const always = isDestructiveTool(toolName) || isIrreversibleTool(toolName);
   const description = always
-    ? 'Confirmation gate for clients without MCP elicitation support. This operation is ' +
+    ? 'Out-of-band write confirmation (used when no elicitation dialog can be shown or answered). This operation is ' +
       'destructive/irreversible, so it is re-confirmed on EVERY call. Leave this unset on the first call — ' +
       'the server holds the write and returns a WRITE_CONFIRMATION_REQUIRED message naming the target ' +
       '(org, tenant, sandbox). Only after the user has explicitly confirmed, re-invoke the same tool with the ' +
       'same arguments plus confirmWrite: true. Never set this without the user’s confirmation.'
-    : 'Confirmation gate for clients without MCP elicitation support. The FIRST write to a given target ' +
+    : 'Out-of-band write confirmation (used when no elicitation dialog can be shown or answered). The FIRST write to a given target ' +
       '(sandbox) in a session is held: leave this unset and the server returns a WRITE_CONFIRMATION_REQUIRED ' +
       'message naming the target (org, tenant, sandbox); after the user confirms, re-invoke the same tool with ' +
       'the same arguments plus confirmWrite: true. Once that target has been confirmed in the session, later ' +
@@ -743,17 +743,28 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       (author ? `, acting on behalf of ${author}` : '') + '.' +
       (irreversible ? ' Publishing cannot be undone — AJO has no way to unpublish a fragment, and a fragment does NOT need to be published to be embedded in a template.' : '');
 
+    // ── Out-of-band confirmation escape hatch (works for ALL clients) ──
+    // confirmWrite: true means the model has already confirmed the target with the
+    // user. Honor it REGARDLESS of whether the client advertises elicitation. Some
+    // clients advertise the elicitation capability but cannot actually surface or
+    // answer an elicitInput dialog — it silently resolves to "decline" — which would
+    // otherwise leave destructive/irreversible ops (re-confirmed on EVERY call, so
+    // never clearable by a cached confirmation) PERMANENTLY blocked with no fallback.
+    // This check runs after pre-validation, so it never bypasses payload checks; the
+    // schema-level "never set without the user's confirmation" instruction governs use.
+    const confirmedFlag = !!args && typeof args === 'object' &&
+      (args as Record<string, unknown>)[CONFIRM_ARG] === true;
+    if (confirmedFlag) {
+      if (!alwaysConfirm) confirmedSandboxes.add(targetKey);
+      emitLog('info', `✓ ${toolName}: write confirmed for ${targetKey} (confirmWrite)`, sessionId);
+      return { proceed: true };
+    }
+
     // ── Clients without elicitation: confirm-and-retry gate ──
     // We can't show a dialog, so require the model to confirm the target with the
-    // user out-of-band and re-invoke the same tool with confirmWrite: true.
+    // user out-of-band and re-invoke the same tool with confirmWrite: true (handled
+    // by the escape hatch above).
     if (!server.getClientCapabilities()?.elicitation) {
-      const confirmed = !!args && typeof args === 'object' &&
-        (args as Record<string, unknown>)[CONFIRM_ARG] === true;
-      if (confirmed) {
-        if (!alwaysConfirm) confirmedSandboxes.add(targetKey);
-        emitLog('info', `✓ ${toolName}: write confirmed for ${targetKey} (confirm-and-retry)`, sessionId);
-        return { proceed: true };
-      }
       emitLog('info', `… ${toolName}: confirmation required for ${targetKey} (confirm-and-retry)`, sessionId);
       return {
         proceed: false,
@@ -799,7 +810,9 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
         proceed: false,
         code: 'WRITE_CANCELLED',
         message: `The user did not confirm "${toolName}" against ${targetParts}. The operation was NOT performed. ` +
-          `Do not retry unless the user explicitly asks for it again.`
+          `Do not retry unless the user explicitly asks for it again. If they do explicitly confirm — e.g. the ` +
+          `confirmation dialog could not be displayed or was dismissed in error — re-invoke "${toolName}" with the ` +
+          `same arguments plus "${CONFIRM_ARG}": true to proceed.`
       };
     } catch (err) {
       // Capability advertised but the elicitation failed — don't block the user.

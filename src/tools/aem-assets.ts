@@ -46,5 +46,5 @@ Returns: { success: true, instructions: "<full guide text>" }`,
 export async function handleGetAemImageEmbedInstructions(_args?: unknown) {
   return withTelemetry('get_aem_image_embed_instructions', async () => {
     return { success: true, instructions: getAemImageEmbedInstructions() };
-  });
+  }, _args);
 }

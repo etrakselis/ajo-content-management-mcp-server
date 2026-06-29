@@ -185,7 +185,7 @@ export async function handlePlanPromotion(args: unknown) {
     } catch (err) {
       return promotionError(err);
     }
-  });
+  }, args);
 }
 
 // ─── promote_assets ──────────────────────────────────────────────────────────────
@@ -293,7 +293,7 @@ export async function handlePromoteAssets(args: unknown) {
     } catch (err) {
       return promotionError(err);
     }
-  });
+  }, args);
 }
 
 // Reminder surfaced on every promote_assets response: promotion can write ONLY to the

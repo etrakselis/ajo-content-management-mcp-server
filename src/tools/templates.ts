@@ -187,7 +187,7 @@ export async function handleListContentTemplates(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── create_content_template ──────────────────────────────────────────────────
@@ -291,7 +291,7 @@ export async function handleCreateContentTemplate(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── get_content_template ─────────────────────────────────────────────────────
@@ -363,7 +363,7 @@ export async function handleGetContentTemplate(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── update_content_template ──────────────────────────────────────────────────
@@ -475,7 +475,7 @@ export async function handleUpdateContentTemplate(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── patch_content_template ───────────────────────────────────────────────────
@@ -540,7 +540,7 @@ export async function handlePatchContentTemplate(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── delete_content_template ──────────────────────────────────────────────────
@@ -578,5 +578,5 @@ export async function handleDeleteContentTemplate(args: unknown) {
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
-  });
+  }, args);
 }

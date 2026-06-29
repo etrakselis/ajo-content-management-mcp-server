@@ -107,7 +107,7 @@ export async function handleCreateFolder(args: unknown) {
     } catch (err) {
       return { success: false, error: folderError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── get_folder ────────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ export async function handleGetFolder(args: unknown) {
     } catch (err) {
       return { success: false, error: folderError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── update_folder ─────────────────────────────────────────────────────────────
@@ -185,7 +185,7 @@ export async function handleUpdateFolder(args: unknown) {
     } catch (err) {
       return { success: false, error: folderError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── delete_folder ─────────────────────────────────────────────────────────────
@@ -241,7 +241,7 @@ export async function handleDeleteFolder(args: unknown) {
         return { success: false, error: folderError(lastErr) };
       }
     }
-  });
+  }, args);
 }
 
 // ─── list_subfolders ─────────────────────────────────────────────────────────
@@ -275,7 +275,7 @@ export async function handleListSubfolders(args: unknown) {
     } catch (err) {
       return { success: false, error: folderError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── validate_folder ─────────────────────────────────────────────────────────
@@ -309,7 +309,7 @@ export async function handleValidateFolder(args: unknown) {
     } catch (err) {
       return { success: false, error: folderError(err) };
     }
-  });
+  }, args);
 }
 
 // ─── ensure_folder_path ──────────────────────────────────────────────────────
@@ -415,5 +415,5 @@ export async function handleEnsureFolderPath(args: unknown) {
     }
 
     return { success: true, leafFolderId: parentId!, path: levels };
-  });
+  }, args);
 }

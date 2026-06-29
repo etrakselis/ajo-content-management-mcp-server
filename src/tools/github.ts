@@ -94,7 +94,7 @@ export async function handleCheckPRStatus(args: unknown) {
       success: true,
       data: { ...status, readyToDeploy: status.merged }
     };
-  });
+  }, args);
 }
 
 // ─── deploy_merged_changes ────────────────────────────────────────────────────
@@ -228,5 +228,5 @@ export async function handleDeployMergedChanges(args: unknown) {
         }
       })
     };
-  });
+  }, args);
 }

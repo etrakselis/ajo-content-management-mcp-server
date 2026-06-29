@@ -43,5 +43,5 @@ Returns: { success: true, requirements: "<full spec text>" }`,
 export async function handleGetVisualDesignerRequirements(_args?: unknown) {
   return withTelemetry('get_visual_designer_requirements', async () => {
     return { success: true, requirements: getVisualDesignerRequirements() };
-  });
+  }, _args);
 }

@@ -168,6 +168,27 @@ describe('write-confirmation via elicitation', () => {
     expect(publishFragment).not.toHaveBeenCalled();
   });
 
+  test('confirmWrite:true is honored even when elicitation is advertised but the dialog declines (escape hatch)', async () => {
+    // Mirrors a client that advertises elicitation but cannot actually surface/answer
+    // the dialog (it resolves to decline). Without the escape hatch, this destructive
+    // op — re-confirmed every call — would be permanently blocked. confirmWrite:true
+    // short-circuits before elicitInput is even attempted.
+    const { client, elicitHandler } = await connectClient({
+      elicitation: true,
+      respond: () => ({ action: 'decline' as const })
+    });
+
+    const res = await client.callTool({
+      name: 'archive_content_fragment',
+      arguments: { fragmentId: UUID, confirmWrite: true }
+    }) as { isError?: boolean; structuredContent?: { success?: boolean } };
+
+    expect(elicitHandler).not.toHaveBeenCalled();
+    expect(archiveFragment).toHaveBeenCalledWith(UUID);
+    expect(res.isError).toBeUndefined();
+    expect(res.structuredContent?.success).toBe(true);
+  });
+
   test('non-destructive writes are confirmed once per sandbox per session', async () => {
     const { client, elicitHandler } = await connectClient({
       elicitation: true,
