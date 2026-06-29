@@ -707,7 +707,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       content: '▋';
       display: inline-block;
       margin-top: 2px;
-      color: #FFFFFF;
+      color: #4FC3F7;
       font-size: 12px;
       line-height: 1;
       animation: logBlink 1.1s step-end infinite;
