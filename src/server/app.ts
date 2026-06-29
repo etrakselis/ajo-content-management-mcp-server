@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
-import { tokenManager, acquireImsToken, AdobeCredentials } from '../auth/token-manager.js';
+import { tokenManager, acquireProbeToken, clearProbeTokenCache, AdobeCredentials } from '../auth/token-manager.js';
 import axios from 'axios';
 import { configureAdobeClient, resetAdobeClient, listTemplates, getConfiguredSandboxName, setConfiguredSandboxName, type NamingConventionConfig, type GitHubConfig } from '../adobe/client.js';
 import { testConnection as testGitHubConnection, getDefaultBranch } from '../github/client.js';
@@ -264,13 +264,47 @@ async function fetchSandboxes(
     }));
 }
 
+// The tenant namespace is org-wide and constant — identical across every sandbox
+// and stable for the life of the org. But the setup flow detects it up to three
+// times in a row (sandbox discovery → tenant probe → configure), each an extra
+// Schema Registry round-trip. Cache successful detections by IMS org so those
+// repeats are free. Keyed by org (not credentials) since two credential sets for
+// the same org resolve to the same namespace; never holds sensitive material.
+const tenantNamespaceCache = new Map<string, string>();
+
+/** Drop all cached tenant namespaces (e.g. on server deactivation). */
+export function clearTenantNamespaceCache(): void {
+  tenantNamespaceCache.clear();
+}
+
+/**
+ * Auto-detect the AEP tenant namespace, reusing a previously-detected value for
+ * the same IMS org. Only successful (non-empty) detections are cached, so a failed
+ * attempt (e.g. a transient 403) is retried on the next call rather than remembered.
+ */
+async function detectTenantNamespace(
+  accessToken: string,
+  apiKey: string,
+  imsOrg: string,
+  sandboxName: string
+): Promise<string | undefined> {
+  const cached = tenantNamespaceCache.get(imsOrg);
+  if (cached) {
+    logger.debug('Using cached tenant namespace', { tenantId: cached, imsOrg });
+    return cached;
+  }
+  const detected = await fetchTenantNamespace(accessToken, apiKey, imsOrg, sandboxName);
+  if (detected) tenantNamespaceCache.set(imsOrg, detected);
+  return detected;
+}
+
 /**
  * Attempt to auto-detect the AEP tenant namespace via the Schema Registry.
  * Non-fatal: returns undefined if detection isn't possible. Logs the HTTP
  * status/body of each attempt to make 403s (missing permission) distinguishable
  * from an empty sandbox.
  */
-async function detectTenantNamespace(
+async function fetchTenantNamespace(
   accessToken: string,
   apiKey: string,
   imsOrg: string,
@@ -582,7 +616,7 @@ export function createExpressApp(): express.Application {
     // clobber the credentials/cache an already-configured live MCP session depends on.
     let accessToken: string;
     try {
-      accessToken = (await acquireImsToken(creds)).accessToken;
+      accessToken = (await acquireProbeToken(creds)).accessToken;
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       logger.warn('Credential validation failed during list-sandboxes', { error: detail });
@@ -655,7 +689,7 @@ export function createExpressApp(): express.Application {
     // disturb an already-configured live MCP session.
     let accessToken: string;
     try {
-      accessToken = (await acquireImsToken(creds)).accessToken;
+      accessToken = (await acquireProbeToken(creds)).accessToken;
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       logger.warn('Credential validation failed during detect-tenant', { error: detail });
@@ -735,6 +769,13 @@ export function createExpressApp(): express.Application {
     // ── Step 1: validate credentials by acquiring an IMS token ────────────────
     let accessToken: string;
     try {
+      // Reuse the token already obtained while probing these same credentials
+      // (sandbox discovery / tenant detection moments ago) rather than hitting IMS
+      // again. acquireProbeToken returns a cached token when valid, or fetches once;
+      // priming the singleton means the live session adopts it and getToken() below
+      // is a cache hit. On bad creds this still throws and is handled identically.
+      const probe = await acquireProbeToken(creds);
+      tokenManager.primeToken(probe.accessToken, probe.expiresInSeconds);
       accessToken = await tokenManager.getToken();
     } catch (err) {
       tokenManager.reset();
@@ -942,6 +983,8 @@ export function createExpressApp(): express.Application {
 
   app.post('/api/deactivate', csrfGuard, (_req: Request, res: Response) => {
     tokenManager.reset();
+    clearProbeTokenCache();
+    clearTenantNamespaceCache();
     resetAdobeClient();
     logger.info('Server deactivated via UI');
     return res.json({ success: true });

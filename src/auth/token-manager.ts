@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { createHash } from 'crypto';
 import { logger, authRefreshCounter } from '../telemetry/index.js';
 
 export interface AdobeCredentials {
@@ -74,6 +75,75 @@ export async function acquireImsToken(
   }
 }
 
+// ─── Probe token cache ───────────────────────────────────────────────────────
+
+// The setup-time probe endpoints (sandbox discovery, tenant detection) and the
+// initial validation in /api/configure all authenticate the SAME freshly-uploaded
+// credentials within seconds of each other. They must not use the tokenManager
+// singleton (it serves the live MCP session and would be clobbered by probing
+// different creds), but re-hitting IMS for each is wasteful. This standalone cache,
+// keyed by a hash of the credential fields that determine the token, lets those
+// calls share one token until it nears expiry — without ever touching the singleton.
+interface ProbeEntry { accessToken: string; expiresAt: number; }
+const probeTokenCache = new Map<string, ProbeEntry>();
+const probeInflight = new Map<string, Promise<ProbeEntry>>();
+
+function probeKey(creds: AdobeCredentials): string {
+  const material = [
+    creds.API_KEY, creds.CLIENT_SECRET, creds.IMS, creds.IMS_ORG,
+    Array.isArray(creds.SCOPES) ? creds.SCOPES.join(',') : (creds.SCOPES || ''),
+    creds.ACCESS_TOKEN || ''
+  ].join('|');
+  // Hash so a credential secret is never used as (or exposed via) a map key.
+  return createHash('sha256').update(material).digest('hex');
+}
+
+/**
+ * Acquire an IMS token for uncommitted credentials, reusing a recently-fetched one
+ * for the same credentials when available. Backed by a process-local cache that is
+ * SEPARATE from the tokenManager singleton, so it can dedupe the setup-flow token
+ * fetches without any risk of disturbing an already-configured live session.
+ * Returns the REMAINING TTL so a caller can prime another cache accurately.
+ */
+export async function acquireProbeToken(
+  creds: AdobeCredentials
+): Promise<{ accessToken: string; expiresInSeconds?: number }> {
+  const key = probeKey(creds);
+  const now = Date.now();
+
+  // Opportunistically drop expired entries (the map only ever holds a handful).
+  for (const [k, v] of probeTokenCache) {
+    if (v.expiresAt <= now) probeTokenCache.delete(k);
+  }
+
+  const cached = probeTokenCache.get(key);
+  if (cached && cached.expiresAt - now > REFRESH_THRESHOLD_MS) {
+    return { accessToken: cached.accessToken, expiresInSeconds: Math.floor((cached.expiresAt - now) / 1000) };
+  }
+
+  // Coalesce concurrent probes for the same credentials onto one IMS call.
+  let inflight = probeInflight.get(key);
+  if (!inflight) {
+    inflight = (async () => {
+      const { accessToken, expiresInSeconds } = await acquireImsToken(creds);
+      const ttl = expiresInSeconds ? expiresInSeconds * 1000 : DEFAULT_TOKEN_TTL_MS;
+      const entry: ProbeEntry = { accessToken, expiresAt: Date.now() + ttl };
+      probeTokenCache.set(key, entry);
+      return entry;
+    })().finally(() => probeInflight.delete(key));
+    probeInflight.set(key, inflight);
+  }
+
+  const entry = await inflight;
+  return { accessToken: entry.accessToken, expiresInSeconds: Math.floor((entry.expiresAt - Date.now()) / 1000) };
+}
+
+/** Drop all cached probe tokens (e.g. on server deactivation). */
+export function clearProbeTokenCache(): void {
+  probeTokenCache.clear();
+  probeInflight.clear();
+}
+
 export class TokenManager {
   private cache: TokenCache | null = null;
   private credentials: AdobeCredentials | null = null;
@@ -94,6 +164,15 @@ export class TokenManager {
 
   isConfigured(): boolean {
     return this.credentials !== null;
+  }
+
+  // Seed the cache with a token already obtained for these credentials elsewhere
+  // (e.g. the setup-phase probe cache), so the first getToken() after configuring
+  // reuses it instead of making a redundant IMS call. No-op until credentials are set.
+  primeToken(accessToken: string, expiresInSeconds?: number): void {
+    if (!this.credentials) return;
+    const ttl = expiresInSeconds ? expiresInSeconds * 1000 : DEFAULT_TOKEN_TTL_MS;
+    this.cache = { accessToken, expiresAt: Date.now() + ttl };
   }
 
   async getToken(): Promise<string> {

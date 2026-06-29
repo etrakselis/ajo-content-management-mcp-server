@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { TokenManager } from '../../src/auth/token-manager';
+import { TokenManager, acquireProbeToken, clearProbeTokenCache } from '../../src/auth/token-manager';
 
 jest.mock('axios');
 jest.mock('../../src/telemetry/index', () => ({
@@ -173,5 +173,101 @@ describe('TokenManager', () => {
     expect(tm.getStatus().tokenCached).toBe(true);
     tm.clearCache();
     expect(tm.getStatus().tokenCached).toBe(false);
+  });
+
+  test('primeToken seeds the cache so getToken does not call IMS', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.post.mockClear();
+    tm.setCredentials({
+      CLIENT_SECRET: 'real-secret',
+      API_KEY: 'key',
+      TECHNICAL_ACCOUNT_ID: 'tech@acct',
+      IMS: 'ims-na1.adobelogin.com',
+      IMS_ORG: 'org@AdobeOrg'
+    });
+    tm.primeToken('primed-token', 3600);
+    const token = await tm.getToken();
+    expect(token).toBe('primed-token');
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
+  test('primeToken is a no-op before credentials are set', () => {
+    tm.primeToken('orphan-token', 3600);
+    expect(tm.getStatus().tokenCached).toBe(false);
+  });
+});
+
+describe('acquireProbeToken (scoped probe-token cache)', () => {
+  const creds = {
+    CLIENT_SECRET: 'real-secret',
+    API_KEY: 'key',
+    TECHNICAL_ACCOUNT_ID: 'tech@acct',
+    IMS: 'ims-na1.adobelogin.com',
+    IMS_ORG: 'org@AdobeOrg'
+  };
+
+  beforeEach(() => {
+    clearProbeTokenCache();
+    (axios as jest.Mocked<typeof axios>).post.mockReset();
+  });
+
+  test('fetches once then reuses the cached token for the same credentials', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.post.mockResolvedValue({ data: { access_token: 'probe-token-1', expires_in: 3600 } });
+
+    const a = await acquireProbeToken(creds);
+    const b = await acquireProbeToken(creds);
+
+    expect(a.accessToken).toBe('probe-token-1');
+    expect(b.accessToken).toBe('probe-token-1');
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+  });
+
+  test('coalesces concurrent calls onto a single IMS request', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.post.mockResolvedValue({ data: { access_token: 'probe-token-2', expires_in: 3600 } });
+
+    const [a, b, c] = await Promise.all([
+      acquireProbeToken(creds), acquireProbeToken(creds), acquireProbeToken(creds)
+    ]);
+
+    expect(a.accessToken).toBe('probe-token-2');
+    expect(b.accessToken).toBe('probe-token-2');
+    expect(c.accessToken).toBe('probe-token-2');
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+  });
+
+  test('different credentials are cached separately', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.post
+      .mockResolvedValueOnce({ data: { access_token: 'tok-A', expires_in: 3600 } })
+      .mockResolvedValueOnce({ data: { access_token: 'tok-B', expires_in: 3600 } });
+
+    const a = await acquireProbeToken(creds);
+    const b = await acquireProbeToken({ ...creds, CLIENT_SECRET: 'different-secret' });
+
+    expect(a.accessToken).toBe('tok-A');
+    expect(b.accessToken).toBe('tok-B');
+    expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+  });
+
+  test('clearProbeTokenCache forces a fresh fetch', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.post.mockResolvedValue({ data: { access_token: 'probe-token-3', expires_in: 3600 } });
+
+    await acquireProbeToken(creds);
+    clearProbeTokenCache();
+    await acquireProbeToken(creds);
+
+    expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+  });
+
+  test('returns the remaining TTL so callers can prime another cache', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.post.mockResolvedValue({ data: { access_token: 'probe-token-4', expires_in: 3600 } });
+
+    const { expiresInSeconds } = await acquireProbeToken(creds);
+    expect(expiresInSeconds).toBeGreaterThan(3500);
+    expect(expiresInSeconds).toBeLessThanOrEqual(3600);
   });
 });

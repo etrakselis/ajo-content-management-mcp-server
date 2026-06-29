@@ -1,6 +1,6 @@
 import request from 'supertest';
-import { createExpressApp } from '../../src/server/app';
-import { tokenManager, acquireImsToken } from '../../src/auth/token-manager';
+import { createExpressApp, clearTenantNamespaceCache } from '../../src/server/app';
+import { tokenManager, acquireProbeToken } from '../../src/auth/token-manager';
 import axios from 'axios';
 import { listTemplates } from '../../src/adobe/client';
 
@@ -61,7 +61,7 @@ jest.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
 }));
 
 jest.mock('../../src/telemetry/index', () => ({
-  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), child: () => ({ info: jest.fn(), error: jest.fn() }) },
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }) },
   metricsRegistry: { contentType: 'text/plain', metrics: jest.fn().mockResolvedValue('# metrics\n') },
   authRefreshCounter: { inc: jest.fn() },
   toolCallCounter: { inc: jest.fn() },
@@ -76,11 +76,14 @@ jest.mock('../../src/auth/token-manager', () => ({
     setCredentials: jest.fn(),
     getStatus: jest.fn().mockReturnValue({ configured: false, tokenCached: false }),
     getToken: jest.fn().mockResolvedValue('mock-token'),
+    primeToken: jest.fn(),
     reset: jest.fn()
   },
-  // The probe endpoints (/api/list-sandboxes, /api/detect-tenant) acquire a
-  // throwaway token via acquireImsToken instead of mutating the singleton.
-  acquireImsToken: jest.fn().mockResolvedValue({ accessToken: 'mock-token' })
+  // The probe endpoints (/api/list-sandboxes, /api/detect-tenant) and the initial
+  // validation in /api/configure acquire a token through the scoped probe cache
+  // (acquireProbeToken) instead of mutating the singleton.
+  acquireProbeToken: jest.fn().mockResolvedValue({ accessToken: 'mock-token', expiresInSeconds: 3600 }),
+  clearProbeTokenCache: jest.fn()
 }));
 
 jest.mock('../../src/adobe/client', () => ({
@@ -93,6 +96,13 @@ jest.mock('../../src/adobe/client', () => ({
 const app = createExpressApp();
 
 describe('Express App', () => {
+
+  // The tenant-namespace cache is module-level state that persists across requests
+  // (by design — it dedupes setup-flow detections). Clear it between tests so each
+  // starts fresh and the per-test axios.get mock sequences stay in sync.
+  beforeEach(() => {
+    clearTenantNamespaceCache();
+  });
 
   describe('GET /health', () => {
     test('returns 200 with status ok', async () => {
@@ -259,7 +269,7 @@ describe('Express App', () => {
     });
 
     test('returns 401 when token acquisition fails', async () => {
-      (acquireImsToken as jest.Mock).mockRejectedValueOnce(new Error('invalid_client'));
+      (acquireProbeToken as jest.Mock).mockRejectedValueOnce(new Error('invalid_client'));
       const res = await request(app).post('/api/detect-tenant').send({
         credentials: {
           values: [
@@ -292,6 +302,32 @@ describe('Express App', () => {
       expect(res.status).toBe(200);
       expect(res.body.tenantId).toBe('mycompany');
       expect(res.body.tenantNamespace).toBe('_mycompany');
+    });
+
+    test('caches the detected tenant namespace per org across requests', async () => {
+      // Isolate the call count to this test (mock.calls accumulates otherwise).
+      (axios.get as jest.Mock).mockReset();
+      (axios.get as jest.Mock).mockResolvedValue({ data: { tenantId: 'cachedco' } });
+      const body = {
+        credentials: {
+          values: [
+            { key: 'API_KEY', value: 'key', enabled: true },
+            { key: 'IMS_ORG', value: 'org@AdobeOrg', enabled: true },
+            { key: 'ACCESS_TOKEN', value: 'pre-supplied-token', enabled: true }
+          ],
+          name: 'Test'
+        },
+        sandboxName: 'my-sandbox'
+      };
+      const r1 = await request(app).post('/api/detect-tenant').send(body);
+      const r2 = await request(app).post('/api/detect-tenant').send(body);
+      expect(r1.body.tenantNamespace).toBe('_cachedco');
+      expect(r2.body.tenantNamespace).toBe('_cachedco');
+      // The Schema Registry /stats endpoint must be hit only once — the second
+      // request resolves from the org-keyed cache.
+      const statsCalls = (axios.get as jest.Mock).mock.calls
+        .filter(c => String(c[0]).includes('/schemaregistry/stats'));
+      expect(statsCalls.length).toBe(1);
     });
 
     test('falls back to /tenant/schemas when /stats fails', async () => {
@@ -525,9 +561,10 @@ describe('Express App', () => {
       expect(res.body.tenantNamespace).toBe('_acme');
     });
 
-    // Regression guard: the probe must validate credentials via a throwaway token
-    // (acquireImsToken) and never mutate the shared tokenManager singleton — doing so
-    // would clobber the credentials/cache an already-configured live MCP session uses.
+    // Regression guard: the probe must validate credentials via the scoped probe
+    // cache (acquireProbeToken) and never mutate the shared tokenManager singleton —
+    // doing so would clobber the credentials/cache an already-configured live MCP
+    // session uses.
     test('does not mutate the shared tokenManager singleton', async () => {
       (axios.get as jest.Mock).mockResolvedValueOnce({ data: { sandboxes: [] } });
       const setCredsBefore = (tokenManager.setCredentials as jest.Mock).mock.calls.length;
@@ -535,7 +572,7 @@ describe('Express App', () => {
       await request(app).post('/api/list-sandboxes').send(CREDS);
       expect((tokenManager.setCredentials as jest.Mock).mock.calls.length).toBe(setCredsBefore);
       expect((tokenManager.reset as jest.Mock).mock.calls.length).toBe(resetBefore);
-      expect(acquireImsToken as jest.Mock).toHaveBeenCalled();
+      expect(acquireProbeToken as jest.Mock).toHaveBeenCalled();
     });
 
     test('returns success with an empty list when no sandboxes are accessible', async () => {
@@ -547,7 +584,7 @@ describe('Express App', () => {
     });
 
     test('returns 401 with AUTH_FAILED when token acquisition fails', async () => {
-      (acquireImsToken as jest.Mock).mockRejectedValueOnce(new Error('invalid_client'));
+      (acquireProbeToken as jest.Mock).mockRejectedValueOnce(new Error('invalid_client'));
       const res = await request(app).post('/api/list-sandboxes').send(CREDS);
       expect(res.status).toBe(401);
       expect(res.body.code).toBe('AUTH_FAILED');
