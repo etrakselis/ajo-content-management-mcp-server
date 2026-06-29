@@ -1570,10 +1570,10 @@ export const landingPageHtml = `<!DOCTYPE html>
       if (newlyVisible) {
         const lastVisible = visibleSteps[visibleSteps.length - 1];
         setTimeout(() => (lastVisible || newlyVisible).scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
-        startWireLoop(newlyVisible);
+        if (!serverActive) startWireLoop(newlyVisible);
       } else if (newlyHidden) {
         const lastVisible = visibleSteps[visibleSteps.length - 1];
-        startWireLoop(lastVisible || null);
+        if (!serverActive) startWireLoop(lastVisible || null);
       }
     }
 
