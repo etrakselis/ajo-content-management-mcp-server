@@ -29,20 +29,24 @@ export interface AuditEntry {
   success: boolean;               // false for attempts the handler rejected
 }
 
-export function recordAudit(entry: AuditEntry): void {
+// Records the entry and returns a promise that resolves once the JSONL append has
+// settled. Callers fire-and-forget it (the content operation must not wait on the
+// audit write); tests can await the returned promise to assert the write happened.
+// The returned promise NEVER rejects — a file-write failure is logged and swallowed,
+// so an un-awaited call can't surface as an unhandledRejection.
+export function recordAudit(entry: AuditEntry): Promise<void> {
   const record = { timestamp: new Date().toISOString(), ...entry };
 
   // Mirror to the structured logger so it shows up alongside everything else.
   logger.info('AUDIT', record);
 
-  // Append to the JSONL file. Failures are non-fatal — auditing must never break
-  // the content operation it is recording.
-  try {
-    fs.appendFileSync(AUDIT_LOG_PATH, JSON.stringify(record) + '\n');
-  } catch (err) {
+  // Append to the JSONL file asynchronously so a slow disk never blocks the event
+  // loop on the content-write path. Failures are non-fatal — auditing must never
+  // break the content operation it is recording.
+  return fs.promises.appendFile(AUDIT_LOG_PATH, JSON.stringify(record) + '\n').catch((err) => {
     logger.warn('Failed to write audit log file', {
       error: err instanceof Error ? err.message : String(err),
       path: AUDIT_LOG_PATH
     });
-  }
+  });
 }

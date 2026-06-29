@@ -48,6 +48,12 @@ jest.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
           opts.onsessioninitialized(MOCK_SESSION_ID);
         }
         res.json({ ok: true });
+      }),
+      // Mirror the real SDK: close() fires onclose (the only place it fires, besides
+      // an explicit DELETE). The app's onclose deregisters the session + unsubscribes
+      // its listeners, so this is what the idle reaper relies on.
+      close: jest.fn(async () => {
+        if (typeof transport.onclose === 'function') (transport.onclose as () => void)();
       })
     };
     return transport;
@@ -622,6 +628,49 @@ describe('Express App', () => {
     test('GET /mcp with no session returns 400', async () => {
       const res = await request(app).get('/mcp');
       expect(res.status).toBe(400);
+    });
+  });
+
+  // The SDK fires transport.onclose only on an explicit DELETE, so a client that
+  // disconnects without one would leak its session + listeners. The /mcp handler
+  // sweeps idle, stream-less sessions on each request to reclaim them.
+  describe('idle HTTP-session reaper', () => {
+    const initBody = (clientName: string) => ({
+      jsonrpc: '2.0', method: 'initialize', id: 1,
+      params: { clientInfo: { name: clientName, version: '2.0.0' }, capabilities: {} }
+    });
+    const followUp = { jsonrpc: '2.0', method: 'tools/list', id: 2, params: {} };
+
+    test('reaps a session once it goes idle, but not while it is still active', async () => {
+      const prev = process.env.MCP_SESSION_IDLE_MS;
+      process.env.MCP_SESSION_IDLE_MS = '200'; // short idle window for the test
+      try {
+        // Fresh app so it reads the short idle window (the module-level `app` captured
+        // the default at import time).
+        const reaperApp = createExpressApp();
+
+        // 1) initialize → the mock assigns MOCK_SESSION_ID and the handler tracks it.
+        const init = await request(reaperApp).post('/mcp').send(initBody('ReaperClient'));
+        expect(init.status).toBe(200);
+
+        // 2) an immediate follow-up is well within the window → routed to the live
+        //    session (proves the sweep does NOT reap an active session).
+        const active = await request(reaperApp)
+          .post('/mcp').set('mcp-session-id', MOCK_SESSION_ID).send(followUp);
+        expect(active.status).toBe(200);
+        expect(active.body.ok).toBe(true);
+
+        // 3) let it sit idle past the window, then make another request. The sweep at
+        //    the top of this request closes the now-idle session (no open stream), so
+        //    the lookup misses and the client is told to reinitialize (404).
+        await new Promise(r => setTimeout(r, 350));
+        const reaped = await request(reaperApp)
+          .post('/mcp').set('mcp-session-id', MOCK_SESSION_ID).send(followUp);
+        expect(reaped.status).toBe(404);
+      } finally {
+        if (prev === undefined) delete process.env.MCP_SESSION_IDLE_MS;
+        else process.env.MCP_SESSION_IDLE_MS = prev;
+      }
     });
   });
 

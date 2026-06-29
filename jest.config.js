@@ -2,10 +2,10 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  globals: {
-    'ts-jest': {
-      tsconfig: '<rootDir>/tests/tsconfig.json'
-    }
+  // Pass the test tsconfig via the transform options (the `globals['ts-jest']` form
+  // is deprecated in ts-jest 29). Overrides the preset's default transform.
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', { tsconfig: '<rootDir>/tests/tsconfig.json' }]
   },
   roots: ['<rootDir>/tests'],
   testMatch: ['**/*.test.ts'],

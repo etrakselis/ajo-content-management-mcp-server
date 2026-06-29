@@ -21,6 +21,7 @@ jest.mock('../../src/adobe/client', () => ({
 jest.mock('../../src/adobe/unified-tags-client', () => ({
   createFolder: jest.fn(), getFolder: jest.fn(), updateFolder: jest.fn(),
   deleteFolder: jest.fn(), getSubfolders: jest.fn(), validateFolder: jest.fn(),
+  clearFolderPathCache: jest.fn(),
   listTagCategories: jest.fn(), getTagCategory: jest.fn(),
   listTags: jest.fn(), createTag: jest.fn(), getTag: jest.fn(),
   updateTag: jest.fn(), deleteTag: jest.fn(), validateTags: jest.fn()
@@ -84,11 +85,30 @@ describe('folder tools', () => {
     expect(m.updateFolder).toHaveBeenCalledWith('dataset', FOLDER_ID, [{ op: 'replace', path: '/name', value: 'Renamed' }]);
   });
 
+  test('update_folder invalidates the folder-path cache after a rename', async () => {
+    m.updateFolder.mockResolvedValue({ id: FOLDER_ID, name: 'Renamed' });
+    await handleUpdateFolder({ folderType: 'dataset', folderId: FOLDER_ID, name: 'Renamed' });
+    expect(m.clearFolderPathCache).toHaveBeenCalledTimes(1);
+  });
+
+  test('update_folder does NOT invalidate the cache when the rename fails', async () => {
+    m.updateFolder.mockRejectedValue(new Error('boom'));
+    const res = await handleUpdateFolder({ folderType: 'dataset', folderId: FOLDER_ID, name: 'Renamed' }) as Envelope;
+    expect(res.success).toBe(false);
+    expect(m.clearFolderPathCache).not.toHaveBeenCalled();
+  });
+
   test('delete_folder maps an upstream failure to an API_ERROR envelope', async () => {
     m.deleteFolder.mockRejectedValue(new Error('boom'));
     const res = await handleDeleteFolder({ folderType: 'dataset', folderId: FOLDER_ID }) as Envelope;
     expect(res.success).toBe(false);
     expect(res.error?.code).toBe('API_ERROR');
+  });
+
+  test('delete_folder invalidates the folder-path cache on success', async () => {
+    m.deleteFolder.mockResolvedValue({});
+    await handleDeleteFolder({ folderType: 'content-template', folderId: FOLDER_ID });
+    expect(m.clearFolderPathCache).toHaveBeenCalledTimes(1);
   });
 
   test('delete_folder coerces an empty-string body to an object (Issue B)', async () => {

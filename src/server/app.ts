@@ -971,23 +971,67 @@ export function createExpressApp(): express.Application {
   // Active Streamable HTTP sessions (stateful), keyed by MCP session ID. Each
   // client holds one session for its lifetime, so every request — including
   // tool calls that carry no clientInfo — is attributable to the right client.
-  const httpSessions = new Map<string, StreamableHTTPServerTransport>();
+  // We also track last-activity time and open-stream count so abandoned sessions
+  // can be reaped: the SDK fires transport.onclose ONLY on an explicit DELETE
+  // (verified against @modelcontextprotocol/sdk 1.29.0 — a dropped/cancelled SSE
+  // stream does not), so a client that disconnects without DELETE would otherwise
+  // leak its transport here AND the two change-listeners it registers, for the life
+  // of the process.
+  interface HttpSession {
+    transport: StreamableHTTPServerTransport;
+    lastActivityAt: number;
+    openStreams: number;
+  }
+  const httpSessions = new Map<string, HttpSession>();
+
+  // Reap a session this long after its last activity — but only when it holds no
+  // open SSE stream (an open stream means the client is still connected even while
+  // idle, so it must never be reaped). Override with MCP_SESSION_IDLE_MS.
+  const HTTP_SESSION_IDLE_MS = Number(process.env.MCP_SESSION_IDLE_MS) || 5 * 60_000;
+
+  // Close idle, stream-less sessions. transport.close() fires the onclose handler
+  // (set below), which removes the session and unsubscribes its listeners. Swept
+  // lazily at the top of each /mcp request rather than on a background timer — a
+  // setInterval would keep the event loop alive and leak across test runs, and the
+  // same lazy-prune pattern is already used for the connected-clients display.
+  // Collect first, then close, so we never mutate the map while iterating it.
+  function reapIdleHttpSessions(): void {
+    const now = Date.now();
+    const stale: string[] = [];
+    for (const [sid, s] of httpSessions) {
+      if (s.openStreams <= 0 && now - s.lastActivityAt > HTTP_SESSION_IDLE_MS) stale.push(sid);
+    }
+    for (const sid of stale) {
+      logger.info('Reaping idle MCP session', { sessionId: sid, transport: 'http' });
+      httpSessions.get(sid)?.transport.close().catch(() => {});
+    }
+  }
 
   app.all('/mcp', mcpSecurityGuard, mcpLimiter, async (req: Request, res: Response) => {
     try {
+      // Lazily sweep abandoned sessions before handling this request (see above).
+      reapIdleHttpSessions();
+
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
       // Existing session → mark activity and route to its transport.
       if (sessionId && httpSessions.has(sessionId)) {
-        const transport = httpSessions.get(sessionId)!;
+        const session = httpSessions.get(sessionId)!;
+        session.lastActivityAt = Date.now();
         touchSession(sessionId);
         if (req.method === 'GET') {
           // The standalone SSE stream stays open for the session; track it so an
-          // idle-but-connected client keeps showing, and refresh when it closes.
+          // idle-but-connected client keeps showing (and is never reaped), and
+          // refresh when it closes.
+          session.openStreams += 1;
           openSessionStream(sessionId);
-          res.on('close', () => closeSessionStream(sessionId));
+          res.on('close', () => {
+            session.openStreams = Math.max(0, session.openStreams - 1);
+            session.lastActivityAt = Date.now();
+            closeSessionStream(sessionId);
+          });
         }
-        await transport.handleRequest(req, res, req.body);
+        await session.transport.handleRequest(req, res, req.body);
         return;
       }
 
@@ -997,7 +1041,7 @@ export function createExpressApp(): express.Application {
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => uuidv4(),
           onsessioninitialized: (sid: string) => {
-            httpSessions.set(sid, transport);
+            httpSessions.set(sid, { transport, lastActivityAt: Date.now(), openStreams: 0 });
             if (initInfo.name) addSession(sid, initInfo.name, initInfo.version);
             logger.info('MCP session initialized', { sessionId: sid, client: initInfo.name, transport: 'http' });
           }

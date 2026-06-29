@@ -104,6 +104,16 @@ export const validateFolder = (folderType: string, folderId: string) =>
 // collide during cross-sandbox promotion.
 const folderPathCache = new Map<string, string[]>();
 
+// Drop every cached folder path. Called after any folder mutation (rename via
+// update_folder, delete via delete_folder): a rename keeps the same folderId but
+// changes that folder's name AND the path of every descendant, so a targeted
+// per-id eviction would miss the descendants. Folder mutations are rare and the
+// cache is cheap to rebuild, so clearing the whole map is the simplest correct
+// choice — it prevents a stale path from being committed as the GitHub directory.
+export function clearFolderPathCache(): void {
+  folderPathCache.clear();
+}
+
 export async function resolveAjoFolderSegments(folderType: string, folderId: string): Promise<string[]> {
   const cacheKey = `${effectiveSandbox()}:${folderType}:${folderId}`;
   if (folderPathCache.has(cacheKey)) return folderPathCache.get(cacheKey)!;

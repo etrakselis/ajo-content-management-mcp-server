@@ -1028,7 +1028,9 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
           : 'unknown';
         const resultData = (resultObj as { data?: { id?: unknown } })?.data;
         const resultId = resultObj?.id ?? (typeof resultData?.id === 'string' ? resultData.id : undefined);
-        recordAudit({
+        // Fire-and-forget: the audit append is async and self-contained (it never
+        // rejects — see recordAudit), so we don't await it on the tool-response path.
+        void recordAudit({
           action: name,
           authorEmail: getConfiguredAuthorEmail() ?? 'unknown',
           resourceType,

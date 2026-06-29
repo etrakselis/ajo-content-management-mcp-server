@@ -75,6 +75,37 @@ describe('folders', () => {
   });
 });
 
+describe('folder path cache', () => {
+  // Each case starts from a clean cache so a prior test's resolve can't satisfy it.
+  beforeEach(() => ut.clearFolderPathCache());
+
+  test('resolveAjoFolderSegments caches by sandbox+type+id (second call does not re-fetch)', async () => {
+    request.mockResolvedValue({ data: { name: 'Leaf', parentFolderId: null } });
+
+    const first = await ut.resolveAjoFolderSegments('fragment', 'fid-1');
+    expect(first).toEqual(['Leaf']);
+    const callsAfterFirst = request.mock.calls.length;
+
+    // Served from cache — no new HTTP request.
+    const second = await ut.resolveAjoFolderSegments('fragment', 'fid-1');
+    expect(second).toEqual(['Leaf']);
+    expect(request.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  test('clearFolderPathCache forces the next resolve to re-fetch (picks up a rename)', async () => {
+    request.mockResolvedValue({ data: { name: 'Old', parentFolderId: null } });
+    expect(await ut.resolveAjoFolderSegments('fragment', 'fid-2')).toEqual(['Old']);
+    const callsAfterFirst = request.mock.calls.length;
+
+    // Simulate a rename upstream, then invalidate the cache: the next resolve must
+    // re-fetch and return the NEW name rather than the stale cached one.
+    request.mockResolvedValue({ data: { name: 'New', parentFolderId: null } });
+    ut.clearFolderPathCache();
+    expect(await ut.resolveAjoFolderSegments('fragment', 'fid-2')).toEqual(['New']);
+    expect(request.mock.calls.length).toBe(callsAfterFirst + 1);
+  });
+});
+
 describe('tags + tag categories', () => {
   test('listTags maps sort/filter params to query params', async () => {
     await ut.listTags({ limit: 10, property: 'name', sortBy: 'name', sortOrder: 'asc', start: '5' });

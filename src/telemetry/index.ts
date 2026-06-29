@@ -1,6 +1,38 @@
 import winston from 'winston';
 import { Registry, Counter, Histogram, collectDefaultMetrics } from 'prom-client';
 
+// ─── Secret redaction ────────────────────────────────────────────────────────
+
+// Key names whose VALUE is a credential and must never be logged. `secret` and
+// `password` are matched as substrings so client_secret / clientSecret are covered;
+// `*token` (endsWith) covers access_token / accessToken / refreshToken WITHOUT
+// catching benign status keys like `tokenCached`. The bare set holds the rest.
+const SENSITIVE_KEY_NAMES = new Set(['authorization', 'pat']);
+function isSensitiveKey(key: string): boolean {
+  const k = key.toLowerCase();
+  return SENSITIVE_KEY_NAMES.has(k) || k.includes('secret') || k.includes('password') || k.endsWith('token');
+}
+
+// Recursively redact the value of any sensitive-looking key, at any nesting depth —
+// the previous scrub only checked top-level keys, so a credential tucked inside a
+// nested object (e.g. { config: { client_secret } }) leaked into the logs. Returns a
+// scrubbed COPY (never mutates the input). Error/Buffer/Date are returned as-is so
+// winston's own error formatting still works; cycles are guarded with a seen-set.
+export function redactSecrets<T>(value: T, seen: WeakSet<object> = new WeakSet()): T {
+  if (Array.isArray(value)) return value.map(v => redactSecrets(v, seen)) as unknown as T;
+  if (value && typeof value === 'object') {
+    if (value instanceof Error || value instanceof Date || Buffer.isBuffer(value)) return value;
+    if (seen.has(value)) return '[Circular]' as unknown as T;
+    seen.add(value);
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = isSensitiveKey(k) ? '[REDACTED]' : redactSecrets(v, seen);
+    }
+    return out as unknown as T;
+  }
+  return value;
+}
+
 // ─── Structured Logger ───────────────────────────────────────────────────────
 
 export const logger = winston.createLogger({
@@ -8,16 +40,19 @@ export const logger = winston.createLogger({
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.errors({ stack: false }),
-    winston.format.json(),
+    // Redact BEFORE json() so the masked values are what actually gets serialized
+    // (the prior order scrubbed after json() had already rendered the message).
+    // Start from a shallow spread so winston's Symbol-keyed fields (level/message)
+    // survive, then deep-redact each string-keyed value.
     winston.format((info) => {
-      // Scrub sensitive fields
-      const scrubKeys = ['token', 'access_token', 'client_secret', 'authorization', 'password', 'secret'];
-      const scrubbed = { ...info };
-      for (const key of scrubKeys) {
-        if (scrubbed[key]) scrubbed[key] = '[REDACTED]';
+      const seen = new WeakSet<object>();
+      const out = { ...info };
+      for (const [k, v] of Object.entries(out)) {
+        (out as Record<string, unknown>)[k] = isSensitiveKey(k) ? '[REDACTED]' : redactSecrets(v, seen);
       }
-      return scrubbed;
-    })()
+      return out;
+    })(),
+    winston.format.json()
   ),
   transports: [
     // All logs go to stderr — stdout is reserved for the STDIO MCP transport

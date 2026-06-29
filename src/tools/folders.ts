@@ -1,6 +1,7 @@
 import { buildError, isClientConfigured } from '../adobe/client.js';
 import {
-  createFolder, getFolder, updateFolder, deleteFolder, getSubfolders, validateFolder
+  createFolder, getFolder, updateFolder, deleteFolder, getSubfolders, validateFolder,
+  clearFolderPathCache
 } from '../adobe/unified-tags-client.js';
 import {
   CreateFolderSchema, GetFolderSchema, UpdateFolderSchema,
@@ -176,6 +177,10 @@ export async function handleUpdateFolder(args: unknown) {
       const { folderType, folderId, name } = parsed.data;
       // The API accepts a JSON-Patch array and supports only `replace /name`.
       const data = await updateFolder(folderType, folderId, [{ op: 'replace', path: '/name', value: name }]);
+      // The rename changes this folder's name (and every descendant's path), so any
+      // cached folder-path segments are now stale — drop them so the next GitHub-path
+      // resolution re-fetches the new name.
+      clearFolderPathCache();
       return { success: true, data };
     } catch (err) {
       return { success: false, error: folderError(err) };
@@ -221,6 +226,9 @@ export async function handleDeleteFolder(args: unknown) {
     for (let attempt = 0; ; attempt++) {
       try {
         const data = await deleteFolder(parsed.data.folderType, parsed.data.folderId);
+        // The folder (and its subtree) is gone, so any cached folder-path segments for
+        // this sandbox may now reference a deleted folder — drop them all.
+        clearFolderPathCache();
         // Coerce an empty/non-object body (an empty-body 200 surfaces as "") to {} so the
         // result matches the object-typed outputSchema — see handleDeleteTag.
         return { success: true, data: data && typeof data === 'object' ? data : {} };
