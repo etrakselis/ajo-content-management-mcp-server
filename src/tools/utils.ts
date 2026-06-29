@@ -109,6 +109,34 @@ export function encodedToolResultSize(envelope: unknown): number {
   return Buffer.byteLength(JSON.stringify(toolResult), 'utf8');
 }
 
+// Transport cap for a single MCP tool result. The SDK's hard limit is 1,048,576
+// bytes; we cap a bit under it for the JSON-RPC framing. A result over this is
+// rejected by the SDK as a bare "tool result is too large" the model can't branch
+// on — so any tool that can return a large passthrough payload (a fully-resolved
+// XDM schema, a full Visual Designer fragment/template document) short-circuits
+// with a structured RESPONSE_TOO_LARGE instead.
+export const RESPONSE_BYTE_CAP = 1_000_000; // headroom under the 1,048,576 hard cap + JSON-RPC wrapper
+
+// Return a structured RESPONSE_TOO_LARGE error envelope when `envelope` would
+// exceed the transport cap once MCP-encoded, or null when it fits. Measures the
+// ACTUAL encoded result size (see encodedToolResultSize) — not the raw object — so
+// the size it reports and the limit it cites are internally consistent. Pass the
+// exact `{ success: true, ... }` envelope the tool would otherwise return, and a
+// `recovery` sentence telling the caller how to get the data a smaller way.
+export function oversizeError(envelope: unknown, recovery: string) {
+  const bytes = encodedToolResultSize(envelope);
+  if (bytes <= RESPONSE_BYTE_CAP) return null;
+  const kb = Math.round(bytes / 1024);
+  return {
+    success: false as const,
+    error: {
+      code: 'RESPONSE_TOO_LARGE',
+      message: `The result serializes to ~${kb} KB as an MCP tool result, over the ~1 MB (1024 KB) limit. ${recovery}`,
+      details: { bytes }
+    }
+  };
+}
+
 // Scan a serialized content payload for fragment embeds and split them into
 // well-formed (a required ajo:/aem:/external: prefix + UUID) and malformed ones
 // (e.g. a bare UUID with no prefix). The embed mechanism is the Handlebars-style

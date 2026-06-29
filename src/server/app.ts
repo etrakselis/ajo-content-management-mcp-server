@@ -14,7 +14,7 @@ import { createMcpServer } from '../mcp/server.js';
 import { getConnectedClients, addSession, touchSession, openSessionStream, closeSessionStream, removeSession } from '../mcp/connected-clients.js';
 import { getWritesAllowed, setWritesAllowed, onWriteAccessChanged } from '../mcp/access-policy.js';
 import { onSandboxChanged, notifySandboxChanged } from '../mcp/sandbox-change.js';
-import { logger, metricsRegistry } from '../telemetry/index.js';
+import { logger, metricsRegistry, addLogSseClient, removeLogSseClient, getLogBuffer } from '../telemetry/index.js';
 import { landingPageHtml } from '../ui/landing.js';
 import { getDefaultNamingConvention } from '../ui/naming-convention-default.js';
 
@@ -959,6 +959,22 @@ export function createExpressApp(): express.Application {
   // the page detect a container restart (server state lost) and reset itself.
   app.get('/api/connected-clients', (_req, res) => {
     res.json({ configured: tokenManager.isConfigured(), writesAllowed: getWritesAllowed(), clients: getConnectedClients() });
+  });
+
+  // ─── Live Log Stream (SSE) ────────────────────────────────────────────────
+
+  app.get('/api/logs', (_req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    for (const entry of getLogBuffer()) {
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    }
+
+    addLogSseClient(res);
+    _req.on('close', () => { removeLogSseClient(res); res.end(); });
   });
 
   // ─── MCP HTTP Endpoint ────────────────────────────────────────────────────

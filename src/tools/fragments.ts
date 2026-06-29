@@ -9,7 +9,7 @@ import {
   UpdateFragmentSchema, PatchFragmentSchema, PublishFragmentSchema,
   GetLiveFragmentSchema, GetPublicationStatusSchema, ArchiveFragmentSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, malformedFragmentWarnings, scanSelfFragmentIds, normalizeMetadataPatches, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, oversizeError, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, malformedFragmentWarnings, scanSelfFragmentIds, normalizeMetadataPatches, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
 
 // Non-fatal advisories for a fragment write that still succeeds: Compatibility-mode
 // HTML (email html fragments) plus any prefix-less {{ fragment }} helper embeds in the body.
@@ -549,7 +549,15 @@ export async function handleGetContentFragment(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const result = await getFragment(parsed.data.fragmentId);
-      return { success: true, ...result };
+      // A full Visual Designer html fragment (full document, often duplicated across
+      // content + editorContext["wysiwyg-content"]) can exceed the ~1 MB transport
+      // cap. Short-circuit with a structured RESPONSE_TOO_LARGE instead of letting the
+      // SDK reject the whole result with a bare, un-branchable "too large".
+      const envelope = { success: true as const, ...result };
+      const tooBig = oversizeError(envelope,
+        'This is usually an oversized html fragment document. For an html fragment, get_live_fragment returns just the published inner content (no document shell), which is smaller and may fit; otherwise open the fragment directly in Adobe Journey Optimizer.');
+      if (tooBig) return tooBig;
+      return envelope;
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -564,26 +572,7 @@ export const updateContentFragmentDefinition = {
   outputSchema: buildOutputSchema({ etag: ETAG_FIELD, warnings: WARNINGS_FIELD }),
   description: `Replace a content fragment entirely (PUT). Use this when changing fragment content, type, or channels. To rename or move a fragment without touching its content, patch_content_fragment is lighter-weight.
 
-⚠ VISUAL EMAIL DESIGNER REQUIREMENT (type "html", channel "email"):
-  The HTML content must use AJO's native serialization format (acr-* class
-  namespace, structure/component catalog, required <head> with content-version
-  meta tag). Generic HTML will force the designer into Compatibility mode,
-  locking the user out of drag-and-drop editing. Call the
-  get_visual_designer_requirements tool to get the full mandatory spec BEFORE
-  constructing any HTML for this fragment type (it returns the exact
-  structure/component catalog and required <head> you must reproduce).
-
-⚠ EMBEDDING AEM IMAGES: if you add or change an image hosted in Adobe Experience
-  Manager (AEM), its <img> must carry the AJO media-library attributes
-  data-medialibrary-id, data-mediarepo-id, and data-medialibrary-source ("aem") or
-  it will not resolve. This server does NOT look those up — call
-  get_aem_image_embed_instructions for the procedure to resolve them via the
-  separate AEM MCP server BEFORE writing the <img> tag. (Preserve any existing
-  AEM image attributes verbatim when round-tripping content you are not changing.)
-
-PERSONALIZATION: if you are adding or changing {{ }} / {%= %} expressions, call get_personalization_syntax for the
-  AJO-native syntax (and discover-personalization-paths / list_xdm_field_groups for the real attribute paths) — never
-  invent functions or use JavaScript/Liquid/Jinja.
+AUTHORING RULES (identical to create_content_fragment — see that tool for the full detail): email html ("html"/"email") must be in AJO's native Visual Email Designer format or it opens in Compatibility mode — call get_visual_designer_requirements BEFORE writing any html. AEM-hosted images need the data-medialibrary-id / data-mediarepo-id / data-medialibrary-source ("aem") attributes — call get_aem_image_embed_instructions BEFORE adding or changing one. For {{ }} / {%= %} personalization, use get_personalization_syntax (syntax) and discover-personalization-paths / list_xdm_field_groups (real attribute paths) — never invent functions or use JavaScript/Liquid/Jinja. When round-tripping content you are NOT changing, copy any existing acr-* serialization and AEM image attributes through VERBATIM.
 
 ⚠ THIS IS A FULL REPLACE — THERE IS NO FIELD-LEVEL UPDATE. The AJO API has no way to patch a single content field
   (content, expression, …); PATCH only supports /name, /description, /parentFolderId. To change even ONE field you must
@@ -837,7 +826,11 @@ export async function handleGetLiveFragment(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const data = await getLiveFragment(parsed.data.fragmentId);
-      return { success: true, data };
+      const envelope = { success: true as const, data };
+      const tooBig = oversizeError(envelope,
+        'The published fragment content is too large to return through MCP. Open the fragment directly in Adobe Journey Optimizer.');
+      if (tooBig) return tooBig;
+      return envelope;
     } catch (err) {
       return { success: false, error: buildError(err) };
     }

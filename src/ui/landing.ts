@@ -677,6 +677,25 @@ export const landingPageHtml = `<!DOCTYPE html>
     .client-name { font-size: 14px; font-weight: 600; color: var(--adobe-dark); }
     .client-meta { margin-left: auto; font-size: 12px; color: var(--adobe-mid); font-family: 'SF Mono', 'Fira Code', monospace; }
     .clients-hint { font-size: 12px; color: var(--adobe-mid); margin-top: 14px; line-height: 1.5; }
+    .log-viewer { margin-top: 20px; background: #1a1a1a; border: 1px solid #2f2f2f; border-radius: 8px; overflow: hidden; font-family: 'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace; }
+    .log-viewer-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: #252525; border-bottom: 1px solid #333; }
+    .log-viewer-title { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.45); }
+    .log-clear-btn { font-size: 10px; padding: 2px 8px; background: transparent; border: 1px solid #3a3a3a; border-radius: 4px; color: rgba(255,255,255,0.35); cursor: pointer; font-family: inherit; transition: border-color 0.15s, color 0.15s; }
+    .log-clear-btn:hover { border-color: #555; color: rgba(255,255,255,0.7); }
+    .log-output { height: 240px; overflow-y: auto; padding: 8px 14px; line-height: 1.7; }
+    .log-line { display: flex; gap: 8px; align-items: baseline; }
+    .log-ts { color: #444; flex-shrink: 0; font-size: 10px; }
+    .log-level { flex-shrink: 0; font-size: 10px; font-weight: 700; min-width: 45px; }
+    .log-level-info  { color: #4FC3F7; }
+    .log-level-warn  { color: #FFB74D; }
+    .log-level-error { color: #EF5350; }
+    .log-level-debug { color: #555; }
+    .log-msg { color: #BDBDBD; font-size: 11px; word-break: break-word; }
+    .log-placeholder { color: #444; font-size: 11px; font-style: italic; padding: 4px 0; }
+    .log-output::-webkit-scrollbar { width: 4px; }
+    .log-output::-webkit-scrollbar-track { background: transparent; }
+    .log-output::-webkit-scrollbar-thumb { background: rgba(250,15,0,0.4); border-radius: 2px; }
+    .log-output::-webkit-scrollbar-thumb:hover { background: rgba(250,15,0,0.7); }
     .naming-section { padding-bottom: 20px; border-bottom: 1px solid var(--adobe-border); margin-bottom: 20px; }
     .naming-section:last-child { padding-bottom: 0; border-bottom: none; margin-bottom: 0; }
     .naming-editor-wrap { margin-top: 12px; }
@@ -763,7 +782,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       </div>
       <span class="setup-tracker-pct" id="setupPct">0%</span>
     </div>
-    <div class="header-active-badge" id="headerActiveBadge">
+    <div class="header-active-badge" id="headerActiveBadge" onclick="document.getElementById('statusPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' })" style="cursor:pointer;">
       <div class="status-dot"></div>
       <span class="header-active-badge-label">MCP Server Active</span>
     </div>
@@ -1043,6 +1062,15 @@ export const landingPageHtml = `<!DOCTYPE html>
             <div class="clients-empty"><span class="status-dot"></span> Waiting for an MCP client to connect…</div>
           </div>
           <p class="clients-hint">See the <a href="https://github.com/etrakselis/ajo_content_mgmt_mcp#client-connection-guide" target="_blank" rel="noopener noreferrer" style="color:var(--adobe-red);text-decoration:none;font-weight:600"><strong>README</strong></a> on GitHub for (Claude Code/Desktop, Cursor, Codex…) connection guide for per-client setup instructions.</p>
+          <div class="log-viewer">
+            <div class="log-viewer-header">
+              <span class="log-viewer-title">Live Server Logs</span>
+              <button class="log-clear-btn" id="logClearBtn">Clear</button>
+            </div>
+            <div class="log-output" id="logOutput">
+              <div class="log-placeholder">Log stream will appear here once the server is active.</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1241,6 +1269,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('step6').classList.remove('step-done', 'server-active');
       document.getElementById('headerActiveBadge').classList.remove('show');
       document.getElementById('setupTracker').style.display = '';
+      stopLogStream();
       activeSandbox = '';
       document.getElementById('clientRestartNotice').classList.remove('show');
       document.getElementById('configChangeNotice').classList.remove('show');
@@ -1722,6 +1751,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       document.getElementById('step6').classList.add('step-done', 'server-active');
       document.getElementById('setupTracker').style.display = 'none';
       document.getElementById('headerActiveBadge').classList.add('show');
+      startLogStream();
       if (hadConnectedClients) {
         document.getElementById('configChangeNotice').classList.add('show');
         hadConnectedClients = false;
@@ -1947,6 +1977,65 @@ export const landingPageHtml = `<!DOCTYPE html>
         const data = await postJson('/api/access-mode', { allowWrites: e.target.checked });
         if (data.success) setAccessModeDisplay(data.writesAllowed);
       } catch { /* will apply on next activation */ }
+    });
+
+    // ─── Live Log Stream ──────────────────────────────────────────────────────
+
+    let logEventSource = null;
+    let logAutoScroll = true;
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function appendLogEntry(entry) {
+      const output = document.getElementById('logOutput');
+      if (!output) return;
+      const placeholder = output.querySelector('.log-placeholder');
+      if (placeholder) placeholder.remove();
+      const ts = entry.timestamp
+        ? new Date(entry.timestamp).toLocaleTimeString('en-US', { hour12: false })
+        : '';
+      const level = (entry.level || 'info').toLowerCase();
+      const line = document.createElement('div');
+      line.className = 'log-line';
+      line.innerHTML =
+        \`<span class="log-ts">\${ts}</span>\` +
+        \`<span class="log-level log-level-\${level}">[\${level.toUpperCase()}]</span>\` +
+        \`<span class="log-msg">\${escapeHtml(entry.message || '')}</span>\`;
+      output.appendChild(line);
+      while (output.children.length > 500) output.removeChild(output.firstChild);
+      if (logAutoScroll) output.scrollTop = output.scrollHeight;
+    }
+
+    function startLogStream() {
+      if (logEventSource) return;
+      const output = document.getElementById('logOutput');
+      if (output) output.innerHTML = '<div class="log-placeholder">Connecting…</div>';
+      logEventSource = new EventSource('/api/logs');
+      logEventSource.onopen = () => {
+        const ph = document.getElementById('logOutput')?.querySelector('.log-placeholder');
+        if (ph) ph.textContent = 'Waiting for log entries…';
+      };
+      logEventSource.onmessage = (e) => {
+        try { appendLogEntry(JSON.parse(e.data)); } catch {}
+      };
+      logEventSource.onerror = () => {};
+      output?.addEventListener('scroll', () => {
+        const el = document.getElementById('logOutput');
+        if (el) logAutoScroll = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+      }, { passive: true });
+    }
+
+    function stopLogStream() {
+      if (logEventSource) { logEventSource.close(); logEventSource = null; }
+    }
+
+    document.getElementById('logClearBtn').addEventListener('click', () => {
+      const output = document.getElementById('logOutput');
+      if (output) output.innerHTML = '';
     });
   </script>
 </body>

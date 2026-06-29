@@ -6,6 +6,7 @@ import {
 import { getWritesAllowed } from '../mcp/access-policy.js';
 import type { ToolCatalogGroup } from '../mcp/tool-catalog.js';
 import { RESOURCE_ACCESS_CATALOG } from '../mcp/resources.js';
+import { getLastGitHubAuditStatus } from '../mcp/github-audit-status.js';
 import { notConfiguredError, withTelemetry, buildOutputSchema } from './utils.js';
 
 // The full tool catalog, injected once at server startup (server.ts derives it
@@ -77,15 +78,36 @@ export const getServerContextDefinition = {
               access: { type: 'string', description: 'How the model can obtain this content (a tool to call, or where it already appears).' }
             }
           }
+        },
+        githubIntegration: {
+          type: 'object',
+          description: 'Present only when GitHub integration is configured. Reports the active write mode without exposing the token.',
+          properties: {
+            enabled: { type: 'boolean' },
+            owner: { type: 'string' },
+            repo: { type: 'string' },
+            mode: { type: 'string', description: '"approval-gate" (writes become PRs for human review) or "audit-trail" (writes apply to AJO, then commit).' },
+            defaultBranch: { type: 'string' },
+            lastAuditSync: {
+              type: 'object',
+              description: 'Audit-trail mode only: outcome of the most recent fire-and-forget commit. ok: false means the AJO write succeeded but was NOT recorded in GitHub — tell the user. Absent until the first audit-trail write of the session.',
+              properties: {
+                at: { type: 'string', description: 'ISO-8601 timestamp of the commit attempt.' },
+                tool: { type: 'string', description: 'The write tool whose change was being recorded.' },
+                ok: { type: 'boolean', description: 'true if the commit succeeded.' },
+                error: { type: 'string', description: 'Short reason when ok is false.' }
+              }
+            }
+          }
         }
       }
     }
   }),
   description: `Return the identity, configuration, and full tool inventory for this MCP server. Call this to list all available tools, enumerate capabilities, discover what this server can do, or find a tool by name — it returns the complete catalog grouped by domain so you can select any tool by its exact name without relying on keyword search.
 
-Also returns: the author identity, AJO sandbox, tenant namespace, org name, whether write access is enabled, and whether the write-confirmation gate has already been cleared for this sandbox (writeConfirmed: true means non-destructive writes proceed immediately without a WRITE_CONFIRMATION_REQUIRED hold).
+Also returns: the author identity, AJO sandbox, tenant namespace, org name, whether write access is enabled, whether the write-confirmation gate has already been cleared for this sandbox (writeConfirmed: true means non-destructive writes proceed immediately without a WRITE_CONFIRMATION_REQUIRED hold), and — when GitHub integration is configured — its write mode plus, in audit-trail mode, the outcome of the last commit (githubIntegration.lastAuditSync; ok: false means an AJO write succeeded but was NOT recorded in GitHub).
 
-Use this to answer: "list all tools", "what tools are available?", "enumerate capabilities", "find a tool for X", "who is this server running as?", "which sandbox / tenant am I on?", "is write access on?", "has a write been confirmed yet?", "what resources are available and how do I read them?".
+Use this to answer: "list all tools", "what tools are available?", "enumerate capabilities", "find a tool for X", "who is this server running as?", "which sandbox / tenant am I on?", "is write access on?", "has a write been confirmed yet?", "did the last GitHub sync succeed?", "what resources are available and how do I read them?".
 
 Example usage: {}
 
@@ -109,6 +131,10 @@ export async function handleGetServerContext(_args?: unknown) {
     const orgName = getConfiguredOrgName()?.trim();
     const namingConvention = getConfiguredNamingConvention();
     const ghConfig = getConfiguredGitHubIntegration();
+    // Audit-trail mode commits to GitHub fire-and-forget (after the write returns), so
+    // surface the last commit outcome here — the reliable channel for the model to learn
+    // a commit failed (the warning otherwise only goes out as an MCP logging message).
+    const lastAuditSync = ghConfig && !ghConfig.requireApproval ? getLastGitHubAuditStatus() : null;
     return {
       success: true,
       data: {
@@ -130,7 +156,8 @@ export async function handleGetServerContext(_args?: unknown) {
             owner: ghConfig.owner,
             repo: ghConfig.repo,
             mode: ghConfig.requireApproval ? 'approval-gate' : 'audit-trail',
-            defaultBranch: ghConfig.defaultBranch
+            defaultBranch: ghConfig.defaultBranch,
+            ...(lastAuditSync ? { lastAuditSync } : {})
           }
         } : {}),
         tools: toolCatalog,

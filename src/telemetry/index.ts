@@ -1,4 +1,5 @@
 import winston from 'winston';
+import { Writable } from 'stream';
 import { Registry, Counter, Histogram, collectDefaultMetrics } from 'prom-client';
 
 // ─── Secret redaction ────────────────────────────────────────────────────────
@@ -33,6 +34,45 @@ export function redactSecrets<T>(value: T, seen: WeakSet<object> = new WeakSet()
   return value;
 }
 
+// ─── UI Log Buffer & SSE Broadcast ───────────────────────────────────────────
+
+interface LogEntry { timestamp?: string; level: string; message: string; [k: string]: unknown; }
+
+const LOG_BUFFER_SIZE = 300;
+const logBuffer: LogEntry[] = [];
+const logSseClients = new Set<{ write: (s: string) => boolean | void }>();
+
+function broadcastLog(entry: LogEntry): void {
+  if (!logSseClients.size) return;
+  const data = `data: ${JSON.stringify(entry)}\n\n`;
+  for (const client of logSseClients) {
+    try { client.write(data); } catch { logSseClients.delete(client); }
+  }
+}
+
+class UILogStream extends Writable {
+  _write(chunk: Buffer, _enc: BufferEncoding, cb: () => void): void {
+    try {
+      const raw = chunk.toString().trim();
+      if (raw) {
+        const entry: LogEntry = JSON.parse(raw);
+        logBuffer.push(entry);
+        if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
+        broadcastLog(entry);
+      }
+    } catch { /* non-JSON line – skip */ }
+    cb();
+  }
+}
+
+export function addLogSseClient(client: { write: (s: string) => boolean | void }): void {
+  logSseClients.add(client);
+}
+export function removeLogSseClient(client: { write: (s: string) => boolean | void }): void {
+  logSseClients.delete(client);
+}
+export function getLogBuffer(): LogEntry[] { return [...logBuffer]; }
+
 // ─── Structured Logger ───────────────────────────────────────────────────────
 
 export const logger = winston.createLogger({
@@ -62,6 +102,11 @@ export const logger = winston.createLogger({
         winston.format.colorize(),
         winston.format.simple()
       )
+    }),
+    // Mirror every log entry (JSON) into the in-memory buffer for the UI log viewer
+    new winston.transports.Stream({
+      stream: new UILogStream(),
+      format: winston.format.json()
     })
   ]
 });

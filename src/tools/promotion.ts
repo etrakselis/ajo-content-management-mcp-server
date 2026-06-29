@@ -6,11 +6,13 @@
 // GitHub/approval-gate preconditions, the read-only gate, and a TARGET-aware write
 // confirmation.
 //
-// These are deliberately NOT registered in WRITE_TOOLS: the server's dispatch-layer
-// approval gate and write-confirmation gate are single-sandbox (keyed on the
-// configured sandbox), but promotion writes to a DIFFERENT target sandbox per call.
-// So this tool enforces read-only access and confirms the target itself, and lets the
-// per-asset PRs it opens carry the approval gate.
+// These are deliberately NOT registered in WRITE_TOOLS: the dispatch-layer approval
+// gate would wrap the whole promote_assets call in a single PR, but promotion opens its
+// OWN per-asset PRs (and runs phased). So this tool self-enforces read-only access and
+// a target-aware write confirmation, and lets those per-asset PRs carry the approval
+// gate. The target sandbox is constrained to the server's ACTIVE (UI-selected) sandbox
+// — see resolveInputs — so the LLM is bounded by the UI selection here just like
+// everywhere else; promoting into a different sandbox requires reselecting it first.
 
 import {
   isClientConfigured, getConfiguredSandboxName, getConfiguredGitHubIntegration,
@@ -41,7 +43,7 @@ const ENTRY_SELECTOR_PROPS = {
   fragmentName: { type: 'string' as const, description: 'Promote this content fragment and any fragments it embeds.' },
   names: { type: 'array' as const, items: { type: 'string' as const }, description: 'Promote this explicit set of asset names (each resolved as a template and/or fragment in the repo source subtree).' },
   sourceSandbox: { type: 'string' as const, description: 'Which repo SUBTREE to read content from (e.g. "etrakselis-sandbox"), NOT a live AJO sandbox call. Defaults to the server\'s configured sandbox name.' },
-  targetSandbox: { type: 'string' as const, description: 'AJO sandbox to promote TO (required). The configured credential must have write access to it. This is the only AJO sandbox promotion contacts.' },
+  targetSandbox: { type: 'string' as const, description: 'AJO sandbox to promote TO (required). MUST be the sandbox currently selected in the MCP server UI — promotion can only write to the active sandbox, exactly like every other tool. A target that is not the active sandbox is rejected with TARGET_SANDBOX_NOT_ACTIVE; to promote into another sandbox, the user reselects it in the UI first. The configured credential must have write access to it.' },
   sourceRef: { type: 'string' as const, description: 'Optional git ref (branch, tag, or commit sha) to read source content from. Defaults to the repo\'s default branch, so only merged/approved content is promoted.' }
 };
 
@@ -66,6 +68,24 @@ function resolveInputs(
   const targetSandbox = input.targetSandbox?.trim();
   if (!targetSandbox) {
     return { ok: false, error: { code: 'VALIDATION_ERROR', message: 'targetSandbox is required.' } };
+  }
+  // The sandbox selected in the MCP server UI bounds EVERY operation the LLM can
+  // perform — promotion included. Promotion may therefore only write to the active
+  // sandbox; to promote INTO a different sandbox the user must first reselect it in the
+  // UI. (sourceSandbox is a repo SUBTREE, not a live sandbox, so this constrains only
+  // where writes land — never what you can promote FROM.) This makes "what the UI
+  // shows" the single source of truth for what the LLM can target, in every scenario.
+  const activeSandbox = getConfiguredSandboxName();
+  if (activeSandbox && targetSandbox !== activeSandbox) {
+    return {
+      ok: false,
+      error: {
+        code: 'TARGET_SANDBOX_NOT_ACTIVE',
+        message: `Promotion can only target the sandbox currently selected in the MCP server UI ("${activeSandbox}"), but targetSandbox is "${targetSandbox}". ` +
+          `This server restricts the LLM to the active sandbox for EVERY operation, promotion included. ` +
+          `To promote INTO "${targetSandbox}", first reselect it as the active sandbox at ${UI_BASE_URL}, then re-run with sourceSandbox set to the repo subtree you are promoting FROM (e.g. the dev sandbox).`
+      }
+    };
   }
   const sourceSandbox = input.sourceSandbox?.trim() || getConfiguredSandboxName() || '';
   if (!sourceSandbox) {
@@ -128,7 +148,7 @@ export const planPromotionDefinition = {
   }),
   description: `Build and return a read-only PLAN for promoting content fragments/templates into a TARGET AJO sandbox, WITHOUT writing anything.
 
-Content is read from the GitHub repo (the committed JSON under the source sandbox's subtree), NOT from a live source AJO sandbox — so this needs read access to the repo and the target sandbox only. Resolves the full dependency closure (templates → embedded fragments → nested fragments, matched by embed name), computes the phase order (leaf fragments first), and for each asset reports its repo path, target folder path, embeds (by name), and whether it already exists in the target (targetStatus: absent | present). Surfaces blockers before any write — a missing repo file (SOURCE_FILE_NOT_FOUND), an embed whose name has no repo file, or a malformed helper tag.
+Content is read from the GitHub repo (the committed JSON under the source sandbox's subtree), NOT from a live source AJO sandbox — so this needs read access to the repo and the target sandbox only. The target MUST be the sandbox currently selected in the MCP server UI (same restriction as promote_assets) — to plan a promotion into another sandbox, reselect it as the active sandbox first; otherwise this is rejected with TARGET_SANDBOX_NOT_ACTIVE. Resolves the full dependency closure (templates → embedded fragments → nested fragments, matched by embed name), computes the phase order (leaf fragments first), and for each asset reports its repo path, target folder path, embeds (by name), and whether it already exists in the target (targetStatus: absent | present). Surfaces blockers before any write — a missing repo file (SOURCE_FILE_NOT_FOUND), an embed whose name has no repo file, or a malformed helper tag.
 
 Call this first to preview a promotion. Then use promote_assets to execute it.
 
@@ -184,7 +204,7 @@ export const promoteAssetsDefinition = {
     validated: { type: 'array', items: { type: 'object' }, description: 'Dry-run only: per-asset validateOnly results [{ name, type, warnings }].' },
     idMap: { type: 'object', description: 'Accumulated "type:name" → target id for everything already live.' },
     nextAction: { type: 'string', description: 'What the human/LLM should do next.' },
-    targetSandboxNote: { type: 'string', description: 'Reminder that promotion writes to the target directly (no server sandbox switch needed). Relay to the user if relevant.' },
+    targetSandboxNote: { type: 'string', description: 'Reminder that promotion can only write to the active sandbox selected in the UI (targetSandbox must equal it). Relay to the user if relevant.' },
     warnings: { type: 'array', items: { type: 'string' } },
     blockers: { type: 'array', items: { type: 'string' } }
   }),
@@ -198,7 +218,7 @@ DO NOT call deploy_merged_changes yourself on promotion PRs — after merging, r
 
 [Cross-sandbox write] Promotion writes to the TARGET sandbox. The first non-dry-run call (and each subsequent phase) is held with WRITE_CONFIRMATION_REQUIRED until you confirm the target with the user and re-invoke with confirmWrite: true. Promoting to production should be confirmed deliberately every time.
 
-TARGET SANDBOX: promotion writes to "targetSandbox" directly via a per-call override — it does NOT use, and you do NOT need to switch, the MCP server's currently-configured sandbox (it stays on the source). If the user is unsure or thinks they must switch the server to the target first, reassure them they do not. Switching the server's active sandbox to the target (at the setup page) is only useful afterward, to browse or verify the promoted assets via other tools. Always confirm the target sandbox name with the user before writing — see the returned targetSandboxNote.
+TARGET SANDBOX = THE ACTIVE SANDBOX: promotion can only write to the sandbox currently selected in the MCP server UI. targetSandbox MUST equal the server's active sandbox, or the call is rejected with TARGET_SANDBOX_NOT_ACTIVE — the LLM is restricted to the active sandbox for promotion exactly as for every other tool. To promote INTO another sandbox (e.g. prod), the user must FIRST reselect it as the active sandbox at the setup page; then run promote_assets with targetSandbox = that sandbox and sourceSandbox pointing at the repo subtree you are promoting FROM (e.g. the dev sandbox). Always confirm the target sandbox name with the user before writing — see the returned targetSandboxNote.
 
 Use dryRun: true first (or plan_promotion) to validate without writing.
 
@@ -276,10 +296,10 @@ export async function handlePromoteAssets(args: unknown) {
   });
 }
 
-// Reminder surfaced on every promote_assets response: promotion writes to the target
-// via a per-call override, so the user does NOT switch the server's active sandbox to
-// promote — a common point of confusion. Switching is only useful afterward, to
-// browse/verify the promoted assets in subsequent tool calls.
+// Reminder surfaced on every promote_assets response: promotion can write ONLY to the
+// sandbox currently selected in the UI, so targetSandbox must equal it. To promote into
+// a different sandbox the user reselects it in the UI first — there is no per-call
+// cross-sandbox write; the UI selection bounds the LLM in every scenario.
 function targetSandboxNote(targetSandbox: string): string {
-  return `Note on the target sandbox: promotion writes directly to "${targetSandbox}" — you do NOT need to switch the MCP server's active sandbox to promote (the server stays on the source sandbox). Tell the user this if they ask about switching. Only switch the server's active sandbox to "${targetSandbox}" at ${UI_BASE_URL} when you later want to browse or verify the promoted assets via other tools.`;
+  return `Note on the target sandbox: promotion writes ONLY to the sandbox currently selected in the MCP server UI, and "${targetSandbox}" must be that active sandbox (the LLM is restricted to the active sandbox for promotion exactly as for every other tool). If a promotion is rejected with TARGET_SANDBOX_NOT_ACTIVE, ask the user to reselect "${targetSandbox}" as the active sandbox at ${UI_BASE_URL}, then retry.`;
 }

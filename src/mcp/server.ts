@@ -20,6 +20,7 @@ import { resolveAjoFolderPath } from '../adobe/unified-tags-client.js';
 import { recordClient, removeClient, TransportKind } from './connected-clients.js';
 import { getWritesAllowed, onWriteAccessChanged } from './access-policy.js';
 import { onSandboxChanged } from './sandbox-change.js';
+import { recordGitHubAuditStatus } from './github-audit-status.js';
 import { ALL_PROMPTS, getPromptMessages } from './prompts.js';
 import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_TEMPLATE_DESCRIPTORS, parseFragmentUri, parseTemplateUri, CHANNEL_REFERENCE_TEXT, ERROR_CODES_TEXT } from './resources.js';
 import { getVisualDesignerRequirements } from './visual-designer-requirements.js';
@@ -27,7 +28,7 @@ import { getAemImageEmbedInstructions } from './aem-asset-instructions.js';
 import { getPersonalizationGuidance } from './personalization-guidance.js';
 import { logger } from '../telemetry/index.js';
 import { recordAudit } from '../telemetry/audit.js';
-import { UI_BASE_URL } from '../tools/utils.js';
+import { UI_BASE_URL, RESPONSE_BYTE_CAP } from '../tools/utils.js';
 
 // Template tools
 import {
@@ -995,10 +996,20 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
           ajoFolderPath,
           ghTenant
         )).then((committed) => {
-          // Surface GitHub commit failures to the LLM so the user is informed even
-          // though the AJO write succeeded. committed === false means the try-catch
-          // inside commitAuditTrail fired; see server logs for the underlying error.
-          if (committed === false) {
+          // Record the outcome so get_server_context can surface a failure to the
+          // model on demand. This is the reliable channel: the emitLog below is only an
+          // MCP logging notification, which many clients never show the model — so a
+          // failed commit (AJO write succeeded but was NOT recorded in GitHub) would
+          // otherwise go unnoticed. committed === false means the try-catch inside
+          // commitAuditTrail fired; see server logs for the underlying error.
+          const ok = committed !== false;
+          recordGitHubAuditStatus({
+            at: new Date().toISOString(),
+            tool: name,
+            ok,
+            ...(ok ? {} : { error: 'commit failed — see server logs (verify the repo is initialized and the PAT has Contents write access)' })
+          });
+          if (!ok) {
             emitLog('warning',
               `⚠ GitHub audit trail: failed to commit "${name}" to ` +
               `${githubConfig.owner}/${githubConfig.repo} — ` +
@@ -1083,8 +1094,21 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
         const result = fragmentId !== null
           ? await getFragment(fragmentId)
           : await getTemplate(templateId as string);
+        const text = JSON.stringify(result, null, 2);
+        // Same ~1 MB transport cap as the get_* tools: a full Visual Designer document
+        // would otherwise be rejected by the SDK with a bare "result too large". Surface
+        // it as a clear McpError that names a smaller way to fetch the content.
+        const bytes = Buffer.byteLength(text, 'utf8');
+        if (bytes > RESPONSE_BYTE_CAP) {
+          const kb = Math.round(bytes / 1024);
+          throw new McpError(ErrorCode.InvalidParams,
+            `RESPONSE_TOO_LARGE: this ${fragmentId !== null ? 'fragment' : 'template'} serializes to ~${kb} KB, over the ~1 MB MCP result limit. ` +
+            (fragmentId !== null
+              ? 'For an html fragment, the get_live_fragment tool returns only the published inner content (smaller); otherwise open it in Adobe Journey Optimizer.'
+              : 'Open it directly in Adobe Journey Optimizer.'));
+        }
         return {
-          contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(result, null, 2) }]
+          contents: [{ uri, mimeType: 'application/json', text }]
         };
       } catch (err) {
         const e = buildError(err);

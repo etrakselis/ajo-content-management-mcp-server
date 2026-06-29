@@ -7,7 +7,7 @@ import {
   ListTemplatesSchema, CreateTemplateSchema, GetTemplateSchema,
   UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, scanFragmentEmbeds, malformedFragmentWarnings, normalizeMetadataPatches, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, oversizeError, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, scanFragmentEmbeds, malformedFragmentWarnings, normalizeMetadataPatches, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
 
 // Pull the email HTML out of a template payload for the native-format check. The
 // "content" shape carries it at template.html.body (an object); the legacy "html"
@@ -347,12 +347,19 @@ export async function handleGetContentTemplate(args: unknown) {
     try {
       const result = await getTemplate(parsed.data.templateId);
       const { embedded, malformed } = scanFragmentEmbeds(result.data);
-      return {
-        success: true,
+      // A full Visual Designer html body can exceed the ~1 MB transport cap; return a
+      // structured RESPONSE_TOO_LARGE rather than letting the SDK reject the whole
+      // result with a bare, un-branchable "too large".
+      const envelope = {
+        success: true as const,
         ...result,
         embeddedFragments: embedded,
         ...(malformed.length ? { invalidFragmentReferences: malformed } : {})
       };
+      const tooBig = oversizeError(envelope,
+        'This is usually an oversized html template body. Open the template directly in Adobe Journey Optimizer; list_content_templates still returns its metadata.');
+      if (tooBig) return tooBig;
+      return envelope;
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -373,7 +380,7 @@ The per-channel "template" shape is documented in full on the "template" paramet
 
 ⚠ EMAIL HTML → VISUAL EMAIL DESIGNER: email HTML must be in AJO's native serialization format or it opens in Compatibility mode (drag-and-drop editing lost). Call get_visual_designer_requirements BEFORE writing any email HTML.
 
-⚠ EMBEDDING AEM IMAGES: if you add or change an image hosted in Adobe Experience Manager (AEM), its <img> must carry the AJO media-library attributes data-medialibrary-id, data-mediarepo-id, and data-medialibrary-source ("aem") or it will not resolve. This server does NOT look those up — call get_aem_image_embed_instructions for the procedure to resolve them via the separate AEM MCP server BEFORE writing the <img> tag. (Preserve any existing AEM image attributes verbatim when round-tripping content you are not changing.)
+⚠ EMBEDDING AEM IMAGES: an AEM-hosted <img> needs the data-medialibrary-id / data-mediarepo-id / data-medialibrary-source ("aem") attributes or it won't resolve — call get_aem_image_embed_instructions BEFORE adding or changing one (see create_content_template for the full procedure). Preserve any existing AEM image attributes verbatim when round-tripping content you are not changing.
 
 ${FRAGMENT_EMBED_NOTE}
 

@@ -678,9 +678,9 @@ AJO's export-only `<meta name="acr-content-status">` tag is stripped (AJO reject
 
 ### Single sandbox, one credential
 
-The IMS/OAuth credential is org/tenant-scoped, not sandbox-scoped. Because content comes from the repo, promotion only ever calls the **target** sandbox — `promote_assets` runs a preflight read against the target and fails fast with a clear permissions error if the credential can't reach it. `sourceSandbox` is just **which repo subtree to read** (it defaults to the server's configured sandbox name); it is never an AJO call.
+The IMS/OAuth credential is org/tenant-scoped, not sandbox-scoped. Because content comes from the repo, promotion only ever calls the **target** sandbox — `promote_assets` runs a preflight read against the target and fails fast with a clear permissions error if the credential can't reach it. `sourceSandbox` is just **which repo subtree to read** (it defaults to the server's configured sandbox name — so when the server is pointed at the target, pass `sourceSandbox` explicitly to name the dev subtree); it is never an AJO call.
 
-> **You do not switch the server's sandbox to promote.** Promotion targets `targetSandbox` directly via a per-call override; the MCP server's configured sandbox is irrelevant to where content lands. Switching the server's active sandbox to the target at `http://localhost:3000` is only useful **afterward**, to browse or verify the promoted assets with the other tools. Every `promote_assets` response includes a `targetSandboxNote` restating this.
+> **Promotion targets the active sandbox only — switch the server to the target first.** `targetSandbox` MUST be the sandbox currently selected in the server UI; the LLM is restricted to the active sandbox for promotion exactly as for every other operation. A target that isn't the active sandbox is rejected with `TARGET_SANDBOX_NOT_ACTIVE`. So to promote **into** prod: reselect prod as the active sandbox at `http://localhost:3000`, then run `promote_assets` with `targetSandbox: "prod"` and `sourceSandbox` pointing at the dev repo subtree. This guarantees that what the UI shows is the only sandbox the LLM can write to, in every scenario. Every `promote_assets` response includes a `targetSandboxNote` restating this.
 
 ### Prerequisites
 
