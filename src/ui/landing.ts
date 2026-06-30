@@ -15,6 +15,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       --adobe-success: #268E6C;
       --adobe-warn: #E68619;
       --surface: #FFFFFF;
+      --btn-neutral: #4A4A4A;   /* filled neutral button (e.g. Deactivate Server) */
       --font-display: 'Adobe Clean', 'Inter', system-ui, sans-serif;
       /* Let the browser render native controls (the sandbox <select>, scrollbars,
          autofill) in the user's preferred scheme. */
@@ -33,10 +34,15 @@ export const landingPageHtml = `<!DOCTYPE html>
         --adobe-light: #161719;  /* page background */
         --adobe-border: #34353A; /* borders / dividers */
         --surface: #232427;      /* cards / panels (elevated above the page) */
+        --btn-neutral: #3E4045;  /* darker than the light-grey it'd otherwise be */
         --adobe-success: #34D399;
         --adobe-warn: #F5A623;
         /* --adobe-red stays #FA0F00 — vivid enough on a dark backdrop */
       }
+      /* Secondary/outline buttons (Upload .md, Test connection, Copy, Replace) hardcode
+         a white face — too bright on dark. Sink them just below the card surface so
+         they still read as raised, tappable controls. */
+      .upload-md-btn, .copy-btn, .replace-btn { background: #1B1C1F; }
       /* Inputs use a faint tint that assumes a white card — give them a visible
          dark fill and light text, and fix autofill's forced light background. */
       input[type="text"], input[type="email"] {
@@ -822,7 +828,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     .upload-md-btn {
       padding: 4px 10px;
       border: 1px solid var(--adobe-border);
-      background: white;
+      background: var(--surface);
       border-radius: 4px;
       font-size: 12px;
       cursor: pointer;
@@ -1873,7 +1879,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       startBtn.disabled = false;
       startBtn.classList.add('btn-breathing');
       startBtn.innerHTML = 'Deactivate Server';
-      startBtn.style.background = 'var(--adobe-mid)';
+      startBtn.style.background = 'var(--btn-neutral)';
     }
 
 
