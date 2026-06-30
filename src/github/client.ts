@@ -176,6 +176,18 @@ export async function createPullRequest(
   }) as Promise<{ number: number; html_url: string }>;
 }
 
+// Update an existing PR's title and/or body (PATCH /pulls/{n}). Used when an open PR is
+// reused for a same-asset write so its title/body reflect the LATEST operation.
+export async function updatePullRequest(
+  token: string, owner: string, repo: string, prNumber: number,
+  fields: { title?: string; body?: string }
+): Promise<void> {
+  await ghRequest(token, `/repos/${owner}/${repo}/pulls/${prNumber}`, {
+    method: 'PATCH',
+    body: JSON.stringify(fields)
+  });
+}
+
 export interface GHPullRequest {
   number: number;
   state: string;

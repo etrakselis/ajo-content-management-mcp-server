@@ -657,6 +657,10 @@ This file lands at `my-sandbox/content-fragments/NV/BIS/Wishlist/NV_BIS_Wishlist
 3. **Deploy the merged change** — ask the LLM: *"Deploy the changes from [PR URL]."* It calls `deploy_merged_changes`, which reads the merged payload, strips `_meta`, and calls the original tool to write to AJO. The write goes through the normal audit trail and confirmation gate.
 4. **Check status** — at any point you can ask: *"What is the status of [PR URL]?"* The `check_pr_status` tool returns whether the PR is open, merged, or closed.
 
+**One open PR per asset (no duplicates).** PR creation is hardened against the two ways a duplicate could otherwise appear:
+- **Retry after a transient error.** `POST /pulls` isn't idempotent — a token/permission blip (which GitHub often returns as `404 Not Found`) or a dropped response can make the call throw *after* the PR was actually created, which would make the LLM retry and open a second PR. The server now checks whether a PR already exists on the just-created head branch and recovers it instead of reporting failure.
+- **Genuine double-calls.** If the LLM writes to the same asset again while a PR for it is still **open**, the server commits the new payload onto that PR's branch and returns the same PR (updating it in place) rather than opening a second one. It matches by the canonical file the open PR changed; once that PR is merged or closed, the next write opens a fresh PR. (Promotion PRs manage their own lifecycle and are exempt.)
+
 ### Example prompts for GitHub integration
 
 > "What's the status of the PR at [PR URL]?"

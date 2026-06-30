@@ -16,6 +16,60 @@ export const landingPageHtml = `<!DOCTYPE html>
       --adobe-warn: #E68619;
       --surface: #FFFFFF;
       --font-display: 'Adobe Clean', 'Inter', system-ui, sans-serif;
+      /* Let the browser render native controls (the sandbox <select>, scrollbars,
+         autofill) in the user's preferred scheme. */
+      color-scheme: light dark;
+    }
+
+    /* ─── Dark theme ─────────────────────────────────────────────────────────
+       Follows the OS/browser preference automatically. Most of the UI adapts just
+       by re-pointing the palette variables; the header, hero terminal and log
+       viewer are already dark, so they're untouched. The rules below patch the few
+       spots that hardcode a light color or assume a light backdrop. */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --adobe-dark: #ECECEC;   /* primary text */
+        --adobe-mid: #9AA0A6;    /* secondary text */
+        --adobe-light: #161719;  /* page background */
+        --adobe-border: #34353A; /* borders / dividers */
+        --surface: #232427;      /* cards / panels (elevated above the page) */
+        --adobe-success: #34D399;
+        --adobe-warn: #F5A623;
+        /* --adobe-red stays #FA0F00 — vivid enough on a dark backdrop */
+      }
+      /* Inputs use a faint tint that assumes a white card — give them a visible
+         dark fill and light text, and fix autofill's forced light background. */
+      input[type="text"], input[type="email"] {
+        background: rgba(255,255,255,0.05);
+        color: var(--adobe-dark);
+      }
+      input:-webkit-autofill,
+      input:-webkit-autofill:hover,
+      input:-webkit-autofill:focus {
+        -webkit-box-shadow: 0 0 0px 1000px #2A2B2E inset;
+        box-shadow: 0 0 0px 1000px #2A2B2E inset;
+        -webkit-text-fill-color: var(--adobe-dark);
+      }
+      /* The light-grey notice buttons read as glaring chips on dark — tone them down. */
+      .reset-notice .refresh-btn,
+      .config-change-notice .dismiss-btn,
+      .client-restart-notice .refresh-btn {
+        background: rgba(255,255,255,0.1);
+        border-color: rgba(255,255,255,0.18);
+        color: #D6D6D6;
+      }
+      .reset-notice .refresh-btn:hover,
+      .config-change-notice .dismiss-btn:hover,
+      .client-restart-notice .refresh-btn:hover { background: rgba(255,255,255,0.16); }
+      /* Dark-red notice/error text needs lifting for contrast on a dark backdrop. */
+      .client-restart-notice,
+      .config-change-notice,
+      .error-msg { color: #F87171; }
+      /* Hairline rule drawn in near-black — invisible on dark. */
+      .tenant-banner-sub { border-top-color: rgba(255,255,255,0.08); }
+      /* Black drop-shadows vanish on dark; deepen them so cards still read as raised. */
+      .card { box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+      .card:hover { box-shadow: -14px 6px 28px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.45); }
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -547,7 +601,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       margin-left: auto;
       padding: 4px 10px;
       border: 1px solid var(--adobe-border);
-      background: white;
+      background: var(--surface);
       border-radius: 4px;
       font-size: 11px;
       cursor: pointer;
@@ -570,7 +624,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       margin-left: auto;
       padding: 4px 10px;
       border: 1px solid rgba(38,142,108,0.3);
-      background: white;
+      background: var(--surface);
       border-radius: 4px;
       font-size: 11px;
       cursor: pointer;
@@ -687,7 +741,16 @@ export const landingPageHtml = `<!DOCTYPE html>
     .log-viewer-title { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.45); }
     .log-clear-btn { font-size: 10px; padding: 2px 8px; background: transparent; border: 1px solid #3a3a3a; border-radius: 4px; color: rgba(255,255,255,0.35); cursor: pointer; font-family: inherit; transition: border-color 0.15s, color 0.15s; }
     .log-clear-btn:hover { border-color: #555; color: rgba(255,255,255,0.7); }
-    .log-output { height: 240px; overflow-y: auto; padding: 8px 14px; line-height: 1.7; }
+    .log-search { display: none; align-items: center; gap: 8px; padding: 6px 14px; background: #1f1f1f; border-bottom: 1px solid #333; }
+    .log-search.show { display: flex; }
+    .log-search input { flex: 1; min-width: 0; background: rgba(255,255,255,0.06); border: 1px solid #3a3a3a; border-radius: 4px; color: #DDD; font-family: inherit; font-size: 11px; padding: 4px 8px; outline: none; }
+    .log-search input:focus { border-color: #4FC3F7; }
+    .log-search input::placeholder { color: rgba(255,255,255,0.3); }
+    .log-search-count { font-size: 10px; color: rgba(255,255,255,0.4); white-space: nowrap; flex-shrink: 0; }
+    .log-search-close { background: transparent; border: none; color: rgba(255,255,255,0.4); cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 4px; flex-shrink: 0; }
+    .log-search-close:hover { color: rgba(255,255,255,0.85); }
+    .log-output mark { background: #FFD54F; color: #1a1a1a; border-radius: 2px; padding: 0 1px; }
+    .log-output { height: 240px; min-height: 120px; overflow-y: auto; overflow-x: hidden; padding: 8px 14px; line-height: 1.7; resize: vertical; }
     .log-entry { padding: 1px 0; }
     .log-line { display: flex; gap: 8px; align-items: baseline; }
     .log-detail { margin: 3px 0 7px 16px; padding: 7px 11px; background: rgba(255,255,255,0.03); border-left: 2px solid #333; border-radius: 3px; color: #8a9aa5; font-family: inherit; font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; overflow-x: hidden; }
@@ -1084,8 +1147,14 @@ export const landingPageHtml = `<!DOCTYPE html>
               <span class="log-viewer-title">Live Server Logs</span>
               <div style="display:flex;gap:6px;">
                 <button class="log-clear-btn" id="logCopyBtn">Copy</button>
+                <button class="log-clear-btn" id="logDownloadBtn">Download</button>
                 <button class="log-clear-btn" id="logClearBtn">Clear</button>
               </div>
+            </div>
+            <div class="log-search" id="logSearch">
+              <input type="text" id="logSearchInput" placeholder="Search logs… (Esc to close)" autocomplete="off" spellcheck="false" />
+              <span class="log-search-count" id="logSearchCount"></span>
+              <button class="log-search-close" id="logSearchClose" title="Close (Esc)">✕</button>
             </div>
             <div class="log-output" id="logOutput">
               <div class="log-placeholder">Log stream will appear here once the server is active.</div>
@@ -2053,6 +2122,18 @@ export const landingPageHtml = `<!DOCTYPE html>
       output.appendChild(wrap);
       while (output.children.length > 600) output.removeChild(output.firstChild);
       if (logAutoScroll) output.scrollTop = output.scrollHeight;
+
+      // If a search is active, apply it to the just-arrived entry so the live
+      // stream stays filtered, then refresh the match count.
+      const searchEl = document.getElementById('logSearch');
+      if (searchEl && searchEl.classList.contains('show')) {
+        const term = document.getElementById('logSearchInput').value.trim();
+        if (term) {
+          matchLogEntry(wrap, term.toLowerCase());
+          highlightLogEntry(wrap, term);
+          recountLogSearch(term);
+        }
+      }
     }
 
     function startLogStream() {
@@ -2085,12 +2166,16 @@ export const landingPageHtml = `<!DOCTYPE html>
     document.getElementById('logClearBtn').addEventListener('click', () => {
       const output = document.getElementById('logOutput');
       if (output) output.innerHTML = '';
+      // Entries are gone — refresh the match count if a search is open.
+      if (document.getElementById('logSearch').classList.contains('show')) applyLogSearch();
     });
 
-    document.getElementById('logCopyBtn').addEventListener('click', () => {
+    // Flatten the rendered log entries (header line + optional JSON detail) to plain
+    // text — shared by the Copy and Download buttons.
+    function collectLogText() {
       const output = document.getElementById('logOutput');
-      if (!output) return;
-      const text = Array.from(output.querySelectorAll('.log-entry'))
+      if (!output) return '';
+      return Array.from(output.querySelectorAll('.log-entry'))
         .map(entry => {
           const ts  = entry.querySelector('.log-ts')?.textContent?.trim() || '';
           const lvl = entry.querySelector('.log-level')?.textContent?.trim() || '';
@@ -2100,6 +2185,11 @@ export const landingPageHtml = `<!DOCTYPE html>
           return detail.trim() ? head + '\\n' + detail : head;
         })
         .join('\\n');
+    }
+
+    document.getElementById('logCopyBtn').addEventListener('click', () => {
+      const text = collectLogText();
+      if (!text) return;
       navigator.clipboard.writeText(text).then(() => {
         const btn = document.getElementById('logCopyBtn');
         const orig = btn.textContent;
@@ -2107,6 +2197,119 @@ export const landingPageHtml = `<!DOCTYPE html>
         setTimeout(() => { btn.textContent = orig; }, 1500);
       }).catch(() => {});
     });
+
+    document.getElementById('logDownloadBtn').addEventListener('click', () => {
+      const text = collectLogText();
+      if (!text) return;
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const blob = new Blob([text + '\\n'], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'mcp-server-logs-' + stamp + '.log';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    });
+
+    // ─── Log search (Ctrl/Cmd+F inside the log viewer) ─────────────────────────
+
+    // Only hijack Ctrl/Cmd+F when the user is actually working inside the log
+    // viewer — anywhere else the browser's native Find must keep working.
+    let logViewerActive = false;
+    document.addEventListener('mousedown', (e) => {
+      logViewerActive = !!(e.target.closest && e.target.closest('.log-viewer'));
+    });
+
+    function highlightInEl(el, term) {
+      const text = el.textContent;
+      if (!term) { el.textContent = text; return; }
+      const lower = text.toLowerCase();
+      const t = term.toLowerCase();
+      let html = '';
+      let i = 0;
+      let idx;
+      while ((idx = lower.indexOf(t, i)) !== -1) {
+        html += escapeHtml(text.slice(i, idx));
+        html += '<mark>' + escapeHtml(text.slice(idx, idx + t.length)) + '</mark>';
+        i = idx + t.length;
+      }
+      html += escapeHtml(text.slice(i));
+      el.innerHTML = html;
+    }
+
+    function matchLogEntry(entry, termLower) {
+      const hit = termLower === '' || entry.textContent.toLowerCase().indexOf(termLower) !== -1;
+      entry.style.display = hit ? '' : 'none';
+      return hit;
+    }
+
+    function highlightLogEntry(entry, term) {
+      const msg = entry.querySelector('.log-msg');
+      const detail = entry.querySelector('.log-detail');
+      if (msg) highlightInEl(msg, term);
+      if (detail) highlightInEl(detail, term);
+    }
+
+    function setLogSearchCount(term, matches) {
+      const count = document.getElementById('logSearchCount');
+      count.textContent = term === '' ? '' : (matches + (matches === 1 ? ' match' : ' matches'));
+    }
+
+    function recountLogSearch(term) {
+      let m = 0;
+      document.getElementById('logOutput').querySelectorAll('.log-entry').forEach((en) => {
+        if (en.style.display !== 'none') m++;
+      });
+      setLogSearchCount(term, m);
+    }
+
+    function applyLogSearch() {
+      const term = document.getElementById('logSearchInput').value.trim();
+      const termLower = term.toLowerCase();
+      let matches = 0;
+      document.getElementById('logOutput').querySelectorAll('.log-entry').forEach((entry) => {
+        const hit = matchLogEntry(entry, termLower);
+        highlightLogEntry(entry, term);
+        if (term && hit) matches++;
+      });
+      setLogSearchCount(term, matches);
+    }
+
+    function openLogSearch() {
+      document.getElementById('logSearch').classList.add('show');
+      const input = document.getElementById('logSearchInput');
+      input.focus();
+      input.select();
+      applyLogSearch();
+    }
+
+    function closeLogSearch() {
+      document.getElementById('logSearch').classList.remove('show');
+      document.getElementById('logSearchInput').value = '';
+      // Restore all entries and strip highlights.
+      document.getElementById('logOutput').querySelectorAll('.log-entry').forEach((entry) => {
+        entry.style.display = '';
+        highlightLogEntry(entry, '');
+      });
+    }
+
+    document.addEventListener('keydown', (e) => {
+      const searchOpen = document.getElementById('logSearch').classList.contains('show');
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F') && logViewerActive) {
+        e.preventDefault();
+        openLogSearch();
+      } else if (e.key === 'Escape' && searchOpen) {
+        closeLogSearch();
+      }
+    });
+
+    document.getElementById('logSearchInput').addEventListener('input', applyLogSearch);
+    document.getElementById('logSearchInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closeLogSearch(); }
+    });
+    document.getElementById('logSearchClose').addEventListener('click', closeLogSearch);
   </script>
 </body>
 </html>`;

@@ -22,11 +22,13 @@ jest.mock('../../src/github/client', () => ({
   getFileContent: jest.fn(),
   commitFile: jest.fn().mockResolvedValue(undefined),
   createPullRequest: jest.fn().mockResolvedValue({ number: 7, html_url: 'https://github.com/o/r/pull/7' }),
+  updatePullRequest: jest.fn().mockResolvedValue(undefined),
+  listPullRequests: jest.fn().mockResolvedValue([]),
   getPullRequest: jest.fn(), getPRFiles: jest.fn(), parsePRUrl: jest.fn()
 }));
 
 import { createApprovalPR, commitAuditTrail } from '../../src/github/sync';
-import { commitFile, getFileSha, getFileContent } from '../../src/github/client';
+import { commitFile, getFileSha, getFileContent, createBranch, createPullRequest, updatePullRequest, listPullRequests, getPRFiles } from '../../src/github/client';
 
 const config = { token: 't', owner: 'o', repo: 'r', defaultBranch: 'main', requireApproval: true } as never;
 const committedPath = () => (commitFile as jest.Mock).mock.calls[0][3] as string;
@@ -43,6 +45,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   (getFileSha as jest.Mock).mockResolvedValue('existingsha');
   (getFileContent as jest.Mock).mockResolvedValue(PRIOR_FRAGMENT);
+  (createPullRequest as jest.Mock).mockResolvedValue({ number: 7, html_url: 'https://github.com/o/r/pull/7' });
+  (listPullRequests as jest.Mock).mockResolvedValue([]);
+  (getPRFiles as jest.Mock).mockResolvedValue([]);
+  (updatePullRequest as jest.Mock).mockResolvedValue(undefined);
 });
 
 describe('canonical path (no orphan id-named files)', () => {
@@ -92,6 +98,110 @@ describe('content mirror — approval gate (createApprovalPR)', () => {
     expect(body.fragment.content).toBe('<div>HERO BODY</div>');    // body preserved
     expect(body.patches).toBeDefined();                            // patch args present → deploy replays
     expect(body.etag).toBe('"e"');
+  });
+});
+
+describe('PR-creation is resilient to non-idempotent POST errors (no duplicate on retry)', () => {
+  const createArgs = { name: 'NV_BIS_X', templateType: 'content', channels: ['email'], template: {} };
+
+  test('recovers when createPullRequest errors but the PR was actually created on the head branch', async () => {
+    (createPullRequest as jest.Mock).mockRejectedValueOnce(new Error('GitHub API 404 on POST /pulls: Not Found'));
+    // A PR exists on the (unique, per-call) head branch — the create went through despite the error.
+    (listPullRequests as jest.Mock).mockImplementation(async () => {
+      // Empty on the dedup lookup (before the branch is created), then the just-created
+      // branch's PR on the post-error recovery lookup.
+      const branch = (createBranch as jest.Mock).mock.calls[0]?.[3];
+      return branch ? [{ number: 28, html_url: 'https://github.com/o/r/pull/28', state: 'open', title: 't', head: { ref: branch } }] : [];
+    });
+
+    const res = await createApprovalPR(config, 'etrakselis-sandbox', 'create_content_template', createArgs, 'me@x', 'NV/BIS');
+
+    // Recovered the existing PR instead of throwing → caller sees success → no retry → no duplicate.
+    expect(res.prNumber).toBe(28);
+    expect(res.prUrl).toBe('https://github.com/o/r/pull/28');
+  });
+
+  test('re-throws when createPullRequest errors and no PR was actually created (safe to retry)', async () => {
+    (createPullRequest as jest.Mock).mockRejectedValueOnce(new Error('GitHub API 404: Not Found'));
+    (listPullRequests as jest.Mock).mockResolvedValue([]); // nothing was created
+
+    await expect(
+      createApprovalPR(config, 'etrakselis-sandbox', 'create_content_template', createArgs, 'me@x', 'NV/BIS')
+    ).rejects.toThrow(/Not Found/);
+  });
+
+  test('does not match a PR on a different head branch', async () => {
+    (createPullRequest as jest.Mock).mockRejectedValueOnce(new Error('Not Found'));
+    (listPullRequests as jest.Mock).mockResolvedValue([
+      { number: 99, html_url: 'https://github.com/o/r/pull/99', state: 'open', title: 't', head: { ref: 'some-other-branch' } }
+    ]);
+
+    await expect(
+      createApprovalPR(config, 'etrakselis-sandbox', 'create_content_template', createArgs, 'me@x', 'NV/BIS')
+    ).rejects.toThrow(/Not Found/);
+  });
+});
+
+describe('dedup genuine double-calls (reuse an open PR for the same asset)', () => {
+  const updateArgs = { name: 'NV_BIS_X', etag: '"e"', templateType: 'content', channels: ['email'], template: {} };
+  const ASSET_FILE = 'etrakselis-sandbox/content-templates/NV/BIS/NV_BIS_X.json';
+
+  test('reuses the open PR that already changed this asset file — commits to its branch, no new PR', async () => {
+    (listPullRequests as jest.Mock).mockResolvedValue([
+      { number: 50, html_url: 'https://github.com/o/r/pull/50', state: 'open', title: 't', head: { ref: 'ajo-update-content-template-111' } }
+    ]);
+    (getPRFiles as jest.Mock).mockResolvedValue([{ filename: ASSET_FILE, status: 'modified' }]);
+
+    const res = await createApprovalPR(config, 'etrakselis-sandbox', 'update_content_template', updateArgs, 'me@x', 'NV/BIS');
+
+    expect(res.prNumber).toBe(50);                       // reused the existing PR
+    expect(createBranch).not.toHaveBeenCalled();         // committed onto the existing branch
+    expect(createPullRequest).not.toHaveBeenCalled();    // no second PR opened
+    expect((commitFile as jest.Mock).mock.calls[0][6]).toBe('ajo-update-content-template-111');
+    // The reused PR's title/body are refreshed to the latest operation.
+    expect(updatePullRequest).toHaveBeenCalledWith('t', 'o', 'r', 50,
+      expect.objectContaining({ title: '[AJO] update content template: NV_BIS_X' }));
+  });
+
+  test('opens a new PR when the open PR changes a DIFFERENT asset', async () => {
+    (listPullRequests as jest.Mock).mockResolvedValue([
+      { number: 51, html_url: 'https://github.com/o/r/pull/51', state: 'open', title: 't', head: { ref: 'ajo-update-content-template-222' } }
+    ]);
+    (getPRFiles as jest.Mock).mockResolvedValue([{ filename: 'etrakselis-sandbox/content-templates/NV/BIS/OTHER.json', status: 'modified' }]);
+
+    const res = await createApprovalPR(config, 'etrakselis-sandbox', 'update_content_template', updateArgs, 'me@x', 'NV/BIS');
+
+    expect(createBranch).toHaveBeenCalled();
+    expect(createPullRequest).toHaveBeenCalled();
+    expect(res.prNumber).toBe(7);
+  });
+
+  test('ignores promotion PRs (ajo-promote-*) when looking for a reuse target', async () => {
+    (listPullRequests as jest.Mock).mockResolvedValue([
+      { number: 53, html_url: 'https://github.com/o/r/pull/53', state: 'open', title: 't', head: { ref: 'ajo-promote-template-NV_BIS_X-999' } }
+    ]);
+    (getPRFiles as jest.Mock).mockResolvedValue([{ filename: ASSET_FILE, status: 'modified' }]);
+
+    const res = await createApprovalPR(config, 'etrakselis-sandbox', 'update_content_template', updateArgs, 'me@x', 'NV/BIS');
+
+    expect(getPRFiles).not.toHaveBeenCalled();   // a promotion PR is never inspected/reused
+    expect(createPullRequest).toHaveBeenCalled();
+    expect(res.prNumber).toBe(7);
+  });
+
+  test('promotion (branchName supplied) is exempt — dedup is skipped entirely', async () => {
+    (listPullRequests as jest.Mock).mockResolvedValue([
+      { number: 54, html_url: 'https://github.com/o/r/pull/54', state: 'open', title: 't', head: { ref: 'ajo-update-content-template-444' } }
+    ]);
+    (getPRFiles as jest.Mock).mockResolvedValue([{ filename: ASSET_FILE, status: 'modified' }]);
+
+    await createApprovalPR(
+      config, 'etrakselis-sandbox', 'update_content_template', updateArgs, 'me@x', 'NV/BIS',
+      undefined, 'ajo-promote-template-NV_BIS_X-999'
+    );
+
+    expect(getPRFiles).not.toHaveBeenCalled();   // dedup block is gated on !branchName
+    expect(createPullRequest).toHaveBeenCalled();
   });
 });
 

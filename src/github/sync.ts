@@ -1,7 +1,7 @@
 import type { GitHubConfig } from './types.js';
 import {
   getFileSha, getBranchSha, createBranch, commitFile,
-  createPullRequest, getPullRequest, getPRFiles, getFileContent, parsePRUrl
+  createPullRequest, updatePullRequest, listPullRequests, getPullRequest, getPRFiles, getFileContent, parsePRUrl
 } from './client.js';
 import { getTag } from '../adobe/unified-tags-client.js';
 import { withSandbox } from '../adobe/sandbox-context.js';
@@ -252,10 +252,34 @@ export async function createApprovalPR(
   const argId = extractId(args);
   const argName = canonicalName ?? (typeof args.name === 'string' ? args.name : argId ?? 'unknown');
   const filePath = assetFilePath(sandboxName, toolName, argId, argName, ajoFolderPath);
-  const branch = branchName ?? makeBranchName(toolName);
+  // ── Dedup genuine double-calls ──────────────────────────────────────────────
+  // If an OPEN approval-gate PR already proposes a change to THIS asset (same canonical
+  // file), reuse it: commit the new payload onto its branch and return it, instead of
+  // opening a second PR for the same asset. Matched by the file the PR changed (reliable,
+  // independent of branch naming), bounded to this server's regular approval PRs (branch
+  // prefix "ajo-", excluding promotion's "ajo-promote-"). Promotion passes its own
+  // branchName and manages its own PRs across phases, so it is exempt from the dedup.
+  let reusePr: { number: number; html_url: string } | undefined;
+  let reuseBranch: string | undefined;
+  if (!branchName) {
+    const openPrs = await listPullRequests(token, owner, repo, { state: 'open' }).catch(() => []);
+    for (const p of openPrs) {
+      const ref = p.head?.ref;
+      if (!ref || !ref.startsWith('ajo-') || ref.startsWith('ajo-promote-')) continue;
+      const files = await getPRFiles(token, owner, repo, p.number).catch(() => []);
+      if (files.some(f => f.filename === filePath)) {
+        reusePr = { number: p.number, html_url: p.html_url };
+        reuseBranch = ref;
+        break;
+      }
+    }
+  }
 
-  const baseSha = await getBranchSha(token, owner, repo, defaultBranch);
-  await createBranch(token, owner, repo, branch, baseSha);
+  const branch = reuseBranch ?? branchName ?? makeBranchName(toolName);
+  if (!reuseBranch) {
+    const baseSha = await getBranchSha(token, owner, repo, defaultBranch);
+    await createBranch(token, owner, repo, branch, baseSha);
+  }
 
   const tagNames = await resolveTagNames(sandboxName, args);
   const requestedAt = new Date().toISOString();
@@ -298,9 +322,8 @@ export async function createApprovalPR(
   );
 
   const operationLabel = toolName.replace(/_/g, ' ');
-  const pr = await createPullRequest(
-    token, owner, repo,
-    `[AJO] ${operationLabel}: ${argName}`,
+  const prTitle = `[AJO] ${operationLabel}: ${argName}`;
+  const prBody =
     `## AJO Content Change Request\n\n` +
     `**Operation:** \`${toolName}\`\n` +
     `**Asset:** \`${argName}\`\n` +
@@ -309,10 +332,45 @@ export async function createApprovalPR(
     `**Requested at:** ${new Date().toISOString()}\n\n` +
     `## Changed File\n\n\`${filePath}\`\n\n` +
     `---\n\n` +
-    `_After merging, call \`deploy_merged_changes\` with this PR URL to apply the change to AJO._`,
-    branch,
-    defaultBranch
-  );
+    `_After merging, call \`deploy_merged_changes\` with this PR URL to apply the change to AJO._`;
+
+  // Reusing an existing open PR for this asset: the commit above updated its branch, so the
+  // PR now reflects the latest proposed content. Refresh the PR's title/body so they describe
+  // the LATEST operation too (otherwise a "create" PR reused by a later "update" would keep
+  // its stale "create" title). Best-effort — a failed refresh never fails the reuse. Then
+  // return the existing PR instead of opening a duplicate.
+  if (reusePr) {
+    const reused = reusePr;
+    await updatePullRequest(token, owner, repo, reused.number, { title: prTitle, body: prBody })
+      .catch(err => logger.warn('PR title/body refresh on reuse failed (non-fatal)', {
+        prNumber: reused.number, error: err instanceof Error ? err.message : String(err)
+      }));
+    logger.info('Reused existing open PR for asset (deduped a double-call)', {
+      tool: toolName, prNumber: reused.number, filePath, sandbox: sandboxName
+    });
+    return { prNumber: reused.number, prUrl: reused.html_url, filePath };
+  }
+
+  // Open the PR. POST /pulls is NOT idempotent: a transient GitHub error AFTER the PR is
+  // actually created — a token/permission blip that surfaces as 404 "Not Found", a gateway
+  // hiccup, a dropped response — would otherwise make this throw, the tool report failure,
+  // and the caller RETRY, opening a DUPLICATE PR. Guard against it: on error, look for a PR
+  // already open on this head branch (unique per call — it was just created above). If one
+  // exists, the create DID go through, so recover it instead of failing; only re-throw when
+  // no PR was actually created (a genuine failure the caller can safely retry).
+  let pr: { number: number; html_url: string };
+  try {
+    pr = await createPullRequest(token, owner, repo, prTitle, prBody, branch, defaultBranch);
+  } catch (err) {
+    const existing = (await listPullRequests(token, owner, repo, { state: 'open' }).catch(() => []))
+      .find(p => p.head?.ref === branch);
+    if (!existing) throw err;
+    logger.warn('createPullRequest errored but a PR already exists for the head branch — recovering (prevents a duplicate PR on retry)', {
+      tool: toolName, branch, prNumber: existing.number,
+      error: err instanceof Error ? err.message : String(err)
+    });
+    pr = { number: existing.number, html_url: existing.html_url };
+  }
 
   logger.info('GitHub approval PR created', {
     tool: toolName, prNumber: pr.number, prUrl: pr.html_url, sandbox: sandboxName
