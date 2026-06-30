@@ -565,8 +565,8 @@ The integration is entirely opt-in — the server works normally without it, and
 
 | Mode | How it works |
 |------|--------------|
-| **Audit Trail** | After every successful AJO write, the server asynchronously commits a JSON record of the args and result to the repository. The AJO write is never blocked — if the GitHub commit fails, the write has already succeeded and the server surfaces a warning to the LLM. |
-| **PR Approval Gate** | Instead of writing to AJO, the LLM opens a branch and a pull request with the proposed content. Once a human merges it, call `deploy_merged_changes` with the PR URL to apply the changes to AJO. |
+| **Audit Trail** | After every successful **content** write (template/fragment), the server asynchronously commits a JSON record of the args and result to the repository. The AJO write is never blocked — if the GitHub commit fails, the write has already succeeded and the server surfaces a warning to the LLM. (Folder and tag operations apply directly to AJO and are **not** mirrored — see [File structure](#file-structure-in-the-repository).) |
+| **PR Approval Gate** | Instead of writing to AJO, the LLM opens a branch and a pull request with the proposed **content** (template/fragment). Once a human merges it, call `deploy_merged_changes` with the PR URL to apply the changes to AJO. (Folder and tag writes always apply **directly** to AJO — they're organization metadata, not versioned content; see [File structure](#file-structure-in-the-repository).) |
 
 ### Setting up the GitHub PAT
 
@@ -1038,7 +1038,10 @@ fragment is removed from the active library and can no longer be referenced in n
 journeys.
 
 > **Note:** This tool calls an internal AJO GraphQL API (`exc-unifiedcontent.experience.adobe.net`)
-> that is not part of the public Content REST API. Adobe may change this endpoint without notice.
+> that is not part of the public Content REST API. If Adobe changes that endpoint, an unexpected
+> response is surfaced as a structured `ARCHIVE_API_UNAVAILABLE` error that names a manual fallback
+> (archive the fragment in the AJO UI) instead of an opaque failure. The endpoint URL and its app key
+> are overridable via the `AJO_ARCHIVE_GRAPHQL_URL` and `AJO_ARCHIVE_API_KEY` environment variables.
 
 ### Folders (Unified Folders API)
 
@@ -1323,13 +1326,31 @@ These map to the workflow guidance the server's `instructions` point the model a
 
 ## Security
 
-- Credentials stored in memory only, never logged or returned via tools
-- GitHub PAT stored in memory only — never written to disk, logged, or returned through any MCP tool
-- Rate limiting: 200 req/min global, 5 req/min on `/api/configure`
-- Helmet security headers
-- Input validation via Zod on all tool inputs
-- Non-root Docker user (`mcpuser`)
-- Read-only container filesystem
+The server has **no application-layer authentication** — its security boundary is **network isolation**. It binds to **loopback (`127.0.0.1`) by default** (`src/server/index.ts`), and the Docker image publishes its port only to the host loopback (`127.0.0.1:3000:3000`). Treat it as a single-user local tool.
+
+> ⚠️ **If you expose it on the network** (`HOST=0.0.0.0`, or publishing the container port beyond loopback), put an **authenticating reverse proxy in front of it.** The guards below stop cross-site browser requests and DNS-rebinding — they do **not** authenticate a direct HTTP client that can already reach the port, so without a proxy anyone on the network could upload credentials, flip write access, or call `/mcp`.
+
+**Secret handling**
+- Adobe credentials and the GitHub PAT are held **in memory only** — never written to disk, and never returned through any MCP tool or `/api/*` response.
+- Logs are **recursively scrubbed** (`redactSecrets`): secret-bearing keys (client secret, API key, `*token`, PAT, `Authorization` headers) are masked at any nesting depth — the client secret is never logged, only a `hasClientSecret` boolean. The setup-phase probe-token cache is keyed by a **SHA-256 hash** of the credentials, never the raw secret.
+- The append-only audit log records the (self-declared) author email + resource identifiers, **no secrets** — keep its repo/volume private since it contains email addresses.
+
+**Write safety**
+- Writes are gated by a runtime **read-only toggle (default off)** enforced at call time, plus a **write-confirmation step** that confirms the target sandbox before any change (destructive/irreversible ops re-confirm every time). See [Access mode](#4-set-the-access-mode) and the write-confirmation notes above.
+
+**HTTP hardening** (the loopback `/` setup UI and the `/mcp` endpoint)
+- **Helmet** headers with a strict **Content-Security-Policy** — `script-src 'self'` (the setup page's JS is served as a separate `/app.js`, so there are no inline scripts), plus `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`; `style-src` keeps `'unsafe-inline'` (inline CSS can't execute JS).
+- **CORS** locked to loopback origins by default (`localhost` / `127.0.0.1`, any port); override with `CORS_ORIGIN`.
+- **CSRF guard** on every state-changing endpoint (`/api/configure`, `/api/access-mode`, `/api/sandbox`, `/api/deactivate`, `/api/list-sandboxes`, `/api/detect-tenant`, `/api/github-test`): rejects any request a browser marks cross-site (`Sec-Fetch-Site`) or that carries a non-loopback `Origin`. Non-browser MCP clients (which send neither header) pass through.
+- **DNS-rebinding defense** on `/mcp`: a Host-header allowlist rejects any non-loopback `Host` (override via `MCP_ALLOWED_HOSTS` for a proxied deployment).
+- 2 MB JSON body limit; unhandled errors return structured JSON with **no stack traces** leaked to clients.
+
+**Rate limiting** (per-IP, 60-second windows)
+- Global **200/min**; auth-sensitive endpoints (`/api/configure`, `/api/detect-tenant`, `/api/github-test`) **5/min**; sandbox discovery (`/api/list-sandboxes`) **20/min**; the `/mcp` endpoint **500/min** (busy MCP sessions need more headroom than the UI).
+
+**Input validation & container hardening**
+- All tool inputs are validated with **Zod** before any AJO call.
+- Docker: **non-root user** (`mcpuser`), **read-only root filesystem** (with a `tmpfs` for scratch space), and **`no-new-privileges`**.
 
 ---
 
@@ -1447,7 +1468,7 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 ├── src/
 │   ├── server/
 │   │   ├── index.ts            Entry point — starts STDIO + HTTP transports, graceful shutdown
-│   │   └── app.ts              Express app — landing page, /api/* config endpoints, /mcp endpoint
+│   │   └── app.ts              Express app — landing page (+ its /app.js script), /api/* config endpoints, /mcp endpoint
 │   ├── mcp/
 │   │   ├── server.ts           MCP server factory, tool routing, resources, prompts, STDIO/HTTP setup
 │   │   ├── resources.ts        Static, collection, and templated resource definitions (ajo:// URIs)
@@ -1500,7 +1521,7 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── index.ts            Winston logging + Prometheus metrics registry
 │   │   └── audit.ts            Append-only JSONL audit trail for content writes
 │   └── ui/
-│       ├── landing.ts          Single-page setup UI (HTML/CSS/JS), served at /
+│       ├── landing.ts          Single-page setup UI — page HTML (served at /) + the client script (served as /app.js)
 │       └── naming-convention-default.ts  Default administrator naming-convention ruleset (pre-filled in the setup UI)
 ├── Dockerfile                  Multi-stage build (npm ci → tsc → slim runtime image)
 ├── docker-compose.yml          Builds the image and runs the container
