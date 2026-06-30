@@ -308,14 +308,14 @@ function targetSandboxNote(targetSandbox: string): string {
 
 export const listRepoAssetsDefinition = {
   name: 'list_repo_assets',
-  title: 'List Repo Content Assets',
+  title: 'List Repo Assets',
   outputSchema: buildOutputSchema({
     sandbox: { type: 'string' },
     sourceRef: { type: 'string' },
     truncated: { type: 'boolean', description: 'true if the repo is large enough that the listing was capped.' },
-    assets: { type: 'array', items: { type: 'object' }, description: 'Committed assets under the subtree: [{ name, type: "fragment" | "template", path }].' }
+    assets: { type: 'array', items: { type: 'object' }, description: 'Committed assets under the subtree: [{ name, type: "fragment" | "template" | "tag", path }]. Tags live at <sandbox>/tags/<name>.json. NOTE: tags are org-global (shared across sandboxes), so a tag here only marks where it was first committed; for the authoritative live tag list use list_tags.' }
   }),
-  description: `List the content fragments/templates committed under a sandbox's subtree in the GitHub repo. READ-ONLY — it reads the repo, not AJO. Use it to see what content exists in the repo for a sandbox (e.g. before deploying it with deploy_repo_assets), or to resolve a vague "those assets" into concrete names to feed deploy_repo_assets / promote_assets.
+  description: `List the content fragments, content templates, AND tags committed under a sandbox's subtree in the GitHub repo. READ-ONLY — it reads the repo, not AJO. Each item carries a "type" of "fragment", "template", or "tag". Use it to see what exists in the repo for a sandbox (e.g. before deploying it with deploy_repo_assets), or to resolve a vague "those assets" into concrete names to feed deploy_repo_assets / promote_assets. (Tags are org-global — shared across sandboxes — so a tag file under this subtree only marks where it was first committed; for the authoritative live tag list use list_tags.)
 
 sourceSandbox is the repo subtree to list (defaults to the active sandbox); sourceRef is the git ref (defaults to the repo's default branch). Requires GitHub integration configured.
 

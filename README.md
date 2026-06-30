@@ -129,7 +129,7 @@ Push committed repo content into AJO. **Cross-sandbox** (dev → prod) uses the 
 |------|-------------|
 | `plan_promotion` | *(read-only)* Build a cross-sandbox promotion plan: the full dependency closure, phase order, per-asset folder/embed info, and whether each asset already exists in the target. Writes nothing. |
 | `promote_assets` | Promote fragments/templates into the **active** target sandbox — `targetSandbox` must be the sandbox currently selected in the UI (reselect it first; promotion can only write to the active sandbox, like every other tool), reading from a different source subtree (e.g. dev) in the repo. Re-resolves every environment-local UUID (embeds, folders, tags, self-references) by name/path. Phased + resumable; runs through the PR approval gate. |
-| `list_repo_assets` | *(read-only)* Enumerate the content fragments/templates committed under a sandbox's repo subtree. Use it to preview what exists in the repo or resolve names for a deploy. |
+| `list_repo_assets` | *(read-only)* Enumerate the content fragments, templates, **and tags** committed under a sandbox's repo subtree (each item is typed `fragment` / `template` / `tag`). Use it to preview what exists in the repo or resolve names for a deploy. |
 | `deploy_repo_assets` | Deploy a repo subtree's already-merged content into the **same-named active** sandbox (repo → live). Direct write, idempotent (dedup by name), dependency-ordered. |
 
 ---
@@ -1206,7 +1206,7 @@ Promotes the selection to `targetSandbox` — which **must be the active (UI-sel
 ```json
 { "sourceSandbox": "etrakselis-sandbox" }
 ```
-Enumerates the content fragments/templates committed under a sandbox's repo subtree (reads the repo, not AJO). `sourceSandbox` defaults to the active sandbox; `sourceRef` defaults to the repo default branch. Returns `{ sandbox, sourceRef, truncated, assets: [{ name, type, path }] }`. Use it to preview what's in the repo or resolve names for `deploy_repo_assets` / `promote_assets`.
+Enumerates the content fragments, templates, **and tags** committed under a sandbox's repo subtree (reads the repo, not AJO). `sourceSandbox` defaults to the active sandbox; `sourceRef` defaults to the repo default branch. Returns `{ sandbox, sourceRef, truncated, assets: [{ name, type, path }] }` where `type` is `"fragment"`, `"template"`, or `"tag"`. Use it to preview what's in the repo or resolve names for `deploy_repo_assets` / `promote_assets`. (Tags are org-global — shared across sandboxes — so a tag listed here only marks the subtree where it was first committed; for the authoritative live tag list use `list_tags`.)
 
 #### `deploy_repo_assets` *(write)*
 ```json

@@ -113,7 +113,8 @@ const findIdByName = (type: AssetType, name: string): Promise<string | undefined
 // ─── Repo index: locate asset JSON files by name without knowing their folder ─────
 
 interface RepoIndex {
-  byType: Record<AssetType, Map<string, string>>; // normName -> repo path
+  byType: Record<AssetType, Map<string, string>>; // normName -> repo path (fragments/templates)
+  tags: Map<string, string>;                       // normName -> repo path (the tags/ subtree)
   ambiguous: Set<string>;                          // `${type}:${normName}` with >1 file
   treeSha: string;
   truncated: boolean;
@@ -140,6 +141,7 @@ async function buildRepoIndex(config: GitHubConfig, sourceSandbox: string, ref: 
     );
   }
   const byType: Record<AssetType, Map<string, string>> = { fragment: new Map(), template: new Map() };
+  const tags = new Map<string, string>();
   const ambiguous = new Set<string>();
   const types: AssetType[] = ['fragment', 'template'];
   for (const e of tree) {
@@ -151,8 +153,15 @@ async function buildRepoIndex(config: GitHubConfig, sourceSandbox: string, ref: 
       if (byType[t].has(nk)) ambiguous.add(`${t}:${nk}`);
       else byType[t].set(nk, e.path);
     }
+    // Tags live flat at <sandbox>/tags/<name>.json (they carry no folder path). Indexed
+    // separately so promotion (fragment/template only) is untouched; surfaced by
+    // list_repo_assets so the LLM can also see committed tags.
+    if (e.path.startsWith(`${sourceSandbox}/tags/`)) {
+      const base = e.path.slice(e.path.lastIndexOf('/') + 1).replace(/\.json$/, '');
+      tags.set(normName(base), e.path);
+    }
   }
-  return { byType, ambiguous, treeSha, truncated };
+  return { byType, tags, ambiguous, treeSha, truncated };
 }
 
 async function readRepoAsset(
@@ -787,7 +796,7 @@ function parsePRUrlNumber(prUrl: string): number | null {
 // re-created asset gets correct target ids. Idempotent: a present asset is reused, so
 // re-running deploys nothing new.
 
-export interface RepoAsset { name: string; type: AssetType; path: string }
+export interface RepoAsset { name: string; type: AssetType | 'tag'; path: string }
 export interface RepoListing { sandbox: string; sourceRef: string; assets: RepoAsset[]; truncated: boolean }
 
 export async function listRepoAssets(sandbox: string, sourceRef?: string): Promise<RepoListing> {
@@ -800,6 +809,9 @@ export async function listRepoAssets(sandbox: string, sourceRef?: string): Promi
     for (const path of index.byType[t].values()) {
       assets.push({ name: path.slice(path.lastIndexOf('/') + 1).replace(/\.json$/, ''), type: t, path });
     }
+  }
+  for (const path of index.tags.values()) {
+    assets.push({ name: path.slice(path.lastIndexOf('/') + 1).replace(/\.json$/, ''), type: 'tag', path });
   }
   assets.sort((a, b) => a.path.localeCompare(b.path));
   return { sandbox, sourceRef: ref, assets, truncated: index.truncated };
