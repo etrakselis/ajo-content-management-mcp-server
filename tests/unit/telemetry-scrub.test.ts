@@ -34,6 +34,18 @@ describe('redactSecrets', () => {
     expect(out).toEqual({ CLIENT_SECRET: '[REDACTED]', refreshToken: '[REDACTED]', X_API_TOKEN: '[REDACTED]' });
   });
 
+  test('redacts the API key and OAuth client id (x-api-key / apiKey / api_key / client_id), keeping benign *Id keys', () => {
+    const out = redactSecrets({
+      'x-api-key': 'k', apiKey: 'k2', api_key: 'k3', client_id: 'c', clientId: 'c2',
+      tenantId: 'tn', requestId: 'rq', sandbox: 'sb'
+    }) as Record<string, unknown>;
+    expect(out).toEqual({
+      'x-api-key': '[REDACTED]', apiKey: '[REDACTED]', api_key: '[REDACTED]',
+      client_id: '[REDACTED]', clientId: '[REDACTED]',
+      tenantId: 'tn', requestId: 'rq', sandbox: 'sb'
+    });
+  });
+
   test('does NOT over-redact benign keys (tokenCached, apiVersion, description)', () => {
     const out = redactSecrets({ tokenCached: true, apiVersion: '1.0', description: 'a secret recipe' }) as Record<string, unknown>;
     // tokenCached ends with "cached", not "token"; apiVersion/description aren't sensitive
@@ -41,11 +53,40 @@ describe('redactSecrets', () => {
     expect(out).toEqual({ tokenCached: true, apiVersion: '1.0', description: 'a secret recipe' });
   });
 
-  test('leaves primitives and Error objects intact', () => {
+  test('leaves primitives intact', () => {
     expect(redactSecrets('hello')).toBe('hello');
     expect(redactSecrets(42)).toBe(42);
+    expect(redactSecrets(null)).toBe(null);
+  });
+
+  test('redacts an Error into a plain {name, message} copy (no verbatim passthrough)', () => {
     const err = new Error('boom');
-    expect(redactSecrets(err)).toBe(err);
+    expect(redactSecrets(err)).toEqual({ name: 'Error', message: 'boom' });
+  });
+
+  test('masks credentials carried on an Error (AxiosError-style config.headers)', () => {
+    // An AxiosError is an Error with enumerable own-properties, including the request
+    // config whose headers carry the bearer token + API key — these must be redacted.
+    const axiosLike = Object.assign(new Error('Request failed with status code 401'), {
+      code: 'ERR_BAD_REQUEST',
+      config: { url: '/fragments', headers: { Authorization: 'Bearer secret-token', 'x-api-key': 'api-key-123' } }
+    });
+    const out = redactSecrets(axiosLike) as Record<string, any>;
+    expect(out.message).toBe('Request failed with status code 401');
+    expect(out.code).toBe('ERR_BAD_REQUEST');
+    expect(out.config.url).toBe('/fragments');
+    expect(out.config.headers.Authorization).toBe('[REDACTED]');
+    expect(out.config.headers['x-api-key']).toBe('[REDACTED]');
+  });
+
+  test('Error redaction is cycle-safe (response.request back-reference)', () => {
+    const err: any = new Error('cycle');
+    err.response = { status: 500 };
+    err.response.request = err; // AxiosError-style back-reference
+    const out = redactSecrets(err) as Record<string, any>;
+    expect(out.message).toBe('cycle');
+    expect(out.response.status).toBe(500);
+    expect(out.response.request).toBe('[Circular]');
   });
 
   test('is cycle-safe (no infinite recursion)', () => {

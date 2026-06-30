@@ -236,7 +236,7 @@ Pass the union's $id or meta:altId (from list_xdm_union_schemas) as unionId.`,
     required: ['unionId'],
     properties: {
       unionId: { type: 'string', description: 'The $id or meta:altId of the union schema' },
-      full: { type: 'boolean', description: 'true (default) = fully resolved; false = unresolved definition' }
+      full: { type: 'boolean', description: 'false (default) = unresolved form with field-group $refs; true = fully resolved (may exceed the 1 MB result cap on real Profile unions)' }
     }
   }
 };

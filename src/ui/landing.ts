@@ -2079,11 +2079,9 @@ export const landingPageHtml = `<!DOCTYPE html>
     let logEventSource = null;
     let logAutoScroll = true;
 
-    function escapeHtml(str) {
-      return String(str)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
+    // NOTE: escapeHtml is defined once near the top of this script (it also escapes
+    // single quotes). A second definition here would be hoisted and win for the whole
+    // script, silently dropping the single-quote escaping — so it is intentionally absent.
 
     function appendLogEntry(entry) {
       const output = document.getElementById('logOutput');

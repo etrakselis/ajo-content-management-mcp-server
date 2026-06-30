@@ -7,22 +7,42 @@ import { Registry, Counter, Histogram, collectDefaultMetrics } from 'prom-client
 // Key names whose VALUE is a credential and must never be logged. `secret` and
 // `password` are matched as substrings so client_secret / clientSecret are covered;
 // `*token` (endsWith) covers access_token / accessToken / refreshToken WITHOUT
-// catching benign status keys like `tokenCached`. The bare set holds the rest.
+// catching benign status keys like `tokenCached`. Separators are collapsed so
+// x-api-key / api_key / apiKey and client_id / clientId all reduce to one comparable
+// form — the Adobe API key and the IMS OAuth client id are credentials, so they must
+// be masked anywhere an object carrying them is logged. The bare set holds the rest.
 const SENSITIVE_KEY_NAMES = new Set(['authorization', 'pat']);
 function isSensitiveKey(key: string): boolean {
   const k = key.toLowerCase();
-  return SENSITIVE_KEY_NAMES.has(k) || k.includes('secret') || k.includes('password') || k.endsWith('token');
+  const collapsed = k.replace(/[-_]/g, '');
+  return SENSITIVE_KEY_NAMES.has(k) ||
+    k.includes('secret') || k.includes('password') || k.endsWith('token') ||
+    collapsed.includes('apikey') || collapsed.includes('clientid');
 }
 
 // Recursively redact the value of any sensitive-looking key, at any nesting depth —
 // the previous scrub only checked top-level keys, so a credential tucked inside a
 // nested object (e.g. { config: { client_secret } }) leaked into the logs. Returns a
-// scrubbed COPY (never mutates the input). Error/Buffer/Date are returned as-is so
-// winston's own error formatting still works; cycles are guarded with a seen-set.
+// scrubbed COPY (never mutates the input). Buffer/Date are returned as-is. An Error is
+// NOT passed through verbatim: subclasses (notably AxiosError) attach enumerable
+// own-properties — config.headers carries `Authorization: Bearer …` and `x-api-key` —
+// that would otherwise leak a credential, so it is copied to a redacted plain object
+// (name/message preserved, stack dropped to match errors({ stack: false }), nested
+// fields masked). Cycles are guarded with a seen-set. Top-level log errors are
+// pre-formatted by winston.format.errors, which runs before this redactor.
 export function redactSecrets<T>(value: T, seen: WeakSet<object> = new WeakSet()): T {
   if (Array.isArray(value)) return value.map(v => redactSecrets(v, seen)) as unknown as T;
+  if (value instanceof Error) {
+    if (seen.has(value)) return '[Circular]' as unknown as T;
+    seen.add(value);
+    const out: Record<string, unknown> = { name: value.name, message: value.message };
+    for (const [k, v] of Object.entries(value as unknown as Record<string, unknown>)) {
+      out[k] = isSensitiveKey(k) ? '[REDACTED]' : redactSecrets(v, seen);
+    }
+    return out as unknown as T;
+  }
   if (value && typeof value === 'object') {
-    if (value instanceof Error || value instanceof Date || Buffer.isBuffer(value)) return value;
+    if (value instanceof Date || Buffer.isBuffer(value)) return value;
     if (seen.has(value)) return '[Circular]' as unknown as T;
     seen.add(value);
     const out: Record<string, unknown> = {};
