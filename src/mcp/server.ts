@@ -202,9 +202,23 @@ const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
 // folders/*.json record is redundant — nothing reads it back (promotion derives the
 // target folder path from the content file's repo path) — so folder ops apply directly to
 // AJO, still subject to the runtime write-access toggle and the write-confirmation gate.
+//
+// Tag writes (create/update/delete_tag) bypass for the SAME reasons, plus one that is
+// specific to them: tags are ORG-GLOBAL organization metadata, and the tag→content
+// association that actually matters is recorded on the CONTENT file itself (its tagIds +
+// _meta.tagNames). Cross-sandbox promotion resolves tags by NAME from _meta.tagNames
+// (findOrCreateTag in promotion/engine.ts), so a standalone tags/<name>.json record is
+// never read back either. Critically, routing create_tag through the approval-gate PR
+// returns only a prUrl with NO tag id — so a brand-new governance tag could not be created
+// AND attached to a fragment/template in one pass (you'd have to merge+deploy the tag PR
+// first just to learn its id). Applying tag writes directly returns the real id
+// immediately, removing that chicken-and-egg. Tag CRUD is still captured in the LOCAL
+// audit log (recordAudit, which this set does NOT gate) and still passes through the
+// read-only toggle and the write-confirmation gate (delete_tag re-confirms every call).
 const GITHUB_BYPASS_TOOLS = new Set<string>([
   'deploy_merged_changes', 'check_pr_status',
-  'create_folder', 'update_folder', 'delete_folder', 'ensure_folder_path'
+  'create_folder', 'update_folder', 'delete_folder', 'ensure_folder_path',
+  'create_tag', 'update_tag', 'delete_tag'
 ]);
 
 // Determine the AJO folderType for a tool so we can resolve folder names.
@@ -588,6 +602,31 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   deploy_repo_assets: handleDeployRepoAssets
 };
 
+// Log the size of the advertised tool set + instructions ONCE per process, the first
+// time a server is created (createMcpServer runs per HTTP session, so guard it). Uses
+// the real post-augmentation payload so the number reflects what clients actually
+// receive. Best-effort and self-contained — never let instrumentation break startup.
+let toolSetSizeLogged = false;
+function logAdvertisedToolSetSize(tools: ReadonlyArray<unknown>, instructions?: string): void {
+  if (toolSetSizeLogged) return;
+  toolSetSizeLogged = true;
+  try {
+    const toolsBytes = Buffer.byteLength(JSON.stringify(tools), 'utf8');
+    const instructionsBytes = instructions ? Buffer.byteLength(instructions, 'utf8') : 0;
+    const totalBytes = toolsBytes + instructionsBytes;
+    const approxTokens = (bytes: number) => Math.round(bytes / 4);
+    logger.info('Advertised MCP surface size (per-session context cost)', {
+      toolCount: tools.length,
+      toolsBytes,
+      instructionsBytes,
+      totalBytes,
+      approxTokens: approxTokens(totalBytes),
+      approxToolTokens: approxTokens(toolsBytes),
+      note: 'approxTokens ≈ bytes/4; this payload is sent to the client on every connect'
+    });
+  } catch { /* instrumentation must never break server creation */ }
+}
+
 export function createMcpServer(transport: TransportKind = 'http'): Server {
   const sandbox = getConfiguredSandboxName();
   const orgName = getConfiguredOrgName();
@@ -881,23 +920,32 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
 
   // ─── Tool Discovery ────────────────────────────────────────────────────────
 
+  // Build the exact tool list advertised to the client. Always the full set — many
+  // clients cache this list at connect and ignore tools/list_changed, so hiding write
+  // tools would strand them in read-only even after the toggle is flipped on. Write
+  // enforcement happens in CallTool instead. Write tools get the runtime-gate note and
+  // the confirmWrite flag (see augmentWriteTool); name-assigning tools get the enforced
+  // naming convention inline (see augmentNamingTool) so weaker models that skip
+  // get_server_context still discover it. Shared by ListTools and the startup size log.
+  const buildAdvertisedTools = () => ALL_TOOLS.map(t => {
+    const augmented = isWriteTool(t.name) ? augmentWriteTool(t) : t;
+    const named = withAnnotationTitle(augmentNamingTool(augmented, namingRulesBlock, namingPointer));
+    // Final step: strip any JSON-Schema keywords Anthropic's input_schema rejects
+    // (allOf/anyOf/oneOf/if/then/else) so a tool can never silently vanish from
+    // discovery. A no-op for the current definitions, which avoid them by design.
+    return sanitizeToolInputSchema(named);
+  });
+
+  // One-time visibility into how much context budget the advertised tool set spends.
+  // The descriptions are intentionally dense (redundant discovery channels), so this
+  // is a guardrail: a regression that balloons the payload — or skews semantic
+  // tool-ranking on clients that embed every description — shows up in the logs. The
+  // instructions block (also sent at connect) is included since it shares the budget.
+  // ~4 chars/token is the usual rough estimate for English+JSON.
+  logAdvertisedToolSetSize(buildAdvertisedTools(), instructions);
+
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    // Always advertise the full tool set — many clients cache this list at connect
-    // and ignore tools/list_changed, so hiding write tools would strand them in
-    // read-only even after the toggle is flipped on. Write enforcement happens in
-    // CallTool instead. Write tools get the runtime-gate note and the confirmWrite
-    // flag (see augmentWriteTool); name-assigning tools get the enforced naming
-    // convention inline (see augmentNamingTool) so weaker models that skip
-    // get_server_context still discover it.
-    const tools = ALL_TOOLS.map(t => {
-      const augmented = isWriteTool(t.name) ? augmentWriteTool(t) : t;
-      const named = withAnnotationTitle(augmentNamingTool(augmented, namingRulesBlock, namingPointer));
-      // Final step: strip any JSON-Schema keywords Anthropic's input_schema rejects
-      // (allOf/anyOf/oneOf/if/then/else) so a tool can never silently vanish from
-      // discovery. A no-op for the current definitions, which avoid them by design.
-      return sanitizeToolInputSchema(named);
-    });
-    return { tools };
+    return { tools: buildAdvertisedTools() };
   });
 
   // ─── Tool Execution ────────────────────────────────────────────────────────

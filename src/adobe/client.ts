@@ -40,6 +40,34 @@ let httpClient: AxiosInstance | null = null;
 // MCP client until its own (much longer) cap. Override with AJO_HTTP_TIMEOUT_MS.
 export const HTTP_TIMEOUT_MS = Number(process.env.AJO_HTTP_TIMEOUT_MS) || 30000;
 
+// ─── Archive (internal GraphQL) endpoint ──────────────────────────────────────
+// Fragments have no public REST delete; the ONLY removal path is an internal AJO
+// GraphQL mutation behind the Experience Cloud unified-content gateway. That is a
+// PRIVATE, undocumented surface — its host, the appId query param, and the
+// `x-api-key: exc_app` shared key can change without notice and are not part of the
+// public contract this server otherwise targets. So they are isolated here and made
+// overridable, and a shape change is surfaced as a distinct, branchable
+// ARCHIVE_API_UNAVAILABLE error (see ArchiveApiError / buildError) with a manual
+// fallback, instead of leaking through as an opaque INTERNAL_ERROR.
+export const ARCHIVE_GRAPHQL_URL = process.env.AJO_ARCHIVE_GRAPHQL_URL ||
+  'https://exc-unifiedcontent.experience.adobe.net/api/gql/profile/graphql/graphql?appId=cjmFragmentsUI';
+export const ARCHIVE_API_KEY = process.env.AJO_ARCHIVE_API_KEY || 'exc_app';
+
+// Raised when the internal archive GraphQL endpoint returns something other than the
+// expected { data: { updateAjoFragmentState: { id, etag } } } shape — a GraphQL-level
+// error, an empty payload, or a result missing the id we mutated. Distinct from a
+// transport/HTTP failure (those stay AxiosErrors and map by status code). buildError
+// promotes its `.code` so callers can branch on ARCHIVE_API_UNAVAILABLE specifically.
+export class ArchiveApiError extends Error {
+  readonly code = 'ARCHIVE_API_UNAVAILABLE';
+  readonly details: unknown;
+  constructor(message: string, details: unknown = {}) {
+    super(message);
+    this.name = 'ArchiveApiError';
+    this.details = details;
+  }
+}
+
 // Collapse interpolated identifiers (UUIDs, numeric ids) in a request path to a
 // fixed ":id" placeholder before using it as a Prometheus label. The raw paths
 // embed per-object UUIDs (e.g. /templates/<uuid>), which would otherwise create
@@ -225,6 +253,11 @@ function extractDeepMessage(data: unknown): string | null {
 }
 
 function buildError(err: unknown): { code: string; message: string; details: unknown } {
+  // The internal archive endpoint answered, but not in the expected shape. Surface
+  // the dedicated code so callers can branch on it, distinct from a generic 5xx.
+  if (err instanceof ArchiveApiError) {
+    return { code: err.code, message: err.message, details: err.details ?? {} };
+  }
   if (axios.isAxiosError(err)) {
     // A timed-out / aborted request has no response. Surface it as a distinct,
     // retryable TIMEOUT rather than a generic API_ERROR, so the model knows the
@@ -495,11 +528,23 @@ export async function getLastPublicationStatus(fragmentId: string) {
   return response.data;
 }
 
+// Manual-recovery hint appended to every archive shape-drift error: archiving is the
+// only way to remove a fragment, so a failure here must always name a way forward.
+const ARCHIVE_FALLBACK_HINT =
+  ' This server reaches archive through an internal, undocumented AJO GraphQL endpoint ' +
+  '(not the public REST API), which may have changed. As a fallback, archive the fragment ' +
+  'directly in the Adobe Journey Optimizer UI. If this persists, the endpoint can be overridden ' +
+  'with the AJO_ARCHIVE_GRAPHQL_URL / AJO_ARCHIVE_API_KEY environment variables.';
+
 export async function archiveFragment(fragmentId: string) {
   if (!clientConfig) throw new Error('Adobe API client not configured');
   const token = await tokenManager.getToken();
+  // Transport/HTTP failures (401/403/404/5xx) propagate as AxiosErrors and are mapped
+  // by buildError's status-code table. Only an HTTP-200 whose BODY is the wrong shape
+  // (GraphQL error, empty data, or a result missing id) becomes an ArchiveApiError —
+  // that is the specific "the private endpoint changed" signal worth branching on.
   const response = await axios.post(
-    'https://exc-unifiedcontent.experience.adobe.net/api/gql/profile/graphql/graphql?appId=cjmFragmentsUI',
+    ARCHIVE_GRAPHQL_URL,
     {
       operationName: 'updateAjoFragmentState',
       query: `mutation updateAjoFragmentState($id: String!, $etag: String!, $state: AjoFragmentState!) {
@@ -511,18 +556,31 @@ export async function archiveFragment(fragmentId: string) {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
-        'x-api-key': 'exc_app',
+        'x-api-key': ARCHIVE_API_KEY,
         'x-gw-ims-org-id': clientConfig.imsOrg,
         'x-sandbox-name': clientConfig.sandboxName
       }
     }
   );
   const gqlErrors = response.data?.errors;
-  if (gqlErrors?.length) {
-    throw new Error(`Archive mutation error: ${JSON.stringify(gqlErrors)}`);
+  if (Array.isArray(gqlErrors) && gqlErrors.length) {
+    const detail = gqlErrors.map((e: { message?: string }) => e?.message).filter(Boolean).join('; ');
+    throw new ArchiveApiError(
+      `The archive request was rejected by the internal AJO GraphQL endpoint${detail ? `: ${detail}` : '.'}` +
+      ARCHIVE_FALLBACK_HINT,
+      { graphqlErrors: gqlErrors }
+    );
   }
   const result = response.data?.data?.updateAjoFragmentState;
-  if (!result) throw new Error(`Archive mutation returned no data. Response: ${JSON.stringify(response.data)}`);
+  if (!result || typeof result.id !== 'string') {
+    throw new ArchiveApiError(
+      'The internal AJO archive endpoint returned an unexpected response (no updateAjoFragmentState.id).' +
+      ARCHIVE_FALLBACK_HINT,
+      // Echo a bounded snippet of the body so a future shape change is diagnosable
+      // from the error alone, without re-running with debug logging.
+      { responseSnippet: JSON.stringify(response.data ?? null).slice(0, 500) }
+    );
+  }
   return { id: result.id, etag: result.etag };
 }
 

@@ -86,7 +86,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     header {
       background: linear-gradient(to bottom, #464646, #363636);
-      padding: 16px 48px;
+      padding: 11px 48px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -868,7 +868,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       </div>
       <span class="setup-tracker-pct" id="setupPct">0%</span>
     </div>
-    <div class="header-active-badge" id="headerActiveBadge" onclick="document.getElementById('statusPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' })" style="cursor:pointer;">
+    <div class="header-active-badge" id="headerActiveBadge" data-action="scroll-status" style="cursor:pointer;">
       <div class="status-dot"></div>
       <span class="header-active-badge-label">MCP Server Active</span>
     </div>
@@ -882,11 +882,11 @@ export const landingPageHtml = `<!DOCTYPE html>
 
     <div class="reset-notice" id="resetNotice">
       <span><strong>The MCP server was restarted</strong> and is no longer configured (this happens when the container is rebuilt or restarted). Re-upload your credentials and start the server again to reconnect.</span>
-      <button class="refresh-btn" onclick="window.location.reload()">↻ Refresh page</button>
+      <button class="refresh-btn" data-action="reload">↻ Refresh page</button>
     </div>
     <div class="client-restart-notice" id="clientRestartNotice">
       <strong>Restart your MCP client.</strong> A client was connected when this server went down. Once you've restarted the server here, you must also restart your MCP client (Claude Desktop, Claude Code, Cursor, etc.) so it can reinitialize the connection — the previous session cannot be recovered automatically.
-      <button class="refresh-btn" onclick="window.location.reload()">↻ Refresh page</button>
+      <button class="refresh-btn" data-action="reload">↻ Refresh page</button>
     </div>
 
     <!-- Step 1: Credentials -->
@@ -1115,7 +1115,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       <!-- Shown after re-activation when clients were connected under the previous config -->
       <div class="config-change-notice" id="configChangeNotice">
         <strong>Restart your MCP client(s).</strong> The server configuration changed since clients last connected. Previously connected clients (Claude Desktop, Claude Code, Cursor, etc.) must be restarted to pick up the updated settings.
-        <button class="dismiss-btn" onclick="document.getElementById('configChangeNotice').classList.remove('show')">Dismiss</button>
+        <button class="dismiss-btn" data-action="dismiss-config-change">Dismiss</button>
       </div>
 
       <!-- Organization name — revealed only if tenant namespace can't be auto-detected -->
@@ -1173,7 +1173,16 @@ export const landingPageHtml = `<!DOCTYPE html>
     </section>
   </main>
 
-  <script>
+  <script src="/app.js" defer></script>
+</body>
+</html>`;
+
+// Client-side script for the landing page, served at GET /app.js as an external
+// file so the page needs no inline <script> — letting the server set a strict
+// Content-Security-Policy (script-src 'self'). Former inline onclick handlers are
+// wired via event delegation at the end of this script (the page is loaded with
+// `defer`, so the DOM is ready when it runs).
+export const landingScript = `
     let credentials = null;
     let serverUrl = window.location.origin;
     // Identity details parsed from the uploaded project export. The tenant
@@ -2175,11 +2184,16 @@ export const landingPageHtml = `<!DOCTYPE html>
     });
 
     // Flatten the rendered log entries (header line + optional JSON detail) to plain
-    // text — shared by the Copy and Download buttons.
-    function collectLogText() {
+    // text — shared by the Copy and Download buttons. When visibleOnly is set, entries
+    // hidden by an active search filter (display:none) are skipped, so Copy captures
+    // just the found results; with no search active nothing is hidden, so it's the
+    // full log. Download passes nothing and always gets every entry.
+    function collectLogText(visibleOnly) {
       const output = document.getElementById('logOutput');
       if (!output) return '';
-      return Array.from(output.querySelectorAll('.log-entry'))
+      let entries = Array.from(output.querySelectorAll('.log-entry'));
+      if (visibleOnly) entries = entries.filter(e => e.style.display !== 'none');
+      return entries
         .map(entry => {
           const ts  = entry.querySelector('.log-ts')?.textContent?.trim() || '';
           const lvl = entry.querySelector('.log-level')?.textContent?.trim() || '';
@@ -2192,7 +2206,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
 
     document.getElementById('logCopyBtn').addEventListener('click', () => {
-      const text = collectLogText();
+      const text = collectLogText(true);
       if (!text) return;
       navigator.clipboard.writeText(text).then(() => {
         const btn = document.getElementById('logCopyBtn');
@@ -2314,6 +2328,14 @@ export const landingPageHtml = `<!DOCTYPE html>
       if (e.key === 'Escape') { e.preventDefault(); closeLogSearch(); }
     });
     document.getElementById('logSearchClose').addEventListener('click', closeLogSearch);
-  </script>
-</body>
-</html>`;
+
+    // CSP-safe event delegation (replaces former inline onclick handlers).
+    document.addEventListener('click', function (e) {
+      var el = e.target && e.target.closest ? e.target.closest('[data-action]') : null;
+      if (!el) return;
+      var action = el.getAttribute('data-action');
+      if (action === 'reload') { window.location.reload(); }
+      else if (action === 'scroll-status') { var p = document.getElementById('statusPanel'); if (p) p.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+      else if (action === 'dismiss-config-change') { var n = document.getElementById('configChangeNotice'); if (n) n.classList.remove('show'); }
+    });
+`;

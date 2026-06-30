@@ -601,7 +601,7 @@ The integration settings are stored in memory for the lifetime of the server —
 
 ### File structure in the repository
 
-Each AJO **content** write (template / fragment / tag) produces one JSON file whose path mirrors the sandbox and folder structure you've set up in AJO:
+Each AJO **content** write (template / fragment) produces one JSON file whose path mirrors the sandbox and folder structure you've set up in AJO:
 
 ```
 {sandbox-name}/
@@ -611,13 +611,11 @@ Each AJO **content** write (template / fragment / tag) produces one JSON file wh
   content-fragments/
     {ajo-folder-path}/
       {asset-name}.json
-  tags/
-    {tag-name}.json
 ```
 
 The `{ajo-folder-path}` is resolved by walking the AJO folder hierarchy (e.g. a template in the `BIS › Wishlist` folder under `NV` produces `content-templates/NV/BIS/Wishlist/`). If an asset has no parent folder, it's placed directly under the asset-type directory. The filename is the asset's name (not its UUID), so the repo is human-readable without any ID lookups.
 
-**Folders are not stored as separate files.** The folder hierarchy is implicit in these content paths, so the folder tools (`create_folder`, `update_folder`, `delete_folder`, `ensure_folder_path`) apply **directly to AJO** — no PR, no `folders/` records — and promotion re-creates the same paths in the target from where the content files live. (Folder writes are still subject to the write-access toggle and the write-confirmation gate; they're just structural, so there's nothing content-bearing to version or review.)
+**Folders and tags are not stored as separate files.** The folder tools (`create_folder`, `update_folder`, `delete_folder`, `ensure_folder_path`) **and** the tag tools (`create_tag`, `update_tag`, `delete_tag`) apply **directly to AJO** — no PR, no `folders/` or `tags/` records. The folder hierarchy is implicit in the content paths (promotion re-creates it from where the content files live), and a tag's association is recorded on the content file itself (`_meta.tagNames` + `tagIds`), which is what cross-sandbox promotion reads — it resolves/creates tags by **name** in the target — so a standalone tag file is never read back. Applying tag writes directly (instead of through a PR) also means `create_tag` returns the new tag's **id immediately** rather than only a PR URL, so a brand-new governance tag can be created and attached to content in a single pass. (These writes are still subject to the write-access toggle and the write-confirmation gate, and are recorded in the local audit log; they're just organization metadata, so there's nothing content-bearing to version or review.)
 
 Every file contains a `_meta` block with the operation name, timestamp, author email, sandbox, tenant namespace, and — when the asset is tagged — the tag **names** (`tagNames`, so the repo is self-describing for cross-sandbox promotion, since the raw `tagIds` are environment-local UUIDs), followed by the asset's content.
 

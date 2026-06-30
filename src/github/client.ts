@@ -14,7 +14,15 @@ function ghHeaders(token: string): Record<string, string> {
   };
 }
 
-async function ghRequest(token: string, path: string, options: RequestInit = {}): Promise<unknown> {
+// `quietStatuses` lists HTTP statuses the CALLER treats as normal control flow and
+// catches itself — e.g. getFileSha's 404 ("file absent → create it") or
+// ensureLabelExists's 422 ("label already exists"). Those are logged at debug, not
+// warn, so a handled outcome never masquerades as a failure in the logs. ghRequest
+// still throws for them (the caller's try/catch decides what to do); any OTHER
+// non-2xx is a real error and still logs at warn.
+async function ghRequest(
+  token: string, path: string, options: RequestInit = {}, quietStatuses: number[] = []
+): Promise<unknown> {
   const method = (options.method ?? 'GET').toUpperCase();
   // Log the exact outbound request (method + path, never the token) so a failing
   // GitHub call names itself in the logs. Errors below include the upstream body.
@@ -27,7 +35,9 @@ async function ghRequest(token: string, path: string, options: RequestInit = {})
     const body = await res.text().catch(() => '');
     let msg: string;
     try { msg = (JSON.parse(body) as { message?: string }).message ?? body; } catch { msg = body; }
-    logger.warn('GitHub API error', { method, path, status: res.status, message: msg });
+    const meta = { method, path, status: res.status, message: msg };
+    if (quietStatuses.includes(res.status)) logger.debug('GitHub API expected non-2xx', meta);
+    else logger.warn('GitHub API error', meta);
     throw new Error(`GitHub API ${res.status} on ${method} ${path}: ${msg}`);
   }
   const ct = res.headers.get('content-type') ?? '';
@@ -110,7 +120,9 @@ export async function getFileSha(
 ): Promise<string | null> {
   try {
     const q = ref ? `?ref=${encodeURIComponent(ref)}` : '';
-    const data = await ghRequest(token, `/repos/${owner}/${repo}/contents/${path}${q}`) as { sha: string };
+    // 404 = the file doesn't exist yet (→ caller creates it instead of updating), which
+    // is the normal case for a new file on a fresh PR branch — quiet it (debug, not warn).
+    const data = await ghRequest(token, `/repos/${owner}/${repo}/contents/${path}${q}`, {}, [404]) as { sha: string };
     return data.sha ?? null;
   } catch {
     return null;
@@ -213,7 +225,7 @@ export async function ensureLabelExists(
     await ghRequest(token, `/repos/${owner}/${repo}/labels`, {
       method: 'POST',
       body: JSON.stringify({ name, color })
-    });
+    }, [422]); // 422 = label already exists; expected and handled in catch — quiet it.
   } catch (err) {
     // 422 = already exists; anything else is a real failure worth surfacing.
     if (!(err instanceof Error && /422/.test(err.message))) throw err;

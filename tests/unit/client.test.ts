@@ -193,9 +193,39 @@ describe('fragment HTTP wrappers', () => {
     expect(await client.archiveFragment('f1')).toEqual({ id: 'f1', etag: '"v2"' });
   });
 
-  test('archiveFragment throws when the mutation returns GraphQL errors', async () => {
+  test('archiveFragment raises a branchable ArchiveApiError on GraphQL errors', async () => {
     (axios as unknown as { post: jest.Mock }).post.mockResolvedValue({ data: { errors: [{ message: 'denied' }] } });
-    await expect(client.archiveFragment('f1')).rejects.toThrow(/Archive mutation error/);
+    const err = await client.archiveFragment('f1').then(() => null, e => e);
+    expect(err).toBeInstanceOf(client.ArchiveApiError);
+    expect(err.code).toBe('ARCHIVE_API_UNAVAILABLE');
+    expect(err.message).toMatch(/denied/);
+    expect(err.message).toMatch(/Adobe Journey Optimizer UI/); // names the manual fallback
+  });
+
+  test('archiveFragment raises ArchiveApiError when the response shape lacks an id', async () => {
+    (axios as unknown as { post: jest.Mock }).post.mockResolvedValue({ data: { data: {} } });
+    const err = await client.archiveFragment('f1').then(() => null, e => e);
+    expect(err).toBeInstanceOf(client.ArchiveApiError);
+    expect(err.code).toBe('ARCHIVE_API_UNAVAILABLE');
+    expect(err.details).toHaveProperty('responseSnippet');
+  });
+
+  test('archiveFragment posts to the default internal endpoint with the exc_app key', async () => {
+    const post = (axios as unknown as { post: jest.Mock }).post;
+    post.mockResolvedValue({ data: { data: { updateAjoFragmentState: { id: 'f1', etag: '"v2"' } } } });
+    await client.archiveFragment('f1');
+    expect(post).toHaveBeenCalledWith(
+      client.ARCHIVE_GRAPHQL_URL,
+      expect.anything(),
+      expect.objectContaining({ headers: expect.objectContaining({ 'x-api-key': client.ARCHIVE_API_KEY }) })
+    );
+  });
+});
+
+describe('buildError — archive endpoint hardening', () => {
+  test('maps ArchiveApiError to the ARCHIVE_API_UNAVAILABLE code', () => {
+    const mapped = client.buildError(new client.ArchiveApiError('boom', { x: 1 }));
+    expect(mapped).toEqual({ code: 'ARCHIVE_API_UNAVAILABLE', message: 'boom', details: { x: 1 } });
   });
 });
 

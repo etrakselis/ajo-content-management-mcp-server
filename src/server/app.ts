@@ -15,7 +15,7 @@ import { getConnectedClients, addSession, touchSession, openSessionStream, close
 import { getWritesAllowed, setWritesAllowed, onWriteAccessChanged } from '../mcp/access-policy.js';
 import { onSandboxChanged, notifySandboxChanged } from '../mcp/sandbox-change.js';
 import { logger, metricsRegistry, addLogSseClient, removeLogSseClient, getLogBuffer } from '../telemetry/index.js';
-import { landingPageHtml } from '../ui/landing.js';
+import { landingPageHtml, landingScript } from '../ui/landing.js';
 import { getDefaultNamingConvention } from '../ui/naming-convention-default.js';
 
 // ─── Shared configuration helpers ──────────────────────────────────────────
@@ -501,8 +501,28 @@ export function createExpressApp(): express.Application {
 
   // ─── Security Middleware ─────────────────────────────────────────────────
 
+  // The landing page now loads its script from an external file (GET /app.js, see
+  // below), so the page carries NO inline <script> and we can enforce a strict CSP:
+  // script-src 'self' blocks injected/inline JS — the real XSS execution vector.
+  // style-src keeps 'unsafe-inline' because the page still uses an inline <style>
+  // block and inline style="" attributes; inline CSS can't execute JS, so this is the
+  // standard pragmatic trade-off. upgrade-insecure-requests is dropped: this server
+  // runs over plain HTTP on loopback, and the default would try to upgrade its own
+  // requests to https. connect-src 'self' covers the page's fetch() + EventSource.
   app.use(helmet({
-    contentSecurityPolicy: false // Allow inline scripts in UI
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"],
+        upgradeInsecureRequests: null
+      }
+    }
   }));
 
   app.use(cors({
@@ -585,6 +605,15 @@ export function createExpressApp(): express.Application {
   app.get('/', (_req, res) => {
     res.setHeader('Content-Type', 'text/html');
     res.send(renderedLandingPage);
+  });
+
+  // The landing page's client script, served as an external file so the page itself
+  // carries no inline <script> (see the strict CSP above). Static for the life of the
+  // process; the page is the only consumer.
+  app.get('/app.js', (_req, res) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.send(landingScript);
   });
 
   // ─── Configuration API ────────────────────────────────────────────────────
