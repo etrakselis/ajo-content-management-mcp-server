@@ -508,12 +508,12 @@ export const landingPageHtml = `<!DOCTYPE html>
     .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; cursor: pointer; }
     .toggle-text { display: flex; flex-direction: column; gap: 4px; }
     .toggle-title { font-size: 14px; font-weight: 600; }
-    .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+    .switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
     .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
     .slider { position: absolute; inset: 0; background: var(--adobe-border); border-radius: 100px; transition: background 0.15s; }
-    .slider::before { content: ''; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px; background: white; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform 0.15s; }
+    .slider::before { content: ''; position: absolute; height: 14px; width: 14px; left: 3px; top: 3px; background: white; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform 0.15s; }
     .switch input:checked + .slider { background: var(--adobe-success); }
-    .switch input:checked + .slider::before { transform: translateX(20px); }
+    .switch input:checked + .slider::before { transform: translateX(16px); }
     .btn-primary {
       width: auto;
       min-width: 220px;
