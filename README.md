@@ -601,7 +601,7 @@ The integration settings are stored in memory for the lifetime of the server —
 
 ### File structure in the repository
 
-Each AJO write produces one JSON file whose path mirrors the sandbox and folder structure you've set up in AJO:
+Each AJO **content** write (template / fragment / tag) produces one JSON file whose path mirrors the sandbox and folder structure you've set up in AJO:
 
 ```
 {sandbox-name}/
@@ -616,6 +616,8 @@ Each AJO write produces one JSON file whose path mirrors the sandbox and folder 
 ```
 
 The `{ajo-folder-path}` is resolved by walking the AJO folder hierarchy (e.g. a template in the `BIS › Wishlist` folder under `NV` produces `content-templates/NV/BIS/Wishlist/`). If an asset has no parent folder, it's placed directly under the asset-type directory. The filename is the asset's name (not its UUID), so the repo is human-readable without any ID lookups.
+
+**Folders are not stored as separate files.** The folder hierarchy is implicit in these content paths, so the folder tools (`create_folder`, `update_folder`, `delete_folder`, `ensure_folder_path`) apply **directly to AJO** — no PR, no `folders/` records — and promotion re-creates the same paths in the target from where the content files live. (Folder writes are still subject to the write-access toggle and the write-confirmation gate; they're just structural, so there's nothing content-bearing to version or review.)
 
 Every file contains a `_meta` block with the operation name, timestamp, author email, sandbox, tenant namespace, and — when the asset is tagged — the tag **names** (`tagNames`, so the repo is self-describing for cross-sandbox promotion, since the raw `tagIds` are environment-local UUIDs), followed by the asset's content.
 
@@ -1285,6 +1287,8 @@ A typical browse-then-read flow: read `ajo://fragments` to find the fragment nam
 ## MCP Prompts
 
 Beyond the free-form [Example Prompts](#example-prompts) above (which you type yourself), the server also publishes **MCP prompts** — named, parameterized workflows the client surfaces as ready-to-run commands (e.g. Claude Desktop's slash-command / prompt picker). Selecting one injects a fully-formed, multi-step instruction set into the conversation, so the model executes a known-good procedure instead of improvising. Each prompt also **embeds the relevant reference resource** inline (the channel reference or error-code reference), so the model has it on hand while running the workflow rather than having to fetch it.
+
+> **Claude Desktop note:** the slash-command / prompt picker **does not work** when this server is connected via the `mcp-remote` bridge (the setup described in [Client Connection Guide → Claude Desktop](#claude-desktop-via-mcp-remote-bridge)). This is the same limitation as resource attachment — Claude Desktop cannot surface prompts or resources from servers connected through a remote bridge. It is **not** a problem with this server; it affects every local server bridged through `mcp-remote`. The prompts work normally in clients that connect natively over HTTP (Claude Code, Cursor, VS Code). In Claude Desktop, use the free-form [Example Prompts](#example-prompts) instead — they cover the same workflows.
 
 | Prompt | Argument(s) | What it does |
 |--------|-------------|--------------|

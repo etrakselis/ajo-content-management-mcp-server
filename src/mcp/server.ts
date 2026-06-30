@@ -193,9 +193,19 @@ const WRITE_TOOLS = new Set<string>([
 
 const isWriteTool = (name: string): boolean => WRITE_TOOLS.has(name);
 
-// Tools that bypass the GitHub PR approval gate. deploy_merged_changes IS the
-// deployment step — intercepting it would be circular. check_pr_status is read-only.
-const GITHUB_BYPASS_TOOLS = new Set<string>(['deploy_merged_changes', 'check_pr_status', 'ensure_folder_path']);
+// Tools that bypass the GitHub PR approval gate AND the audit-trail commit — they apply
+// straight to AJO and never produce a repo file. deploy_merged_changes IS the deployment
+// step (intercepting it would be circular); check_pr_status is read-only. The folder
+// tools (create/update/delete/ensure_folder_path) are STRUCTURAL: the repo never stores
+// folders as their own files because the folder hierarchy is already implicit in where
+// the content files live (e.g. content-fragments/LM/PD/X/foo.json). A dedicated
+// folders/*.json record is redundant — nothing reads it back (promotion derives the
+// target folder path from the content file's repo path) — so folder ops apply directly to
+// AJO, still subject to the runtime write-access toggle and the write-confirmation gate.
+const GITHUB_BYPASS_TOOLS = new Set<string>([
+  'deploy_merged_changes', 'check_pr_status',
+  'create_folder', 'update_folder', 'delete_folder', 'ensure_folder_path'
+]);
 
 // Determine the AJO folderType for a tool so we can resolve folder names.
 function ajoFolderTypeFor(toolName: string): string | undefined {
