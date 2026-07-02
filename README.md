@@ -30,7 +30,7 @@ A production-grade **Model Context Protocol (MCP) server** that connects LLM-pow
 
 ## Overview
 
-This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 48 tools covering the full template and fragment lifecycle, folder and tag organization (the Unified Tags/Folders API), read-only Experience Platform Schema Registry (XDM) lookups, cross-sandbox content promotion (dev → prod) and same-sandbox repo→live deploy, a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec and the personalization syntax library), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
+This MCP server bridges LLM clients (Claude, Cursor, Codex) with the Adobe Journey Optimizer Content Management REST API. It exposes 49 tools covering the full template and fragment lifecycle, folder and tag organization (the Unified Tags/Folders API), read-only Experience Platform Schema Registry (XDM) lookups, cross-sandbox content promotion (dev → prod) and same-sandbox repo→live deploy, a server-context lookup, and read-only AJO authoring references (the Visual Email Designer HTML spec, the personalization syntax library, and an email-authoring scenario FAQ), handles Adobe IMS authentication with token caching, and ships with enterprise-grade observability, security, and reliability features.
 
 The Schema Registry tools let the LLM discover the **real personalization attribute paths** configured in a sandbox — most customers define custom field groups under their tenant namespace rather than using only default XDM fields — so generated content references attributes that actually exist instead of guessing `{{_yourtenant.profile.person.firstName}}`. Complementing them, the **authoring reference** tools teach the LLM the exact output formats AJO expects: `get_visual_designer_requirements` returns the native HTML serialization spec so generated email stays editable in the drag-and-drop designer, and `get_personalization_syntax` returns AJO's native personalization expression language (helper functions, conditionals, loops, dataset lookup) so expressions use real AJO constructs rather than generic Handlebars/Liquid.
 
@@ -104,6 +104,7 @@ Reference content the LLM fetches to produce output in the exact format AJO expe
 | `get_visual_designer_requirements` | The complete native-HTML serialization spec for the AJO Visual Email Designer (rules, structure/component catalog, required `<head>`). Call before authoring email HTML so it stays in drag-and-drop mode. |
 | `get_personalization_syntax` | The AJO-native personalization syntax library (expression language, helper functions, operators, contextual-data iteration, dataset lookup). Served one category at a time. Call before writing `{{ }}` / `{%= %}` expressions. |
 | `get_personalization_guidance` | AJO personalization strategy guide — when and what to personalize (discovery process, data-source resolution, iteration rules, coverage checklist). Call before authoring any dynamic content. |
+| `get_email_scenario_faq` | Triage/conversation playbook for authoring AJO email — maps the common email personalization scenarios (structure, global vars, reusable header/footer fragments, product feeds, sorting/eligibility, price/text transforms, tracking/deep links, images, conditional content, compliance) to their AJO solution and, for each, the clarifying questions to ask. Call first when creating a new AJO email or converting a provided HTML email. |
 
 ### AEM Assets — read-only
 | Tool | Description |
@@ -1241,6 +1242,12 @@ Categories: `core`, `helpers`, `operators`, `strings`, `dates`, `arrays`, `aggre
 ```
 Returns the AJO personalization strategy guide — **when** and **what** to personalize while authoring content. Covers the discovery process, data-source resolution order (profile → journey context → event payload → dataset lookup), detecting collections that require iteration, what fields to personalize (customer, transaction, event, offer, URLs, images, dates), conditional content, and a final coverage/validation checklist. This is the strategy layer; pair it with `get_personalization_syntax` (how to write expressions) and the Schema Registry tools (real attribute paths).
 
+#### `get_email_scenario_faq` *(read)*
+```json
+{}
+```
+Returns the AJO **email scenario FAQ & clarifying-question playbook** — the triage/conversation layer for authoring email content. It's a scenario catalog (not a one-shot spec): it lets the model **recognize** the common email personalization scenarios in a request or a provided HTML email (data-source resolution, global variables, reusable header/footer fragments, preheader, product feeds, sorting, eligibility filtering, counters, price/text transforms, star ratings, tracking/deep-link/UTM links, images → media library, recommendation trays, conditional content, execution metadata, compliance links), **recall** the AJO solution for each, and — the point of the file — **ask the user the right clarifying questions** so the content fragments and template land configured for their use case. Call it **first** when the user asks to create a new AJO email or convert an existing HTML email; it then defers to `get_visual_designer_requirements` (HTML format), `get_personalization_guidance` / `get_personalization_syntax` (personalization), and the Schema Registry tools (real attribute paths).
+
 #### `get_aem_image_embed_instructions` *(read)*
 ```json
 {}
@@ -1477,6 +1484,7 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── personalization-guidance.ts      Loads the AJO personalization scenarios/strategy guidance asset (get_personalization_guidance)
 │   │   ├── visual-designer-requirements.ts  Loads the AJO Visual Email Designer HTML spec asset (get_visual_designer_requirements)
 │   │   ├── aem-asset-instructions.ts        Loads the AEM image embed-attribute retrieval procedure (get_aem_image_embed_instructions)
+│   │   ├── email-scenario-faq.ts            Loads the AJO email scenario FAQ & clarifying-question playbook asset (get_email_scenario_faq)
 │   │   ├── tool-catalog.ts     Builds the grouped tool catalog (for get_server_context + instructions)
 │   │   ├── access-policy.ts    Runtime read-only / write-access toggle
 │   │   ├── sandbox-change.ts   Live sandbox-switch notifier — emits tools/resources list_changed when the active sandbox is reselected
@@ -1494,6 +1502,7 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── visual-designer.ts  get_visual_designer_requirements tool — AJO email HTML spec (read-only)
 │   │   ├── aem-assets.ts       get_aem_image_embed_instructions tool — AEM image embed-attribute procedure (read-only)
 │   │   ├── personalization.ts  get_personalization_syntax + get_personalization_guidance tools (read-only)
+│   │   ├── email-scenario.ts   get_email_scenario_faq tool — AJO email scenario FAQ & clarifying-question playbook (read-only)
 │   │   ├── context.ts          get_server_context + get_naming_convention tools (read-only)
 │   │   └── utils.ts            Shared tool helpers — output-schema envelope, telemetry wrapper, RESPONSE_TOO_LARGE guard, content-warning/embed scanners
 │   ├── promotion/
@@ -1507,6 +1516,7 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── ajo-personalization-scenarios-guidance.md  Personalization strategy/scenarios guidance (get_personalization_guidance)
 │   │   ├── ajo-visual-designer-requirements.md        Visual Email Designer HTML spec (get_visual_designer_requirements)
 │   │   ├── aem-assetid-retrieval-instructions.md      AEM image embed-attribute retrieval procedure (get_aem_image_embed_instructions)
+│   │   ├── ajo-email-scenario-faq.md                  AJO email scenario FAQ & clarifying-question playbook (get_email_scenario_faq)
 │   │   └── ajo-content-asset-governance-rules.md      Content asset governance & naming-standard reference asset
 │   ├── adobe/
 │   │   ├── client.ts           AJO Content API client (axios + retry, injects auth headers)
