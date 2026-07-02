@@ -212,6 +212,8 @@ templateType — "content" vs "html" (they select different content shapes, not 
 
 The per-channel "template" shape (which keys each channel needs) is documented in full on the "template" parameter below — follow it exactly (e.g. email "content" → { subject, html: { body } }; sms uses "text" not "body"; inapp body is an OBJECT; code's key is html/expression/condition, not "content").
 
+⚠ NEW EMAIL OR HTML→AJO CONVERSION (email channel): when you are asked to create a new AJO email or convert a user-provided HTML email into an AJO-compatible one, call get_email_scenario_faq FIRST — it triages which personalization scenarios the content contains and lists the clarifying questions to ask the user so this template (and any content fragments) end up configured for their actual use case, not guessed defaults. Do that triage before writing any markup.
+
 ⚠ EMAIL HTML → VISUAL EMAIL DESIGNER: email HTML (templateType "content" html.body, or templateType "html") MUST be in AJO's native serialization format, or it opens in Compatibility mode and locks the user out of drag-and-drop editing. Call get_visual_designer_requirements BEFORE writing any email HTML and reproduce that exact structure. (Landing-page HTML has no such requirement.)
 
 ⚠ EMBEDDING AEM IMAGES: if the content includes an image hosted in Adobe Experience Manager (AEM), its <img> must carry the AJO media-library attributes data-medialibrary-id, data-mediarepo-id, and data-medialibrary-source ("aem") or it will not resolve from the media library. This server does NOT look those up — call get_aem_image_embed_instructions for the step-by-step procedure to resolve them via the separate AEM MCP server (by image name + folder) BEFORE writing the <img> tag.
@@ -378,7 +380,7 @@ templateType — same meanings as create_content_template: "content" (channel-aw
 
 The per-channel "template" shape is documented in full on the "template" parameter below — follow it exactly.
 
-⚠ EMAIL HTML → VISUAL EMAIL DESIGNER: email HTML must be in AJO's native serialization format or it opens in Compatibility mode (drag-and-drop editing lost). Call get_visual_designer_requirements BEFORE writing any email HTML.
+⚠ EMAIL HTML → VISUAL EMAIL DESIGNER: email HTML must be in AJO's native serialization format or it opens in Compatibility mode (drag-and-drop editing lost). Call get_visual_designer_requirements BEFORE writing any email HTML. When you are converting a user-provided HTML email into AJO (or authoring a new one), call get_email_scenario_faq FIRST to triage scenarios and gather the clarifying questions to ask.
 
 ⚠ EMBEDDING AEM IMAGES: an AEM-hosted <img> needs the data-medialibrary-id / data-mediarepo-id / data-medialibrary-source ("aem") attributes or it won't resolve — call get_aem_image_embed_instructions BEFORE adding or changing one (see create_content_template for the full procedure). Preserve any existing AEM image attributes verbatim when round-tripping content you are not changing.
 

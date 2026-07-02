@@ -26,6 +26,7 @@ import { RESOURCE_URIS, RESOURCE_DESCRIPTORS, RESOURCE_TEMPLATE_URIS, RESOURCE_T
 import { getVisualDesignerRequirements } from './visual-designer-requirements.js';
 import { getAemImageEmbedInstructions } from './aem-asset-instructions.js';
 import { getPersonalizationGuidance } from './personalization-guidance.js';
+import { getEmailScenarioFaq } from './email-scenario-faq.js';
 import { logger } from '../telemetry/index.js';
 import { recordAudit } from '../telemetry/audit.js';
 import { UI_BASE_URL, RESPONSE_BYTE_CAP } from '../tools/utils.js';
@@ -91,6 +92,7 @@ import { getServerContextDefinition, handleGetServerContext, setToolCatalog, set
 import { getVisualDesignerRequirementsDefinition, handleGetVisualDesignerRequirements } from '../tools/visual-designer.js';
 import { getAemImageEmbedInstructionsDefinition, handleGetAemImageEmbedInstructions } from '../tools/aem-assets.js';
 import { getPersonalizationSyntaxDefinition, handleGetPersonalizationSyntax, getPersonalizationGuidanceDefinition, handleGetPersonalizationGuidance } from '../tools/personalization.js';
+import { getEmailScenarioFaqDefinition, handleGetEmailScenarioFaq } from '../tools/email-scenario.js';
 // GitHub integration tools
 import { checkPRStatusDefinition, handleCheckPRStatus, deployMergedChangesDefinition, handleDeployMergedChanges } from '../tools/github.js';
 // Cross-sandbox content promotion (plan + phased executor) and same-sandbox repo deploy
@@ -158,6 +160,8 @@ const ALL_TOOLS = [
   getPersonalizationSyntaxDefinition,
   // AJO personalization scenarios/strategy guidance — read-only reference
   getPersonalizationGuidanceDefinition,
+  // AJO email scenario FAQ & clarifying-question playbook — read-only reference
+  getEmailScenarioFaqDefinition,
   // GitHub integration — check PR status, deploy merged PR to AJO
   checkPRStatusDefinition,
   deployMergedChangesDefinition,
@@ -587,6 +591,8 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   get_personalization_syntax: handleGetPersonalizationSyntax,
   // AJO personalization scenarios/strategy guidance — read-only reference
   get_personalization_guidance: handleGetPersonalizationGuidance,
+  // AJO email scenario FAQ & clarifying-question playbook — read-only reference
+  get_email_scenario_faq: handleGetEmailScenarioFaq,
   // GitHub integration
   check_pr_status: handleCheckPRStatus,
   deploy_merged_changes: handleDeployMergedChanges,
@@ -665,8 +671,11 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     `catalog, which lists every resource with an "access" hint for how to actually obtain its content. In ` +
     `particular: the channel→templateType→content-shape mapping is already in the create_/update_ tool ` +
     `descriptions; the full Visual Email Designer HTML spec is returned by the get_visual_designer_requirements ` +
-    `tool; the procedure for resolving an AEM image's AJO embed attributes (via the separate AEM MCP server) is ` +
-    `returned by the get_aem_image_embed_instructions tool; server status is in get_server_context; and to find an ` +
+    `tool; when the user asks to create a new AJO email or convert an existing HTML email into an AJO-compatible ` +
+    `one, call get_email_scenario_faq FIRST to triage the personalization scenarios and gather the clarifying ` +
+    `questions to ask before building; the procedure for resolving an AEM image's AJO embed attributes (via the ` +
+    `separate AEM MCP server) is returned by the get_aem_image_embed_instructions tool; server status is in ` +
+    `get_server_context; and to find an ` +
     `object by name call list_content_fragments / list_content_templates, then get_content_fragment / ` +
     `get_content_template by id for the full object plus etag.`;
 
@@ -1305,6 +1314,12 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
     if (uri === RESOURCE_URIS.personalizationGuidance) {
       return {
         contents: [{ uri, mimeType: 'text/plain', text: getPersonalizationGuidance() }]
+      };
+    }
+
+    if (uri === RESOURCE_URIS.emailScenarioFaq) {
+      return {
+        contents: [{ uri, mimeType: 'text/plain', text: getEmailScenarioFaq() }]
       };
     }
 

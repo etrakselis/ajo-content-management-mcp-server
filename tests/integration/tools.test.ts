@@ -62,6 +62,7 @@ import {
 import { handleGetServerContext, handleGetNamingConvention, setWriteConfirmedGetter } from '../../src/tools/context';
 import { handleGetVisualDesignerRequirements } from '../../src/tools/visual-designer';
 import { handleGetPersonalizationGuidance } from '../../src/tools/personalization';
+import { handleGetEmailScenarioFaq } from '../../src/tools/email-scenario';
 
 import * as client from '../../src/adobe/client';
 
@@ -216,6 +217,25 @@ describe('get_personalization_guidance', () => {
     expect(result.guidance).toContain('Data Source Resolution');
     expect(result.guidance).toContain('Dynamic Collection Detection');
     expect(result.guidance).toContain('Required Validation Checklist');
+  });
+});
+
+// ─── Email Scenario FAQ Tool ──────────────────────────────────────────────────
+
+describe('get_email_scenario_faq', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('returns the full FAQ without requiring configuration', async () => {
+    // Pure static reference — must work even when the server is not configured.
+    mockClient.isClientConfigured.mockReturnValue(false);
+    const result = await handleGetEmailScenarioFaq({}) as { success: boolean; faq: string };
+    expect(result.success).toBe(true);
+    expect(typeof result.faq).toBe('string');
+    // Spot-check distinctive markers from the FAQ asset (title, triage layer, and the
+    // clarifying-question purpose that is the point of the file).
+    expect(result.faq).toContain('Scenario FAQ');
+    expect(result.faq).toContain('triage');
+    expect(result.faq).toContain('clarifying question');
   });
 });
 
