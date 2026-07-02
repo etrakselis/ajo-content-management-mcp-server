@@ -381,6 +381,14 @@ export const createContentFragmentDefinition = {
 
 ⚠ NO HARD DELETE — GET IT RIGHT ON THE FIRST WRITE: fragments have NO REST delete endpoint; the only removal is archive_content_fragment, which is terminal. A botched create (wrong name or content) cannot be cleanly undone — only archived and worked around — and archived names still collide with new ones. So validate before committing: you can DRY-RUN by calling this tool with validateOnly: true, which runs the same input validation + Visual-Designer/dual-field checks and returns the warnings WITHOUT persisting anything. Do not assume create/delete symmetry.
 
+⚠ NEW EMAIL OR HTML→AJO CONVERSION (email html fragments): when the user asks you
+  to create a new AJO email or convert a provided HTML email into AJO, call
+  get_email_scenario_faq FIRST. It triages which personalization scenarios the
+  content contains — including which parts are reusable chrome (header/footer/global)
+  that should become fragments like this one — and lists the clarifying questions to
+  ask the user so the fragment ends up configured for their use case. Triage before
+  writing any markup.
+
 ⚠ VISUAL EMAIL DESIGNER REQUIREMENT (type "html", channel "email"):
   The HTML content must use AJO's native serialization format (acr-* class
   namespace, structure/component catalog, required <head> with content-version
@@ -572,7 +580,7 @@ export const updateContentFragmentDefinition = {
   outputSchema: buildOutputSchema({ etag: ETAG_FIELD, warnings: WARNINGS_FIELD }),
   description: `Replace a content fragment entirely (PUT). Use this when changing fragment content, type, or channels. To rename or move a fragment without touching its content, patch_content_fragment is lighter-weight.
 
-AUTHORING RULES (identical to create_content_fragment — see that tool for the full detail): email html ("html"/"email") must be in AJO's native Visual Email Designer format or it opens in Compatibility mode — call get_visual_designer_requirements BEFORE writing any html. AEM-hosted images need the data-medialibrary-id / data-mediarepo-id / data-medialibrary-source ("aem") attributes — call get_aem_image_embed_instructions BEFORE adding or changing one. For {{ }} / {%= %} personalization, use get_personalization_syntax (syntax) and discover-personalization-paths / list_xdm_field_groups (real attribute paths) — never invent functions or use JavaScript/Liquid/Jinja. When round-tripping content you are NOT changing, copy any existing acr-* serialization and AEM image attributes through VERBATIM.
+AUTHORING RULES (identical to create_content_fragment — see that tool for the full detail): when creating a new AJO email or converting a provided HTML email into AJO, call get_email_scenario_faq FIRST to triage scenarios and gather the clarifying questions to ask. email html ("html"/"email") must be in AJO's native Visual Email Designer format or it opens in Compatibility mode — call get_visual_designer_requirements BEFORE writing any html. AEM-hosted images need the data-medialibrary-id / data-mediarepo-id / data-medialibrary-source ("aem") attributes — call get_aem_image_embed_instructions BEFORE adding or changing one. For {{ }} / {%= %} personalization, use get_personalization_syntax (syntax) and discover-personalization-paths / list_xdm_field_groups (real attribute paths) — never invent functions or use JavaScript/Liquid/Jinja. When round-tripping content you are NOT changing, copy any existing acr-* serialization and AEM image attributes through VERBATIM.
 
 ⚠ THIS IS A FULL REPLACE — THERE IS NO FIELD-LEVEL UPDATE. The AJO API has no way to patch a single content field
   (content, expression, …); PATCH only supports /name, /description, /parentFolderId. To change even ONE field you must

@@ -17,6 +17,7 @@ export const RESOURCE_URIS = {
   aemImageEmbedInstructions: 'ajo://aem-image-embed-instructions',
   personalizationSyntax: 'ajo://personalization-syntax',
   personalizationGuidance: 'ajo://personalization-guidance',
+  emailScenarioFaq: 'ajo://email-scenario-faq',
   // Browsable collections: name→id directories so a human/client can find a
   // specific object by name, then drill into ajo://fragment/{id} or
   // ajo://template/{id}. Solves the discovery half that the templated
@@ -158,6 +159,12 @@ export const RESOURCE_ACCESS_CATALOG: ResourceAccessEntry[] = [
     title: 'AJO Personalization Guidance (when & what to personalize)',
     description: 'Strategy guidance for personalizing content: discovery process, data-source resolution order, detecting collections that need iteration, what to personalize (fields, URLs, images, dates), conditional content, and a coverage/validation checklist. The "what/when" layer — pairs with the syntax library (how) and the XDM schema tools (which paths).',
     access: 'Call the get_personalization_guidance tool for the full guidance. Recommended flow: get_personalization_guidance (what/when) → discover paths (list_xdm_* / discover-personalization-paths) → get_personalization_syntax (how).'
+  },
+  {
+    uri: RESOURCE_URIS.emailScenarioFaq,
+    title: 'AJO Email Scenario FAQ & Clarifying-Question Playbook',
+    description: 'The triage/conversation layer for authoring AJO email content: recognizes the common email personalization scenarios (structure, global vars, reusable header/footer fragments, preheader, product feeds, sorting/eligibility/counters, price/text transforms, ratings, tracking/deep links, images, recommendation trays, conditional content, compliance) and, for each, the clarifying questions to ask so the fragments/template fit the user\'s use case.',
+    access: 'Call the get_email_scenario_faq tool. Use it FIRST when creating a new AJO email or converting an existing HTML email; then get_visual_designer_requirements (HTML format), get_personalization_guidance/syntax (personalization), and the XDM tools (real attribute paths).'
   },
   {
     uri: RESOURCE_URIS.fragments,

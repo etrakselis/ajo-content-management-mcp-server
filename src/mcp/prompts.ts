@@ -5,6 +5,7 @@ import {
   ERROR_CODES_TEXT
 } from './resources.js';
 import { getVisualDesignerRequirements } from './visual-designer-requirements.js';
+import { getEmailScenarioFaq } from './email-scenario-faq.js';
 import { UI_BASE_URL } from '../tools/utils.js';
 
 export interface PromptDefinition {
@@ -281,6 +282,16 @@ Use the attached channel & content-type reference as the canonical list of valid
         : `templateType "${templateType}", channels: ["${channel}"]${channel === 'code' ? ', subType: "HTML" | "JSON" (required for code)' : ''}, template: { ... }`;
 
       const isVisualEmail = channel === 'email';
+      const emailTriageStep = isVisualEmail ? `
+Step 1a — Triage the email scenarios and gather clarifying questions (MANDATORY for this channel):
+  Call get_email_scenario_faq. It recognizes the common personalization scenarios in this
+  request (or in the HTML email you were given to convert) — data-source resolution, global
+  variables, reusable header/footer fragments, preheader, product feeds, sorting/eligibility,
+  price/text transforms, tracking/deep links, images, conditional content, compliance, etc. —
+  and, for each, the clarifying questions to ask so this ${isFragment ? 'fragment' : 'template'} (and any related fragments) end up
+  configured for the user's actual use case rather than guessed defaults. Ask the batched
+  questions it surfaces BEFORE building. The full FAQ is attached below as a resource.
+` : '';
       const visualEmailStep = isVisualEmail ? `
 Step 1b — Read the Visual Email Designer requirements (MANDATORY for this channel):
   The HTML you produce must use AJO's native serialization format. Generic email HTML
@@ -303,7 +314,7 @@ Step 1 — Confirm the content shape:
   Look up "${channel}" in the reference. The correct shape is:
     ${typeAndShapeHint}
   Confirm with the user what the actual body content should be.
-${channel === 'landingpage' ? '  Note: use "html_primary_page" for the main page and "html_sub_page" for confirmation/thank-you pages.\n' : ''}${visualEmailStep}
+${channel === 'landingpage' ? '  Note: use "html_primary_page" for the main page and "html_sub_page" for confirmation/thank-you pages.\n' : ''}${emailTriageStep}${visualEmailStep}
 Step 2 — Look up personalization paths and syntax (skip if the content has no personalization):
   a. PATHS: If the content will address the recipient by name or reference their data, call list_xdm_field_groups with container "tenant" to list all customer-defined field groups. For any group whose title is relevant to "${useCase}", call get_xdm_field_group with full=true. Custom attributes are nested under the tenant namespace key (e.g. "${tenantExample}") in the "properties" tree. Do NOT guess paths like {{profile.person.firstName}} — use only what you find.
   b. SYNTAX: For anything beyond a bare attribute (conditionals, loops, date/string/number formatting, fallbacks, helpers, dataset lookup), call get_personalization_syntax (no argument for the index + category menu, then the relevant category). Use only real AJO-native constructs — never JavaScript/Liquid/Jinja or invented function names.
@@ -321,7 +332,10 @@ Step 5 — Report outcome:
           }
         },
         embeddedResource(RESOURCE_URIS.channelReference, CHANNEL_REFERENCE_TEXT),
-        ...(isVisualEmail ? [embeddedResource(RESOURCE_URIS.visualDesignerRequirements, getVisualDesignerRequirements())] : [])
+        ...(isVisualEmail ? [
+          embeddedResource(RESOURCE_URIS.emailScenarioFaq, getEmailScenarioFaq()),
+          embeddedResource(RESOURCE_URIS.visualDesignerRequirements, getVisualDesignerRequirements())
+        ] : [])
       ];
     }
 
