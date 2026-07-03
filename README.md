@@ -655,11 +655,21 @@ Each AJO **content** write (template / fragment) produces one JSON file whose pa
       {asset-name}.json
 ```
 
+At the **top level there is one directory per sandbox**, so a single repo can mirror several sandboxes side by side (here `etrakselis-sandbox` and `prod`):
+
+<a href="readme_images/github_integration_multiple_sandboxes_example.png"><img src="readme_images/github_integration_multiple_sandboxes_example.png" alt="Repo root showing one top-level directory per sandbox — etrakselis-sandbox and prod" width="750"></a>
+
+**Within each sandbox, content is split by asset type** into `content-fragments/` and `content-templates/`:
+
+<a href="readme_images/github_integration_asset_types_example.png"><img src="readme_images/github_integration_asset_types_example.png" alt="Inside a sandbox directory: the content-fragments and content-templates asset-type folders" width="750"></a>
+
 The `{ajo-folder-path}` is resolved by walking the AJO folder hierarchy (e.g. a template in the `BIS › Wishlist` folder under `NV` produces `content-templates/NV/BIS/Wishlist/`). If an asset has no parent folder, it's placed directly under the asset-type directory. The filename is the asset's name (not its UUID), so the repo is human-readable without any ID lookups.
 
 **Folders and tags are not stored as separate files.** The folder tools (`create_folder`, `update_folder`, `delete_folder`, `ensure_folder_path`) **and** the tag tools (`create_tag`, `update_tag`, `delete_tag`) apply **directly to AJO** — no PR, no `folders/` or `tags/` records. The folder hierarchy is implicit in the content paths (promotion re-creates it from where the content files live), and a tag's association is recorded on the content file itself (`_meta.tagNames` + `tagIds`), which is what cross-sandbox promotion reads — it resolves/creates tags by **name** in the target — so a standalone tag file is never read back. Applying tag writes directly (instead of through a PR) also means `create_tag` returns the new tag's **id immediately** rather than only a PR URL, so a brand-new governance tag can be created and attached to content in a single pass. (These writes are still subject to the write-access toggle and the write-confirmation gate, and are recorded in the local audit log; they're just organization metadata, so there's nothing content-bearing to version or review.)
 
-Every file contains a `_meta` block with the operation name, timestamp, author email, sandbox, tenant namespace, and — when the asset is tagged — the tag **names** (`tagNames`, so the repo is self-describing for cross-sandbox promotion, since the raw `tagIds` are environment-local UUIDs), followed by the asset's content.
+Every file contains a `_meta` block with the operation name, timestamp, author email, sandbox, tenant namespace, and — when the asset is tagged — the tag **names** (`tagNames`, so the repo is self-describing for cross-sandbox promotion, since the raw `tagIds` are environment-local UUIDs), followed by the asset's content. Here is one such file in GitHub — the breadcrumb path (`etrakselis-sandbox / content-fragments / NV / PD / ShopBag / NV_PD_ShopBag_Hero.json`) is the AJO folder hierarchy re-created as directories, and the highlighted `_meta` block sits at the top of the file, ahead of the asset's own content:
+
+<a href="readme_images/github_integration_folderStructure_and_meta_object_example.png"><img src="readme_images/github_integration_folderStructure_and_meta_object_example.png" alt="A committed fragment file showing the resolved folder-path breadcrumb and the highlighted _meta block (operation, ajoId, updatedAt, updatedBy, sandbox, tenant, tagNames)" width="750"></a>
 
 The repo is a **content mirror** of the sandbox, so a sandbox change is never destructive to the repo:
 
