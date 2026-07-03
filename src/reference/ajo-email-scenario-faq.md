@@ -8,7 +8,7 @@ This file is **not** a step‑by‑step one‑shot spec. It is a **scenario cata
 2. **Recall** roughly what the AJO solution for each looks like, and
 3. **Ask the user the right clarifying questions** whenever the input doesn't tell you what a scenario needs.
 
-The worked reference behind every pattern here is a Nordstrom "shopping‑bag price‑drop" triggered email (a static Bluecore HTML export → an AJO Visual‑Designer template). Treat that as *one illustrative instance*, not a template to copy verbatim — the next input will differ.
+The worked reference behind every pattern here is a Luma "shopping‑bag price‑drop" triggered email (a static Bluecore HTML export → an AJO Visual‑Designer template). Treat that as *one illustrative instance*, not a template to copy verbatim — the next input will differ.
 
 > For the deep, step‑by‑step mechanics of any pattern, defer to the reference tools this MCP server exposes — this FAQ is the *triage + conversation* layer that sits on top of them:
 >
@@ -66,7 +66,7 @@ The worked reference behind every pattern here is a Nordstrom "shopping‑bag pr
 **Recognize it when:** you're about to personalize *any* value (a name, price, product list, image, URL). Before writing the expression you must know **where the value comes from**.
 
 **AJO pattern — pick the source in this priority order:**
-- **Profile attribute** — persistent customer data: `profile.person.name.firstName`; tenant‑custom under `profile._<tenantId>.…` (e.g. `profile._nordstrom.identities.shopperId`).
+- **Profile attribute** — persistent customer data: `profile.person.name.firstName`; tenant‑custom under `profile._<tenantId>.…` (e.g. `profile._luma.identities.shopperId`).
 - **Journey context** — values available during execution: `context.journey.…`.
 - **Event payload** — the triggering event's data: `context.journey.events.\`<eventId>\`.…` (numeric IDs **must** be backtick‑escaped).
 - **Dataset lookup** — reference/catalog data not on the profile. Two forms exist: the inline helper `{{datasetLookup datasetId="…" id=<key> result="x"}}`, and the journey‑canvas Lookup action output `context.journey.datasetLookups.\`<id>\`.entities`.
