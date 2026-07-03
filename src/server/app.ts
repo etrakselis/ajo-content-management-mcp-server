@@ -1074,8 +1074,14 @@ export function createExpressApp(): express.Application {
 
   // Reap a session this long after its last activity — but only when it holds no
   // open SSE stream (an open stream means the client is still connected even while
-  // idle, so it must never be reaped). Override with MCP_SESSION_IDLE_MS.
-  const HTTP_SESSION_IDLE_MS = Number(process.env.MCP_SESSION_IDLE_MS) || 5 * 60_000;
+  // idle, so it must never be reaped). The window is deliberately generous: an
+  // interactive client (e.g. Claude Desktop) can sit idle far longer than a few
+  // minutes between messages, and its standalone SSE stream — the real "still here"
+  // signal — can be idle-closed by an intervening proxy and then never reopened
+  // (the SDK client only retries the GET reconnect twice before giving up). A short
+  // window would reap such a still-connected-but-idle session. Override with
+  // MCP_SESSION_IDLE_MS.
+  const HTTP_SESSION_IDLE_MS = Number(process.env.MCP_SESSION_IDLE_MS) || 30 * 60_000;
 
   // Close idle, stream-less sessions. transport.close() fires the onclose handler
   // (set below), which removes the session and unsubscribes its listeners. Swept
@@ -1083,10 +1089,13 @@ export function createExpressApp(): express.Application {
   // setInterval would keep the event loop alive and leak across test runs, and the
   // same lazy-prune pattern is already used for the connected-clients display.
   // Collect first, then close, so we never mutate the map while iterating it.
-  function reapIdleHttpSessions(): void {
+  // `exceptSessionId` — the session making the current request — is never reaped;
+  // see the call site for why.
+  function reapIdleHttpSessions(exceptSessionId?: string): void {
     const now = Date.now();
     const stale: string[] = [];
     for (const [sid, s] of httpSessions) {
+      if (sid === exceptSessionId) continue;
       if (s.openStreams <= 0 && now - s.lastActivityAt > HTTP_SESSION_IDLE_MS) stale.push(sid);
     }
     for (const sid of stale) {
@@ -1097,10 +1106,14 @@ export function createExpressApp(): express.Application {
 
   app.all('/mcp', mcpSecurityGuard, mcpLimiter, async (req: Request, res: Response) => {
     try {
-      // Lazily sweep abandoned sessions before handling this request (see above).
-      reapIdleHttpSessions();
-
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+      // Lazily sweep abandoned sessions before handling this request (see above),
+      // but never this request's own session: a client returning from a long idle
+      // (whose standalone SSE stream has since dropped, so openStreams is 0) would
+      // otherwise be reaped here — one line before we refresh its activity below —
+      // and then 404'd into a needless reinitialize.
+      reapIdleHttpSessions(sessionId);
 
       // Existing session → mark activity and route to its transport.
       if (sessionId && httpSessions.has(sessionId)) {

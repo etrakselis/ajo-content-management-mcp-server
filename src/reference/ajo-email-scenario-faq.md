@@ -69,13 +69,15 @@ The worked reference behind every pattern here is a Luma "shopping‑bag price�
 - **Profile attribute** — persistent customer data: `profile.person.name.firstName`; tenant‑custom under `profile._<tenantId>.…` (e.g. `profile._luma.identities.shopperId`).
 - **Journey context** — values available during execution: `context.journey.…`.
 - **Event payload** — the triggering event's data: `context.journey.events.\`<eventId>\`.…` (numeric IDs **must** be backtick‑escaped).
-- **Dataset lookup** — reference/catalog data not on the profile. Two forms exist: the inline helper `{{datasetLookup datasetId="…" id=<key> result="x"}}`, and the journey‑canvas Lookup action output `context.journey.datasetLookups.\`<id>\`.entities`.
+- **Dataset lookup** — reference/catalog data that does not live on the profile (e.g. a product catalog, store directory, or offer table). There are **two distinct kinds — confirm which one applies**, because they are configured and accessed completely differently:
+  - **Journey-contextual dataset lookup (performed on the AJO journey canvas):** the lookup is configured as a **Lookup action on the journey canvas**, and its result is passed *into* the email as a contextual variable. The email does **not** perform the query — it simply reads the already-resolved rows the journey handed down, at `context.journey.datasetLookups.\`<resultId>\`.entities` (a numeric/string result ID must be backtick-escaped, as shown). Prefer this when the lookup is shared across journey steps, or when the matching key comes from journey/event context.
+  - **In-email (inline) dataset lookup:** the lookup is performed **inside the email template itself** with the `{{datasetLookup datasetId="<datasetId>" id=<key> result="x"}}` helper, which queries the dataset at render time and returns the row matching `<key>`. Prefer this when the lookup is local to this one message and the key is already available in the template.
 
 **Ask the user if unclear:**
 - Is this email **triggered by an event** (and if so, what's in the event payload) or **audience/segment‑based**?
 - For each dynamic value: does it live on the **profile**, in the **event payload**, in **journey context**, or in an **AEP dataset** (lookup)?
 - What is the **tenant namespace** (`_yourTenant`) and can you confirm the exact **schema paths**? (Never invent these.)
-- If a dataset lookup is involved: is it configured as a **journey Lookup action** (referenced by result id) or an **inline `datasetLookup`** call? What's the dataset/result ID and the primary key?
+- If a dataset lookup is involved: is it a **journey-contextual lookup** (a Lookup action on the canvas whose result is passed into the email as a variable) or an **in-email inline `datasetLookup`** call (run inside the template at render time)? What is the **dataset ID / result ID**, and the **primary key** used to match a row?
 
 ---
 
@@ -379,7 +381,7 @@ Guards: `isNotNull/isNull` for objects, `isNotEmpty/isEmpty` for strings.
 - Is this **event‑triggered** or **audience‑based**? What triggers it, and what's in the event payload?
 - What's the **tenant namespace**, and can you confirm the exact **schema paths** for every dynamic field?
 - For each dynamic value: **profile / journey context / event payload / dataset lookup**?
-- If a dataset lookup is used: **journey Lookup action** (result id) or **inline `datasetLookup`** (dataset id + key)?
+- If a dataset lookup is used: **journey-contextual** (Lookup action on the canvas → passed in as a variable) or **in-email inline `datasetLookup`** (dataset id + key)?
 
 **Products / feed**
 - Product **collection source** and **per‑item field paths**?
@@ -416,6 +418,10 @@ Guards: `isNotNull/isNull` for objects, `isNotEmpty/isEmpty` for strings.
 - **Triple vs. double brace:** `{{{ }}}` for anything in a URL/attribute/raw markup; `{{ }}` only for HTML‑escaped plain text.
 - **Numeric event/lookup IDs must be backtick‑escaped:** `context.journey.events.\`123\``.
 - **Native Visual Designer format** (the full spec is returned by **`get_visual_designer_requirements`**) or the user loses drag‑and‑drop editing: `body#acr-body` → `div.acr-container` → `div.acr-structure[data-structure-id][data-structure-name]` → `th.colspanN` → `div.acr-component[data-component-id]`; required `<head>` copied verbatim; don't send the `acr-content-status` meta on authoring.
+- **Beautify and comment every block of raw HTML you author.** Emit cleanly-formatted markup (consistent indentation, one element/block per line, no minified single-line soup). AJO accepts **two comment forms — use the right one for what you are annotating:**
+  - **`{{!-- … --}}` (handlebars comments)** for the **personalization logic** — variable declarations, loops, conditionals, sorting/suppression. AJO strips these at render (they never reach the inbox), and they are the same form AJO's own markers use. Examples drawn from a real template: `{{!-- Global Variables and the logics to be defined here --}}`, `{{!-- dataset lookup output results --}}`, `{{!-- sort the products based on the highest new price --}}`, `{{!-- only show up to 4 products --}}`, `{{!-- increment eligible product counter --}}`.
+  - **`<!-- … -->` (HTML comments)** to **label layout sections/components** in the rendered markup, usually as BEGIN/END pairs around a block. Examples: `<!-- BEGIN PREHEADER -->` … `<!-- END PREHEADER -->`, `<!-- BEGIN NAVIGATION -->` … `<!-- END NAVIGATION -->`, `<!-- brand -->`, `<!-- Name -->`, `<!-- Price -->`, `<!-- star rating -->`, `<!-- CTA Section -->`, `<!-- BEGIN FOOTER -->` … `<!-- END FOOTER -->`.
+  - **Preserve AJO's own markers verbatim** — the fragment markers `{{!-- [acr-start-fragment] --}}` / `{{!-- [acr-end-fragment] --}}` and any product-block markers such as `<!--BLOCK_METADATA_PREFIX-{…}-BLOCK_METADATA_POSTFIX-->` — and never let a comment or reformatting change the required `acr-*` nesting or the verbatim `<head>`.
 - **Embed fragments by reference** (`{{ fragment … }}`), never inline; never use a `data-fragment=` attribute.
 - **Don't invent** function names, attribute paths, schema fields, or IDs. If a field like `replace`, `trim`, `substr`, `titleCase`, the `?:` fallback operator, or the `if(cond,a,b)` function is needed, use it as shown here but **verify against the AJO personalization syntax library (`get_personalization_syntax`)** before introducing anything new.
 - **Fallbacks everywhere:** `?:` for defaults, `isNotEmpty`/`isNotNull` guards for optional data.

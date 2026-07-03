@@ -26,6 +26,8 @@ This guide is the **"what & when"** layer of personalization. Use it together wi
 
 For email and landing-page HTML, personalization expressions must sit inside markup that follows the AJO Visual Email Designer format — call `get_visual_designer_requirements` for that structure.
 
+When the task is to **create a new AJO email or convert a provided HTML email into an AJO template**, start with **`get_email_scenario_faq`** — the triage/conversation layer that recognizes the common email personalization scenarios (product feeds, reusable header/footer fragments, price/text transforms, conditional content, tracking links, etc.) and, for each, lists the clarifying questions to ask the user — *before* applying this guide's what/when analysis.
+
 ---
 
 # Core Personalization Principles

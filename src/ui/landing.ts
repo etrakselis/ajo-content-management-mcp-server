@@ -85,8 +85,10 @@ export const landingPageHtml = `<!DOCTYPE html>
       min-height: 100vh;
     }
     header {
-      background: linear-gradient(to bottom, #464646, #363636);
-      padding: 11px 48px;
+      background: linear-gradient(to bottom, rgba(70,70,70,0.85), rgba(54,54,54,0.85));
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      padding: 8px 48px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -557,7 +559,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     }
     @keyframes btnBreathe {
       0%, 100% { box-shadow: 0 0 0 0 rgba(192,57,43,0), 0 2px 6px rgba(0,0,0,0.12); }
-      50%       { box-shadow: 0 0 0 4px rgba(192,57,43,0.22), 0 4px 16px rgba(192,57,43,0.3); }
+      50%       { box-shadow: 0 0 0 2px rgba(192,57,43,0.15), 0 3px 10px rgba(192,57,43,0.2); }
     }
     .btn-primary.btn-breathing:not(:disabled) {
       animation: btnBreathe 2.5s ease-in-out infinite;

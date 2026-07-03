@@ -678,10 +678,19 @@ describe('Express App', () => {
     });
     const followUp = { jsonrpc: '2.0', method: 'tools/list', id: 2, params: {} };
 
-    test('reaps a session once it goes idle, but not while it is still active', async () => {
+    const withShortIdleWindow = async (fn: () => Promise<void>) => {
       const prev = process.env.MCP_SESSION_IDLE_MS;
       process.env.MCP_SESSION_IDLE_MS = '200'; // short idle window for the test
       try {
+        await fn();
+      } finally {
+        if (prev === undefined) delete process.env.MCP_SESSION_IDLE_MS;
+        else process.env.MCP_SESSION_IDLE_MS = prev;
+      }
+    };
+
+    test('does not reap an active session, nor the caller\'s own idle session', async () => {
+      await withShortIdleWindow(async () => {
         // Fresh app so it reads the short idle window (the module-level `app` captured
         // the default at import time).
         const reaperApp = createExpressApp();
@@ -697,17 +706,39 @@ describe('Express App', () => {
         expect(active.status).toBe(200);
         expect(active.body.ok).toBe(true);
 
-        // 3) let it sit idle past the window, then make another request. The sweep at
-        //    the top of this request closes the now-idle session (no open stream), so
-        //    the lookup misses and the client is told to reinitialize (404).
+        // 3) let it sit idle past the window, then make another request ON THE SAME
+        //    session. The sweep at the top of the request excludes the caller's own
+        //    session, so it is refreshed and routed (200) rather than reaped out from
+        //    under the returning client and 404'd.
         await new Promise(r => setTimeout(r, 350));
-        const reaped = await request(reaperApp)
+        const returned = await request(reaperApp)
           .post('/mcp').set('mcp-session-id', MOCK_SESSION_ID).send(followUp);
-        expect(reaped.status).toBe(404);
-      } finally {
-        if (prev === undefined) delete process.env.MCP_SESSION_IDLE_MS;
-        else process.env.MCP_SESSION_IDLE_MS = prev;
-      }
+        expect(returned.status).toBe(200);
+        expect(returned.body.ok).toBe(true);
+      });
+    });
+
+    test('reaps an idle session when a different session drives the sweep', async () => {
+      await withShortIdleWindow(async () => {
+        const reaperApp = createExpressApp();
+
+        // initialize → tracks MOCK_SESSION_ID, then let it go idle past the window.
+        const init = await request(reaperApp).post('/mcp').send(initBody('ReaperClient'));
+        expect(init.status).toBe(200);
+        await new Promise(r => setTimeout(r, 350));
+
+        // A request carrying a *different* session id drives the sweep. MOCK_SESSION_ID
+        // is not the caller's session, so it is reaped; the unknown id 404s.
+        const other = await request(reaperApp)
+          .post('/mcp').set('mcp-session-id', 'some-other-session').send(followUp);
+        expect(other.status).toBe(404);
+
+        // The idle session is now gone: a follow-up on it misses and 404s. (If it had
+        // survived, the caller-exclusion rule would have routed this to 200.)
+        const gone = await request(reaperApp)
+          .post('/mcp').set('mcp-session-id', MOCK_SESSION_ID).send(followUp);
+        expect(gone.status).toBe(404);
+      });
     });
   });
 
