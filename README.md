@@ -477,15 +477,17 @@ All setup happens in the browser UI at **http://localhost:3000** — navigate th
 
 ### Step 1 — Credentials
 
+<a href="readme_images/mcp_server_step1.png"><img src="readme_images/mcp_server_step1.png" alt="Step 1 — Credentials: the loaded environment-file card showing its scope, plus the auto-detected tenant namespace and organization banner" width="750"></a>
+
 Upload the environment file you created in [Prerequisites → 1. Adobe API credentials](#1-adobe-api-credentials-the-environment-file) (the `oauth_server_to_server.json` Postman environment). Drag and drop it, or click to browse.
 
 As soon as the file loads, the server validates the credentials and the card confirms which file is active — its label, the environments it covers, and its scope (e.g. *"Prod AJO Content Management — ENVIRONMENTS: non-prod & prod. SCOPE: Create/update AJO content templates, fragments, folders, tags"*). Use **Replace** to swap in a different file. Directly below, a banner shows the **tenant namespace** and **organization** the server auto-detected from the credentials — confirm these match the tenant you intend to work in before continuing. In the background the server also discovers the sandboxes the credentials can access, which populates the dropdown in the next step.
 
 > Credentials are stored **in memory only** — never written to disk, logged, or returned through any tool.
 
-<a href="readme_images/mcp_server_step1.png"><img src="readme_images/mcp_server_step1.png" alt="Step 1 — Credentials: the loaded environment-file card showing its scope, plus the auto-detected tenant namespace and organization banner" width="750"></a>
-
 ### Step 2 — Sandbox
+
+<a href="readme_images/mcp_server_step2.png"><img src="readme_images/mcp_server_step2.png" alt="Step 2 — Sandbox: the sandbox dropdown auto-populated from the uploaded credentials, with a manual-entry fallback link" width="750"></a>
 
 Choose the Adobe Experience Platform **sandbox** to target. Every API call the server makes is scoped to this one sandbox. The dropdown is **populated automatically** from the sandboxes your uploaded credentials can access, so in most cases you just pick one — no typing required (each entry shows its display name, internal name, and type, e.g. *"Edwin Trakselis Sandbox (etrakselis-sandbox) — development"*). A selection is always required and nothing is pre-selected, even when only one sandbox is available.
 
@@ -495,17 +497,17 @@ You can find the sandbox name from the URL of your AJO instance — look for the
 
 You can **switch sandbox at any time after launch** and it takes effect immediately — connected clients are notified, no restart needed.
 
-<a href="readme_images/mcp_server_step2.png"><img src="readme_images/mcp_server_step2.png" alt="Step 2 — Sandbox: the sandbox dropdown auto-populated from the uploaded credentials, with a manual-entry fallback link" width="750"></a>
-
 ### Step 3 — Author
+
+<a href="readme_images/mcp_server_step3.png"><img src="readme_images/mcp_server_step3.png" alt="Step 3 — Author: the read-only technical account ID from the credentials, and the author email field used for attribution" width="750"></a>
 
 Enter **your email address**. It's mandatory and is recorded with every content change made while the server runs, so create/update/delete/publish/archive actions can be attributed to a person (see [Audit log](#audit-log)). It is **not verified** — it's an honor-system field, so enter your real address. The next step is revealed once a valid email format is detected.
 
 The read-only **Technical Account ID** shown above the field is the identity carried in your uploaded credentials (the machine account the API calls authenticate as) — the email you enter is the *human* attribution layered on top of it.
 
-<a href="readme_images/mcp_server_step3.png"><img src="readme_images/mcp_server_step3.png" alt="Step 3 — Author: the read-only technical account ID from the credentials, and the author email field used for attribution" width="750"></a>
-
 ### Step 4 — Access mode (optional)
+
+<a href="readme_images/mcp_server_step4.png"><img src="readme_images/mcp_server_step4.png" alt="Step 4 — Access mode: the Allow write operations toggle that switches the server between read-only and read & write" width="750"></a>
 
 Use the **Allow write operations** toggle to choose what connected LLM clients can do:
 
@@ -513,8 +515,6 @@ Use the **Allow write operations** toggle to choose what connected LLM clients c
 - **On — read & write.** Write tools execute normally.
 
 Read-only is the safe default — leave it off unless you explicitly want clients to modify content. You can flip this **any time after launch** and it takes effect immediately — no client restart needed.
-
-<a href="readme_images/mcp_server_step4.png"><img src="readme_images/mcp_server_step4.png" alt="Step 4 — Access mode: the Allow write operations toggle that switches the server between read-only and read & write" width="750"></a>
 
 The full tool set is **always advertised** to clients regardless of this setting, and enforcement happens when a tool is *called*. This is deliberate: many clients (e.g. Claude Desktop) cache the tool list when they connect and don't react to a mid-session tool-list change, so hiding write tools would strand them in read-only even after you turned writes on. Instead, the server tells the LLM that writes are runtime-gated, so it attempts the operation when asked and surfaces the `READ_ONLY_MODE` error if it's currently off. Because of this, flipping the toggle **takes effect immediately with no client restart** — once you switch to On, the next write attempt simply succeeds.
 
@@ -544,6 +544,8 @@ Elicitation is a newer part of the MCP spec ([2025-06-18](https://modelcontextpr
 
 ### Step 5 — Naming convention (optional)
 
+<a href="readme_images/mcp_server_step5.png"><img src="readme_images/mcp_server_step5.png" alt="Step 5 — Naming convention: the markdown editor (pre-filled with a default governance standard) and the enforcement toggle" width="750"></a>
+
 Optionally define **naming rules and organizational structure** for content templates, fragments, folders, and tags. Write the convention in **markdown** — the connected LLM reads it directly and, when enforcement is on, follows it automatically whenever it creates or names any of those assets.
 
 - **Enforce the rules** — the toggle that turns enforcement on or off. When on, the LLM must follow the rules below for all new templates, fragments, folders, and tags; it fetches them on demand through the `get_naming_convention` tool and is instructed to call that tool before assigning any name.
@@ -551,9 +553,9 @@ Optionally define **naming rules and organizational structure** for content temp
 
 Whatever you enter here is exactly what the `get_naming_convention` tool returns to clients; if the LLM proposes a non-compliant name, it's told to explain the rule and offer a compliant alternative rather than deviate.
 
-<a href="readme_images/mcp_server_step5.png"><img src="readme_images/mcp_server_step5.png" alt="Step 5 — Naming convention: the markdown editor (pre-filled with a default governance standard) and the enforcement toggle" width="750"></a>
-
 ### Step 6 — GitHub integration (optional)
+
+<a href="readme_images/mcp_server_step6.png"><img src="readme_images/mcp_server_step6.png" alt="Step 6 — GitHub integration: PAT, owner/repository fields, and the Audit Trail vs PR Approval Gate mode selector" width="750"></a>
 
 Optionally connect a **GitHub repository** as the source of truth for AJO content changes. When enabled, every content write is tracked in GitHub — either as an audit-trail commit, or, in **PR Approval Gate** mode, as a pull request that must be reviewed and merged before AJO is updated. Fill in the fine-grained **Personal Access Token**, the repo **Owner** and **Repository**, and choose a **Mode**:
 
@@ -564,9 +566,9 @@ Click **Test connection** to verify the PAT has access and the repo has at least
 
 > The PAT and these settings are stored **in memory only** — never written to disk or logged.
 
-<a href="readme_images/mcp_server_step6.png"><img src="readme_images/mcp_server_step6.png" alt="Step 6 — GitHub integration: PAT, owner/repository fields, and the Audit Trail vs PR Approval Gate mode selector" width="750"></a>
-
 ### Step 7 — Launch
+
+<a href="readme_images/mcp_server_step7.png"><img src="readme_images/mcp_server_step7.png" alt="Step 7 — Launch: the running-server dashboard with connection endpoints, connected clients, and the live server log feed" width="750"></a>
 
 Starting the server authenticates once, caches the token, and begins accepting MCP connections. This final panel is your **live operations dashboard** while the server runs; **Deactivate Server** stops accepting connections. It shows:
 
@@ -574,8 +576,6 @@ Starting the server authenticates once, caches the token, and begins accepting M
 - **Access mode** — the effective read-only vs. read & write state you set in Step 4.
 - **Recently connected client(s)** — each connected client with its transport and version (e.g. `claude-ai (via mcp-remote)`, `Claude Code`). Idle HTTP clients drop off the list after ~10 seconds; STDIO clients stay listed until the app closes.
 - **Live server logs** — a running feed of server activity (session initialization, tool calls, errors) with **Copy**, **Download**, and **Clear** controls. This is the quickest way to confirm a client actually connected and to debug when one doesn't.
-
-<a href="readme_images/mcp_server_step7.png"><img src="readme_images/mcp_server_step7.png" alt="Step 7 — Launch: the running-server dashboard with connection endpoints, connected clients, and the live server log feed" width="750"></a>
 
 ### Audit log
 
