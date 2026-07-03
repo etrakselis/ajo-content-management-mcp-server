@@ -334,14 +334,14 @@ These prompts ask the LLM to chain multiple tools together autonomously.
 
 Two things before you start:
 
-1. **Adobe API credentials**, packaged as an environment file — this is what you upload in [Configuration](#configuration) Step 2, so set it up first.
+1. **Adobe API credentials**, packaged as an environment file — this is what you upload in [Configuration](#mcp-server-configuration) Step 1 (Credentials), so set it up first.
 2. **Docker Desktop**, to build and run the server. Dependencies are installed and the code is compiled inside the container, so you don't need Node.js installed on your machine.
 
 The steps are the same whether you're on **macOS** or **Windows**.
 
 ### 1. Adobe API credentials (the environment file)
 
-This step produces the environment file that [Configuration](#configuration) Step 2 expects. You set up the credentials in two places — the **Adobe Developer Console** (the API project) and **Adobe Journey Optimizer** (the matching user role) — and you do it **twice**, once for the non-production environments and once for an all-environments (including prod) set.
+This step produces the environment file that [Configuration](#mcp-server-configuration) Step 1 (Credentials) expects. You set up the credentials in two places — the **Adobe Developer Console** (the API project) and **Adobe Journey Optimizer** (the matching user role) — and you do it **twice**, once for the non-production environments and once for an all-environments (including prod) set.
 
 > **You need admin access to both** the Adobe Developer Console and the AJO platform to complete this step. If you don't have it, ask your Adobe org administrator to either grant it or perform these steps for you.
 
@@ -371,7 +371,7 @@ When prompted to assign a product profile, select the default **AEP-Default-All-
 
 #### e. Download the environment file
 
-From the project's overview page in the Developer Console, click the **Download** button at the top. This gives you the **Postman environment** JSON file — exactly what you upload in [Configuration](#configuration) Step 2 (its expected shape is documented there).
+From the project's overview page in the Developer Console, click the **Download** button at the top. This gives you the **Postman environment** JSON file — exactly what you upload in [Configuration](#mcp-server-configuration) Step 1 (Credentials).
 
 <a href="readme_images/create_api_project_step5.png"><img src="readme_images/create_api_project_step5.png" alt="Download the project's environment file from the Download button at the top of the project overview" width="500"></a>
 
@@ -450,7 +450,7 @@ docker compose up -d
 
 The first run **pulls** the image automatically (no `--build`); `-d` runs it detached so your terminal stays free. Docker picks the right build for your CPU architecture.
 
-The setup UI is now available at **http://localhost:3000** — continue to [Configuration](#configuration).
+The setup UI is now available at **http://localhost:3000** — continue to [Configuration](#mcp-server-configuration).
 
 > **Can't reach the page?** The server listens on the loopback interface only (it isn't exposed to your network by design). On systems where `localhost` resolves to IPv6 first, the browser normally falls back to IPv4 automatically — but if you hit a connection-refused error, use **http://127.0.0.1:3000** instead, or set `HOST=::1` in `docker-compose.yml` to bind the IPv6 loopback.
 
@@ -473,36 +473,48 @@ docker compose up -d       # start it again later
 
 ## MCP Server Configuration
 
-> The setup steps appear **one at a time** — only Step 1 is shown when the page loads, and each subsequent step is revealed automatically once you complete the one before it.
+All setup happens in the browser UI at **http://localhost:3000** — navigate there and work through the steps below. The steps appear **one at a time**: only Step 1 is shown when the page loads, and each subsequent step is revealed automatically once you complete the one before it. A progress rail on the right labels the step you're on (`STEP 1 — CREDENTIALS`, `STEP 2 — SANDBOX`, …). Steps 1–3 are required; **Steps 4–6 are optional** — leave them at their defaults and continue to launch if you don't need them.
 
-### 1. Open the UI
+### Step 1 — Credentials
 
-Navigate to `http://localhost:3000` in your browser.
+Upload the environment file you created in [Prerequisites → 1. Adobe API credentials](#1-adobe-api-credentials-the-environment-file) (the `oauth_server_to_server.json` Postman environment). Drag and drop it, or click to browse.
 
-### 2. Upload environment file
+As soon as the file loads, the server validates the credentials and the card confirms which file is active — its label, the environments it covers, and its scope (e.g. *"Prod AJO Content Management — ENVIRONMENTS: non-prod & prod. SCOPE: Create/update AJO content templates, fragments, folders, tags"*). Use **Replace** to swap in a different file. Directly below, a banner shows the **tenant namespace** and **organization** the server auto-detected from the credentials — confirm these match the tenant you intend to work in before continuing. In the background the server also discovers the sandboxes the credentials can access, which populates the dropdown in the next step.
 
-Drag and drop your credentials file — see [Prerequisites → 1. Adobe API credentials](#1-adobe-api-credentials-the-environment-file) for how to obtain it.
+> Credentials are stored **in memory only** — never written to disk, logged, or returned through any tool.
 
-> Credentials are stored in memory only. They are never written to disk, logged, or returned through tools.
+<a href="readme_images/mcp_server_step1.png"><img src="readme_images/mcp_server_step1.png" alt="Step 1 — Credentials: the loaded environment-file card showing its scope, plus the auto-detected tenant namespace and organization banner" width="750"></a>
 
-As soon as the file is loaded, the server validates the credentials, auto-detects your **tenant namespace** — displayed in a banner directly below this step so you can confirm the right tenant before continuing — and discovers the sandboxes the credentials can access, which populates the dropdown in the next step.
+### Step 2 — Sandbox
 
-### 3. Select sandbox
+Choose the Adobe Experience Platform **sandbox** to target. Every API call the server makes is scoped to this one sandbox. The dropdown is **populated automatically** from the sandboxes your uploaded credentials can access, so in most cases you just pick one — no typing required (each entry shows its display name, internal name, and type, e.g. *"Edwin Trakselis Sandbox (etrakselis-sandbox) — development"*). A selection is always required and nothing is pre-selected, even when only one sandbox is available.
 
-The sandbox dropdown is **populated automatically** from the sandboxes your uploaded credentials can access, so in most cases you just pick the one you want from the menu — no typing required. A selection is always required and nothing is pre-selected, even when only one sandbox is available.
-
-If automatic discovery isn't possible — for example, the Sandbox Management API isn't enabled on your Developer Console project, or the credentials don't have permission to list sandboxes — the UI falls back to a **manual entry** field where you can type the sandbox name yourself. You can switch between the dropdown and manual entry at any time using the links beneath the field.
+If automatic discovery isn't possible — for example, the Sandbox Management API isn't enabled on your Developer Console project, or the credentials don't have permission to list sandboxes — use the **Enter a name manually** link to type the sandbox name yourself. You can switch between the dropdown and manual entry at any time using the links beneath the field.
 
 You can find the sandbox name from the URL of your AJO instance — look for the parameter called `sname:`. Traditionally the sandboxes are named like `dev`, `staging`, or `prod`, but the exact name needs to be verified since they aren't enforced and can vary slightly between orgs.
 
-### 4. Set the access mode
+You can **switch sandbox at any time after launch** and it takes effect immediately — connected clients are notified, no restart needed.
+
+<a href="readme_images/mcp_server_step2.png"><img src="readme_images/mcp_server_step2.png" alt="Step 2 — Sandbox: the sandbox dropdown auto-populated from the uploaded credentials, with a manual-entry fallback link" width="750"></a>
+
+### Step 3 — Author
+
+Enter **your email address**. It's mandatory and is recorded with every content change made while the server runs, so create/update/delete/publish/archive actions can be attributed to a person (see [Audit log](#audit-log)). It is **not verified** — it's an honor-system field, so enter your real address. The next step is revealed once a valid email format is detected.
+
+The read-only **Technical Account ID** shown above the field is the identity carried in your uploaded credentials (the machine account the API calls authenticate as) — the email you enter is the *human* attribution layered on top of it.
+
+<a href="readme_images/mcp_server_step3.png"><img src="readme_images/mcp_server_step3.png" alt="Step 3 — Author: the read-only technical account ID from the credentials, and the author email field used for attribution" width="750"></a>
+
+### Step 4 — Access mode (optional)
 
 Use the **Allow write operations** toggle to choose what connected LLM clients can do:
 
-- **Off — read-only (default).** Only *list* and *get* operations run. Write tools (create, update, delete, publish, archive) are rejected at execution with a `READ_ONLY_MODE` error.
+- **Off — read-only (default).** Only *list* and *get* operations run. Write tools (create, update, delete, publish, archive) stay visible to the client but are rejected at execution with a `READ_ONLY_MODE` error.
 - **On — read & write.** Write tools execute normally.
 
-Read-only is the safe default — leave it off unless you explicitly want clients to modify content.
+Read-only is the safe default — leave it off unless you explicitly want clients to modify content. You can flip this **any time after launch** and it takes effect immediately — no client restart needed.
+
+<a href="readme_images/mcp_server_step4.png"><img src="readme_images/mcp_server_step4.png" alt="Step 4 — Access mode: the Allow write operations toggle that switches the server between read-only and read & write" width="750"></a>
 
 The full tool set is **always advertised** to clients regardless of this setting, and enforcement happens when a tool is *called*. This is deliberate: many clients (e.g. Claude Desktop) cache the tool list when they connect and don't react to a mid-session tool-list change, so hiding write tools would strand them in read-only even after you turned writes on. Instead, the server tells the LLM that writes are runtime-gated, so it attempts the operation when asked and surfaces the `READ_ONLY_MODE` error if it's currently off. Because of this, flipping the toggle **takes effect immediately with no client restart** — once you switch to On, the next write attempt simply succeeds.
 
@@ -530,11 +542,40 @@ Elicitation is a newer part of the MCP spec ([2025-06-18](https://modelcontextpr
 
 > This is a moving target — support is expanding, so a client listed as unsupported today may gain the interactive prompt in a future release with no change needed here (the server already advertises and uses elicitation whenever the client offers it). Re-check your client's release notes if you expect the dialog and don't see it.
 
-### 5. Enter your email and click "Start MCP Server"
+### Step 5 — Naming convention (optional)
 
-The launch step requires **your email address**. It's mandatory and is recorded with every content change made while the server runs, so create/update/delete/publish/archive actions can be attributed to a person (see [Audit log](#audit-log)). It is **not verified** — it's an honor-system field, so enter your real address.
+Optionally define **naming rules and organizational structure** for content templates, fragments, folders, and tags. Write the convention in **markdown** — the connected LLM reads it directly and, when enforcement is on, follows it automatically whenever it creates or names any of those assets.
 
-Once you provide it, click Start. The server authenticates once, caches the token, and begins accepting MCP connections. The connection summary then shows the active **access mode** — your tenant namespace and selected sandbox are already shown above (in the tenant banner and Step 2), so they aren't repeated here.
+- **Enforce the rules** — the toggle that turns enforcement on or off. When on, the LLM must follow the rules below for all new templates, fragments, folders, and tags; it fetches them on demand through the `get_naming_convention` tool and is instructed to call that tool before assigning any name.
+- The editor is pre-filled with a sensible **default governance standard** — edit or replace it inline for your use-case, or leave it as-is. Use **Upload .md file** to drop in an existing convention document instead of typing.
+
+Whatever you enter here is exactly what the `get_naming_convention` tool returns to clients; if the LLM proposes a non-compliant name, it's told to explain the rule and offer a compliant alternative rather than deviate.
+
+<a href="readme_images/mcp_server_step5.png"><img src="readme_images/mcp_server_step5.png" alt="Step 5 — Naming convention: the markdown editor (pre-filled with a default governance standard) and the enforcement toggle" width="750"></a>
+
+### Step 6 — GitHub integration (optional)
+
+Optionally connect a **GitHub repository** as the source of truth for AJO content changes. When enabled, every content write is tracked in GitHub — either as an audit-trail commit, or, in **PR Approval Gate** mode, as a pull request that must be reviewed and merged before AJO is updated. Fill in the fine-grained **Personal Access Token**, the repo **Owner** and **Repository**, and choose a **Mode**:
+
+- **Audit Trail** — writes execute normally and are committed to the repo for history. No approval required.
+- **PR Approval Gate** — writes are blocked; instead a GitHub PR is opened for review, and AJO is only updated after the PR is merged and `deploy_merged_changes` is called.
+
+Click **Test connection** to verify the PAT has access and the repo has at least one commit, then enable the integration. This step is the UI entry point for the feature documented in full — PAT scopes, repository requirements, the file layout in the repo, and the approval workflow — under [GitHub Integration](#github-integration-optional).
+
+> The PAT and these settings are stored **in memory only** — never written to disk or logged.
+
+<a href="readme_images/mcp_server_step6.png"><img src="readme_images/mcp_server_step6.png" alt="Step 6 — GitHub integration: PAT, owner/repository fields, and the Audit Trail vs PR Approval Gate mode selector" width="750"></a>
+
+### Step 7 — Launch
+
+Starting the server authenticates once, caches the token, and begins accepting MCP connections. This final panel is your **live operations dashboard** while the server runs; **Deactivate Server** stops accepting connections. It shows:
+
+- **Connection endpoints** — the **HTTP** URL clients point at (`http://localhost:3000/mcp`) and the **STDIO** transport (`stdin / stdout`, always active alongside HTTP). See the [Client Connection Guide](#client-connection-guide) for per-client setup (Claude Code/Desktop, Cursor, Codex…).
+- **Access mode** — the effective read-only vs. read & write state you set in Step 4.
+- **Recently connected client(s)** — each connected client with its transport and version (e.g. `claude-ai (via mcp-remote)`, `Claude Code`). Idle HTTP clients drop off the list after ~10 seconds; STDIO clients stay listed until the app closes.
+- **Live server logs** — a running feed of server activity (session initialization, tool calls, errors) with **Copy**, **Download**, and **Clear** controls. This is the quickest way to confirm a client actually connected and to debug when one doesn't.
+
+<a href="readme_images/mcp_server_step7.png"><img src="readme_images/mcp_server_step7.png" alt="Step 7 — Launch: the running-server dashboard with connection endpoints, connected clients, and the live server log feed" width="750"></a>
 
 ### Audit log
 
@@ -589,7 +630,7 @@ The integration uses a **GitHub fine-grained Personal Access Token (PAT)**, not 
 
 ### Configuring the integration
 
-In the setup UI at `http://localhost:3000`, a **GitHub Integration** card appears after the server has started (Step 5). Fill in:
+In the setup UI at `http://localhost:3000`, the **GitHub Integration** step (Step 6 of the setup flow, just before launch) is where you configure this. Fill in:
 
 - **Personal Access Token** — the fine-grained PAT from the step above.
 - **Owner** — the GitHub username or organization that owns the repository (e.g. `acmecorp`).
@@ -777,7 +818,7 @@ Cross-sandbox promotion (above) requires `source ≠ target`. The related but di
 
 ## Client Connection Guide
 
-> **Prerequisite:** finish [Build & Run](#build--run) and [Configuration](#configuration) first. There is **one** long-lived container (started by `docker compose up -d`) that you configure once at `http://localhost:3000`. Every client below connects to that same running server at `http://localhost:3000/mcp` — no client starts its own container, so the configuration you entered is shared by all of them and survives client restarts.
+> **Prerequisite:** finish [Run](#run) and [Configuration](#mcp-server-configuration) first. There is **one** long-lived container (started by `docker compose up -d`) that you configure once at `http://localhost:3000`. Every client below connects to that same running server at `http://localhost:3000/mcp` — no client starts its own container, so the configuration you entered is shared by all of them and survives client restarts.
 
 ### Claude Code (HTTP)
 Run this from your terminal — it registers the server in the right place automatically (no file editing needed):
@@ -821,7 +862,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 > or by using the absolute path in the config — find it with `which npx` (macOS) / `where npx`
 > (Windows) and set e.g. `"command": "/usr/local/bin/npx"`.
 
-The container from [Build & Run](#build--run) must already be running and configured. Because that
+The container from [Run](#run) must already be running and configured. Because that
 container is long-lived, your credentials persist across Claude Desktop restarts — you only
 configure once at `http://localhost:3000`.
 
@@ -898,7 +939,7 @@ The LLM will then use the AEM connector to look up the available images in that 
 
 ## Available Tools — Detailed
 
-All tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#configuration)). The two GitHub integration tools (`check_pr_status`, `deploy_merged_changes`) are only present when the GitHub integration is enabled.
+All tools, with typical arguments. Full input schemas live in `src/tools/`. **Read** tools are always available; **write** tools (marked) run only when write access is enabled (see [Access mode](#step-4--access-mode-optional)). The two GitHub integration tools (`check_pr_status`, `deploy_merged_changes`) are only present when the GitHub integration is enabled.
 
 ### Content templates
 
@@ -1343,7 +1384,7 @@ The server has **no application-layer authentication** — its security boundary
 - The append-only audit log records the (self-declared) author email + resource identifiers, **no secrets** — keep its repo/volume private since it contains email addresses.
 
 **Write safety**
-- Writes are gated by a runtime **read-only toggle (default off)** enforced at call time, plus a **write-confirmation step** that confirms the target sandbox before any change (destructive/irreversible ops re-confirm every time). See [Access mode](#4-set-the-access-mode) and the write-confirmation notes above.
+- Writes are gated by a runtime **read-only toggle (default off)** enforced at call time, plus a **write-confirmation step** that confirms the target sandbox before any change (destructive/irreversible ops re-confirm every time). See [Access mode](#step-4--access-mode-optional) and the write-confirmation notes above.
 
 **HTTP hardening** (the loopback `/` setup UI and the `/mcp` endpoint)
 - **Helmet** headers with a strict **Content-Security-Policy** — `script-src 'self'` (the setup page's JS is served as a separate `/app.js`, so there are no inline scripts), plus `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`; `style-src` keeps `'unsafe-inline'` (inline CSS can't execute JS).
