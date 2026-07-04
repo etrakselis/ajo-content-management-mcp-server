@@ -2,7 +2,7 @@
 
 Run the **AJO Content MCP Server** from its pre-built container image — no source code, no build. This folder contains everything you need: this guide and a `docker-compose.yml`.
 
-> **This is the abridged run guide.** For the project overview, the full tool catalog, personalization guidance, security model, and troubleshooting, see the **[main repository README](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md)**.
+> **This is the abridged run guide.** For the project overview, the full tool catalog, personalization guidance, security model, and troubleshooting, see the **[main repository README](https://github.com/etrakselis/ajo-content-management-mcp-server/blob/main/README.md)**.
 
 ---
 
@@ -12,7 +12,7 @@ Run the **AJO Content MCP Server** from its pre-built container image — no sou
    - **macOS:** install [Xcode Command Line Tools](https://developer.apple.com/xcode/resources/) by running `xcode-select --install`, or install [Git directly](https://git-scm.com/download/mac).
    - **Windows:** download and install [Git for Windows](https://git-scm.com/download/win), which includes Git Bash.
 2. **Docker Desktop**, installed and running (the whale icon shows "Docker Desktop is running"). Download: [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/).
-3. **An Adobe API credentials file** (a Postman-environment JSON export from the Adobe Developer Console). Obtaining it requires admin access to the Adobe Developer Console and AJO — the **[full setup steps are in the main README](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#prerequisites)**. You upload this file in Step 2 below.
+3. **An Adobe API credentials file** (a Postman-environment JSON export from the Adobe Developer Console). Obtaining it requires admin access to the Adobe Developer Console and AJO — the **[full setup steps are in the main README](https://github.com/etrakselis/ajo-content-management-mcp-server/blob/main/README.md#prerequisites)**. You upload this file in Step 2 below.
 
 ---
 
@@ -24,15 +24,15 @@ If you haven't already, clone the repository and navigate into the distribution 
 
 **macOS** (Terminal):
 ```bash
-git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/ajo_content_mgmt_mcp.git && cd ajo_content_mgmt_mcp && git sparse-checkout set distribution && cd distribution
+git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/ajo-content-management-mcp-server.git && cd ajo-content-management-mcp-server && git sparse-checkout set distribution && cd distribution
 ```
 
 **Windows** (Command Prompt or PowerShell):
 ```
-git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/ajo_content_mgmt_mcp.git
+git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/ajo-content-management-mcp-server.git
 ```
 ```
-cd ajo_content_mgmt_mcp
+cd ajo-content-management-mcp-server
 ```
 ```
 git sparse-checkout set distribution
@@ -87,7 +87,7 @@ The setup UI reveals one step at a time:
 3. **Set the access mode** — read-only (default) or read & write.
 4. **Enter your email** and click **Start MCP Server**.
 
-Details for each step are in the **[MCP Server Configuration section of the main README](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#mcp-server-configuration)**.
+Details for each step are in the **[MCP Server Configuration section of the main README](https://github.com/etrakselis/ajo-content-management-mcp-server/blob/main/README.md#mcp-server-configuration)**.
 
 ---
 
@@ -165,7 +165,7 @@ After restarting Claude Desktop, open the connectors dropdown — you should see
 
 <a href="../readme_images/claude-connector-example.png"><img src="../readme_images/claude-connector-example.png" alt="Claude Desktop connectors dropdown showing et-ajo-content-mgmt connected" width="400"></a>
 
-For other clients (Claude Code, Cursor, Codex), see the **[Client Connection Guide](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md#client-connection-guide)**.
+For other clients (Claude Code, Cursor, Codex), see the **[Client Connection Guide](https://github.com/etrakselis/ajo-content-management-mcp-server/blob/main/README.md#client-connection-guide)**.
 
 ---
 
@@ -206,4 +206,4 @@ The LLM will then use the AEM connector to look up the available images in that 
 
 ---
 
-Full documentation: **[github.com/etrakselis/ajo_content_mgmt_mcp](https://github.com/etrakselis/ajo_content_mgmt_mcp/blob/main/README.md)**
+Full documentation: **[github.com/etrakselis/ajo-content-management-mcp-server](https://github.com/etrakselis/ajo-content-management-mcp-server/blob/main/README.md)**
