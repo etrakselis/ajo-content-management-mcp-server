@@ -18,6 +18,10 @@ Run the **AJO Content MCP Server** from its pre-built container image — no sou
 
 ## Steps
 
+> **Prefer video?** This walkthrough covers steps 0–2 (cloning this folder, starting the server, and configuring it in the browser):
+>
+> [![Watch the setup walkthrough on YouTube](https://img.youtube.com/vi/H2uo5Rg36hM/maxresdefault.jpg)](https://youtu.be/H2uo5Rg36hM)
+
 ## 0. Get this folder
 
 If you haven't already, clone the repository and navigate into the distribution folder.
