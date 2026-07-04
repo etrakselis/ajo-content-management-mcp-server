@@ -2100,7 +2100,9 @@ export const landingScript = `
       const placeholder = output.querySelector('.log-placeholder');
       if (placeholder) placeholder.remove();
       const ts = entry.timestamp
-        ? new Date(entry.timestamp).toLocaleTimeString('en-US', { hour12: false })
+        ? (function (d) {
+            return d.toLocaleDateString('en-CA') + ' ' + d.toLocaleTimeString('en-US', { hour12: false });
+          })(new Date(entry.timestamp))
         : '';
       const level = (entry.level || 'info').toLowerCase();
 
