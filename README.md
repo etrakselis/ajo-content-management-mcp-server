@@ -1667,6 +1667,13 @@ The recipient unzips it, then runs `docker compose up -d` from the folder — no
 - `404 NOT_FOUND`: Verify the template/fragment ID and sandbox
 - `409 CONFLICT`: ETag mismatch — fetch the resource again to get the latest etag
 
+### Publishing a fragment that contains AEM assets fails
+A content fragment that embeds **AEM-hosted assets** cannot be published through this server — `publish_content_fragment` (and the `publish-fragment` prompt) will not complete for it.
+- **Cause:** publishing such a fragment also publishes its referenced AEM assets, and that requires AEM asset-publish permissions the server's technical-account credentials do **not** have. This is a permissions gap, not a bug in the server.
+- **Workaround — publish it manually in the AJO UI:** open the fragment in the Adobe Journey Optimizer UI and publish it there. The UI publishes the referenced AEM assets under *your own* permissions. The LLM can still create/update and save the fragment through the server; only the final **publish** step must be done in the UI.
+- Fragments that contain **no** AEM assets publish normally through the server.
+- See [AEM Assets in AJO Content](#aem-assets-in-ajo-content-optional) for the full asset workflow.
+
 ### Tool not working
 - Check `/ready` returns `{ "ready": true }`
 - Verify the MCP client is connected to `http://localhost:3000/mcp`
