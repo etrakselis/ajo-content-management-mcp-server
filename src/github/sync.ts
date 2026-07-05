@@ -6,6 +6,28 @@ import {
 import { getTag } from '../adobe/unified-tags-client.js';
 import { withSandbox } from '../adobe/sandbox-context.js';
 import { logger } from '../telemetry/index.js';
+import { randomBytes } from 'crypto';
+
+// ─── Per-key async lock ────────────────────────────────────────────────────────
+// Serialize async sections that share a key so concurrent callers run one-at-a-time
+// (in arrival order) instead of racing. Process-local — sufficient because this
+// server is the sole writer in the approval-gate flow. Used to serialize approval-PR
+// creation per asset so a dedup check can't be outrun by a parallel proposal.
+const keyedLocks = new Map<string, Promise<unknown>>();
+async function withKeyedLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = keyedLocks.get(key) ?? Promise.resolve();
+  // Run after the previous holder settles (success OR failure), so one caller's error
+  // never wedges the queue. `guarded` is the never-rejecting tail the next caller waits on.
+  const run = prev.then(fn, fn);
+  const guarded = run.catch(() => {});
+  keyedLocks.set(key, guarded);
+  try {
+    return await run;
+  } finally {
+    // Drop the entry once the queue drains (we're still the tail) to bound map growth.
+    if (keyedLocks.get(key) === guarded) keyedLocks.delete(key);
+  }
+}
 
 // Resolve an asset's tagIds (UUIDs) to tag NAMES so the committed file is
 // self-describing — cross-sandbox promotion reads names from _meta.tagNames since
@@ -55,9 +77,14 @@ function assetFilePath(sandboxName: string, toolName: string, id?: string, name?
   return `${sandboxName}/${dir}/${identifier}.json`;
 }
 
-// Generate a unique branch name from the tool name and current timestamp.
+// Generate a unique branch name from the tool name, timestamp, and a random suffix.
+// The random suffix is essential: two writes with the same tool name in the same
+// millisecond (e.g. an LLM batching parallel create_content_fragment calls for
+// DIFFERENT assets) would otherwise produce an identical branch — the second
+// createBranch 422s ("Reference already exists") and the write is reported as a hard
+// failure (a lost write). Same-asset races are additionally serialized by withKeyedLock.
 function makeBranchName(toolName: string): string {
-  return `ajo-${toolName.replace(/_/g, '-')}-${Date.now()}`;
+  return `ajo-${toolName.replace(/_/g, '-')}-${Date.now()}-${randomBytes(3).toString('hex')}`;
 }
 
 // Extract the primary resource identifier from tool args (varies by resource family).
@@ -315,11 +342,41 @@ export async function createApprovalPR(
   // instead of an orphan id-named file; it is never added to the committed payload.
   canonicalName?: string
 ): Promise<{ prNumber: number; prUrl: string; filePath: string }> {
-  const { token, owner, repo, defaultBranch } = config;
-
   const argId = extractId(args);
   const argName = canonicalName ?? (typeof args.name === 'string' ? args.name : argId ?? 'unknown');
   const filePath = assetFilePath(sandboxName, toolName, argId, argName, ajoFolderPath);
+  // Serialize concurrent proposals for the SAME asset (owner/repo/filePath). Without
+  // this, two parallel writes to one asset both run the dedup scan below, both see "no
+  // open PR", and both open a PR — a duplicate. The lock makes the second wait, so it
+  // sees the first's now-open PR and reuses it. Process-local (this server is the sole
+  // approval-gate writer).
+  return withKeyedLock(`${config.owner}/${config.repo}:${filePath}`, () =>
+    proposeAndOpenPR(
+      config, sandboxName, toolName, args, authorEmail, ajoFolderPath,
+      tenant, branchName, extraMeta, argId, argName, filePath
+    ));
+}
+
+/**
+ * The dedup → branch → commit → open-PR sequence for one approval-gate proposal. Split
+ * out of createApprovalPR so it can run inside a per-asset withKeyedLock; callers must
+ * go through createApprovalPR (which holds the lock), never call this directly.
+ */
+async function proposeAndOpenPR(
+  config: GitHubConfig,
+  sandboxName: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  authorEmail: string,
+  ajoFolderPath: string | undefined,
+  tenant: string | undefined,
+  branchName: string | undefined,
+  extraMeta: Record<string, unknown> | undefined,
+  argId: string | undefined,
+  argName: string,
+  filePath: string
+): Promise<{ prNumber: number; prUrl: string; filePath: string }> {
+  const { token, owner, repo, defaultBranch } = config;
   // ── Dedup genuine double-calls ──────────────────────────────────────────────
   // If an OPEN approval-gate PR already proposes a change to THIS asset (same canonical
   // file), reuse it: commit the new payload onto its branch and return it, instead of

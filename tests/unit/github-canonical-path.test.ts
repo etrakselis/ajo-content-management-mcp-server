@@ -299,3 +299,51 @@ describe('relocation prune (remove the stale copy after a folder move)', () => {
     expect(commitFile).toHaveBeenCalled();
   });
 });
+
+describe('parallel-write safety (branch uniqueness + per-asset dedup lock)', () => {
+  const fragArgs = (name: string) => ({ name, type: 'html', channels: ['email'], fragment: { content: 'x' } });
+
+  test('two writes to DIFFERENT assets in the same millisecond get distinct branches', async () => {
+    // Freeze the clock so both branch names share a timestamp; distinctness must then
+    // come from the random suffix (the fix). Without it, both would be identical and
+    // the second createBranch would 422 as a lost write.
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      await createApprovalPR(config, 'sbx', 'create_content_fragment', fragArgs('Frag_A'), 'me@x');
+      await createApprovalPR(config, 'sbx', 'create_content_fragment', fragArgs('Frag_B'), 'me@x');
+    } finally {
+      now.mockRestore();
+    }
+    const branches = (createBranch as jest.Mock).mock.calls.map(c => c[3] as string);
+    expect(branches).toHaveLength(2);
+    expect(new Set(branches).size).toBe(2);
+  });
+
+  test('concurrent proposals for the SAME asset dedupe to a single PR (per-asset lock)', async () => {
+    (getFileSha as jest.Mock).mockResolvedValue(null); // brand-new file
+    // Stateful GitHub: once a PR is opened on a branch, the dedup scan can find it.
+    let created: { number: number; html_url: string; ref: string } | null = null;
+    (createPullRequest as jest.Mock).mockImplementation(
+      async (_t: unknown, _o: unknown, _r: unknown, _title: unknown, _body: unknown, head: string) => {
+        created = { number: 7, html_url: 'https://github.com/o/r/pull/7', ref: head };
+        return { number: created.number, html_url: created.html_url };
+      });
+    (listPullRequests as jest.Mock).mockImplementation(async () =>
+      created ? [{ number: created.number, html_url: created.html_url, head: { ref: created.ref } }] : []);
+    (getPRFiles as jest.Mock).mockImplementation(async () =>
+      created ? [{ filename: 'sbx/content-fragments/Frag_Same.json' }] : []);
+
+    const args = fragArgs('Frag_Same');
+    const [r1, r2] = await Promise.all([
+      createApprovalPR(config, 'sbx', 'create_content_fragment', args, 'me@x'),
+      createApprovalPR(config, 'sbx', 'create_content_fragment', args, 'me@x')
+    ]);
+
+    // Without the lock, both calls run the dedup scan before either PR exists and both
+    // open a PR. The lock makes the second wait, see the first's PR, and reuse it.
+    expect(createPullRequest).toHaveBeenCalledTimes(1);
+    expect(r1.prNumber).toBe(7);
+    expect(r2.prNumber).toBe(7);
+    expect(r1.filePath).toBe('sbx/content-fragments/Frag_Same.json');
+  });
+});

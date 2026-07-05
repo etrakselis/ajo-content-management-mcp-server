@@ -179,7 +179,12 @@ Returns: { _page: { count, next }, items: [{ id, name, templateType, channels, .
 export async function handleListContentTemplates(args: unknown) {
   if (!isClientConfigured()) return notConfiguredError();
   return withTelemetry('list_content_templates', async () => {
-    const parsed = ListTemplatesSchema.safeParse(args);
+    // `args ?? {}`: the MCP `arguments` field is optional, so a no-filter "list
+    // everything" call arrives as undefined on clients that omit it. ListTemplatesSchema
+    // is a z.object (all fields optional) and rejects undefined, which would turn the
+    // most basic list call into a spurious VALIDATION_ERROR. Matches the sibling list
+    // handlers (list_tags, list_xdm_*), which all guard the same way.
+    const parsed = ListTemplatesSchema.safeParse(args ?? {});
     if (!parsed.success) return validationError(parsed.error);
     try {
       const data = await listTemplates(parsed.data);

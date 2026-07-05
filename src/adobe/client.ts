@@ -101,10 +101,15 @@ export function configureAdobeClient(config: AdobeClientConfig): void {
     retryCondition: (error: AxiosError) => {
       // Don't retry a response timeout — retrying multiplies the wait by the retry
       // count (the 4-minute hang seen in testing). Fail fast and let buildError map
-      // it to a structured TIMEOUT. Still retry genuine network drops and 5xx.
+      // it to a structured TIMEOUT. Still retry genuine network drops and idempotent 5xx.
       if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return false;
-      return axiosRetry.isNetworkOrIdempotentRequestError(error) ||
-        (error.response?.status !== undefined && error.response.status >= 500);
+      // isNetworkOrIdempotentRequestError already retries network errors (any method)
+      // AND 429/5xx for idempotent methods only (GET/HEAD/OPTIONS/PUT/DELETE). Do NOT
+      // add a blanket `status >= 500` clause: that replays NON-idempotent writes (POST
+      // create, PATCH) after AJO may have already committed them — duplicating a
+      // fragment/template, double-publishing, or applying a JSON-Patch op twice. A 5xx
+      // means the request reached AJO, so only a method whose replay is safe may retry.
+      return axiosRetry.isNetworkOrIdempotentRequestError(error);
     },
     onRetry: (retryCount, error) => {
       logger.warn('Retrying Adobe API request', {
@@ -553,12 +558,19 @@ export async function archiveFragment(fragmentId: string) {
       variables: { id: fragmentId, etag: '', state: 'ARCHIVED' }
     },
     {
+      // Bound this like every httpClient call — this bare axios.post bypasses the
+      // shared instance, so without an explicit timeout a stalled internal GraphQL
+      // gateway would hang the MCP tool call indefinitely (the very hang the
+      // HTTP_TIMEOUT_MS comment above exists to prevent).
+      timeout: HTTP_TIMEOUT_MS,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
         'x-api-key': ARCHIVE_API_KEY,
         'x-gw-ims-org-id': clientConfig.imsOrg,
-        'x-sandbox-name': clientConfig.sandboxName
+        // Honor an active cross-sandbox override so archiving during promotion targets
+        // the same sandbox as the rest of the run, not just the configured default.
+        'x-sandbox-name': getActiveSandboxOverride() ?? clientConfig.sandboxName
       }
     }
   );
