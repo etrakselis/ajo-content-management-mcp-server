@@ -51,6 +51,8 @@ cd distribution
 
 > **Make sure Docker Desktop is running first** — look for the whale icon in your menu bar (macOS) or system tray (Windows) showing "Docker Desktop is running." The command below will fail if the Docker engine isn't started.
 
+> **Advanced — trim the tool list (`MCP_LEAN_MODE`).** Optional, and usually unnecessary for a single connection. If you run this server alongside **many** other MCP servers and your client starts picking the wrong tool, edit `docker-compose.yml` and uncomment the `# - MCP_LEAN_MODE=1` line before starting. It merges the five read-only authoring-reference tools into a single `get_reference` tool (called with a `topic`) — identical content, fewer tools advertised. Leave it commented out otherwise.
+
 From this folder (the one containing `docker-compose.yml`):
 
 ```bash
@@ -79,8 +81,6 @@ docker compose down        # stop and remove the container
 ```
 
 > **Pin a version** for reproducibility: edit `docker-compose.yml` and replace `:latest` with a specific tag, e.g. `ghcr.io/etrakselis/ajo-content-mcp:1.0.0`.
-
-> **Advanced — trim the tool list (`MCP_LEAN_MODE`).** Optional, and usually unnecessary for a single connection. If you run this server alongside **many** other MCP servers and your client starts picking the wrong tool, edit `docker-compose.yml`, uncomment the `# - MCP_LEAN_MODE=1` line, and run `docker compose up -d`. It merges the five read-only authoring-reference tools into a single `get_reference` tool (called with a `topic`) — identical content, fewer tools advertised. Leave it commented out otherwise.
 
 ---
 
