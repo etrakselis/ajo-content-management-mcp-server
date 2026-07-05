@@ -757,6 +757,14 @@ export const landingPageHtml = `<!DOCTYPE html>
     .log-search-count { font-size: 10px; color: rgba(255,255,255,0.4); white-space: nowrap; flex-shrink: 0; }
     .log-search-close { background: transparent; border: none; color: rgba(255,255,255,0.4); cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 4px; flex-shrink: 0; }
     .log-search-close:hover { color: rgba(255,255,255,0.85); }
+    .naming-search { display: none; align-items: center; gap: 8px; padding: 6px 8px; margin-bottom: 8px; background: #1F1F1F; border: 1px solid #3A3A3A; border-radius: 6px; }
+    .naming-search.show { display: flex; }
+    .naming-search input { flex: 1; min-width: 0; background: rgba(255,255,255,0.06); border: 1px solid #3A3A3A; border-radius: 4px; color: #DDD; font-family: inherit; font-size: 12px; padding: 5px 8px; outline: none; }
+    .naming-search input:focus { border-color: var(--adobe-red); }
+    .naming-search input::placeholder { color: rgba(255,255,255,0.35); }
+    .naming-search-count { font-size: 11px; color: rgba(255,255,255,0.45); white-space: nowrap; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    .naming-search-close { background: transparent; border: none; color: rgba(255,255,255,0.45); cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px; flex-shrink: 0; }
+    .naming-search-close:hover { color: rgba(255,255,255,0.9); }
     .log-output mark { background: #FFD54F; color: #1a1a1a; border-radius: 2px; padding: 0 1px; }
     .log-output { height: 240px; min-height: 120px; overflow-y: auto; overflow-x: hidden; padding: 8px 14px; line-height: 1.7; resize: vertical; }
     .log-entry { padding: 1px 0; }
@@ -1027,6 +1035,11 @@ export const landingPageHtml = `<!DOCTYPE html>
         </span>
       </label>
       <div id="namingConventionEditor" class="naming-editor-wrap" style="display:none">
+        <div class="naming-search" id="namingSearch">
+          <input type="text" id="namingSearchInput" placeholder="Find in rules… (Enter / Shift+Enter to cycle, Esc to close)" autocomplete="off" spellcheck="false" />
+          <span class="naming-search-count" id="namingSearchCount"></span>
+          <button class="naming-search-close" type="button" id="namingSearchClose" title="Close (Esc)">✕</button>
+        </div>
         <div class="md-dropzone-wrap" id="namingMdDropzone">
           <textarea id="namingConventionMarkdown" class="md-editor" maxlength="25000" placeholder="Define your naming rules in markdown. The LLM will read and apply these rules to templates, fragments, folders, and tags.">{{DEFAULT_NAMING_CONVENTION}}</textarea>
           <div class="md-drop-overlay">Drop .md file here</div>
@@ -2353,6 +2366,133 @@ export const landingScript = `
       if (e.key === 'Escape') { e.preventDefault(); closeLogSearch(); }
     });
     document.getElementById('logSearchClose').addEventListener('click', closeLogSearch);
+
+    // ─── Naming-convention search (Ctrl/Cmd+F inside the rules editor) ──────────
+
+    // Only hijack Ctrl/Cmd+F when the user is working inside the naming editor —
+    // anywhere else the browser's native Find must keep working. A textarea can't
+    // render <mark> highlights (unlike the log entries), so this find navigates the
+    // matches by selecting them in place, showing "X of Y" as feedback.
+    let namingEditorActive = false;
+    document.addEventListener('mousedown', (e) => {
+      namingEditorActive = !!(e.target.closest && e.target.closest('#namingConventionEditor'));
+    });
+
+    let namingMatches = [];   // start offsets of each match in the textarea value
+    let namingMatchIdx = -1;  // index into namingMatches of the current match
+
+    function computeNamingMatches(term) {
+      namingMatches = [];
+      namingMatchIdx = -1;
+      if (!term) return;
+      const hay = document.getElementById('namingConventionMarkdown').value.toLowerCase();
+      const needle = term.toLowerCase();
+      let i = 0;
+      let idx;
+      while ((idx = hay.indexOf(needle, i)) !== -1) {
+        namingMatches.push(idx);
+        i = idx + needle.length;
+      }
+    }
+
+    function setNamingSearchCount(term) {
+      const count = document.getElementById('namingSearchCount');
+      if (!term) { count.textContent = ''; return; }
+      if (namingMatches.length === 0) { count.textContent = 'No matches'; return; }
+      count.textContent = (namingMatchIdx + 1) + ' of ' + namingMatches.length;
+    }
+
+    // Scroll the textarea so the character at the match offset is centered. A textarea won't
+    // reliably auto-scroll to a programmatic selection, and it soft-wraps long lines,
+    // so we measure the offset's pixel position with a hidden mirror div that copies
+    // the textarea's font/width/padding, then set scrollTop directly.
+    function scrollNamingMatchIntoView(ta, offset) {
+      const cs = getComputedStyle(ta);
+      const mirror = document.createElement('div');
+      const copy = ['fontFamily','fontSize','fontWeight','fontStyle','fontVariant','letterSpacing','lineHeight','textIndent','textTransform','wordSpacing','tabSize','paddingTop','paddingRight','paddingBottom','paddingLeft'];
+      for (let i = 0; i < copy.length; i++) mirror.style[copy[i]] = cs[copy[i]];
+      mirror.style.boxSizing = 'content-box';
+      const padL = parseFloat(cs.paddingLeft) || 0;
+      const padR = parseFloat(cs.paddingRight) || 0;
+      mirror.style.width = (ta.clientWidth - padL - padR) + 'px';
+      mirror.style.position = 'absolute';
+      mirror.style.left = '-9999px';
+      mirror.style.top = '0';
+      mirror.style.height = 'auto';
+      mirror.style.visibility = 'hidden';
+      mirror.style.whiteSpace = 'pre-wrap';
+      mirror.style.overflowWrap = 'break-word';
+      mirror.style.wordWrap = 'break-word';
+      mirror.textContent = ta.value.slice(0, offset);
+      const marker = document.createElement('span');
+      marker.textContent = ta.value.charAt(offset) || '.';
+      mirror.appendChild(marker);
+      document.body.appendChild(mirror);
+      const markerTop = marker.offsetTop;
+      document.body.removeChild(mirror);
+      let target = markerTop - Math.floor(ta.clientHeight / 2);
+      if (target < 0) target = 0;
+      ta.scrollTop = target;
+    }
+
+    // Select the current match in the textarea and scroll it into view. Focus stays in
+    // the search box (so Enter keeps cycling); the match shows as the textarea's selection.
+    function selectNamingMatch(term) {
+      if (namingMatchIdx < 0 || namingMatches.length === 0) return;
+      const ta = document.getElementById('namingConventionMarkdown');
+      const start = namingMatches[namingMatchIdx];
+      ta.setSelectionRange(start, start + term.length);
+      scrollNamingMatchIntoView(ta, start);
+    }
+
+    function applyNamingSearch() {
+      const term = document.getElementById('namingSearchInput').value;
+      computeNamingMatches(term);
+      if (namingMatches.length > 0) { namingMatchIdx = 0; selectNamingMatch(term); }
+      setNamingSearchCount(term);
+    }
+
+    function stepNamingMatch(dir) {
+      if (namingMatches.length === 0) return;
+      const term = document.getElementById('namingSearchInput').value;
+      namingMatchIdx = (namingMatchIdx + dir + namingMatches.length) % namingMatches.length;
+      selectNamingMatch(term);
+      setNamingSearchCount(term);
+    }
+
+    function openNamingSearch() {
+      document.getElementById('namingSearch').classList.add('show');
+      const input = document.getElementById('namingSearchInput');
+      input.focus();
+      input.select();
+      applyNamingSearch();
+    }
+
+    function closeNamingSearch() {
+      document.getElementById('namingSearch').classList.remove('show');
+      document.getElementById('namingSearchInput').value = '';
+      namingMatches = [];
+      namingMatchIdx = -1;
+      document.getElementById('namingSearchCount').textContent = '';
+      document.getElementById('namingConventionMarkdown').focus();
+    }
+
+    document.addEventListener('keydown', (e) => {
+      const searchOpen = document.getElementById('namingSearch').classList.contains('show');
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F') && namingEditorActive) {
+        e.preventDefault();
+        openNamingSearch();
+      } else if (e.key === 'Escape' && searchOpen) {
+        closeNamingSearch();
+      }
+    });
+
+    document.getElementById('namingSearchInput').addEventListener('input', applyNamingSearch);
+    document.getElementById('namingSearchInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); stepNamingMatch(e.shiftKey ? -1 : 1); }
+      else if (e.key === 'Escape') { e.preventDefault(); closeNamingSearch(); }
+    });
+    document.getElementById('namingSearchClose').addEventListener('click', closeNamingSearch);
 
     // CSP-safe event delegation (replaces former inline onclick handlers).
     document.addEventListener('click', function (e) {
