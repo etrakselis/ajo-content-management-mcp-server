@@ -331,7 +331,12 @@ export async function handleListContentFragments(args: unknown) {
     try {
       if (statusPreds.length === 0) {
         const data = await listFragments(parsed.data);
-        return { success: true, data };
+        // A list of full items (each with an html body) can exceed the ~1 MB transport
+        // cap; short-circuit with a structured RESPONSE_TOO_LARGE like the get_* tools,
+        // instead of letting the SDK reject the whole result with a bare "too large".
+        const envelope = { success: true as const, data };
+        return oversizeError(envelope,
+          'Narrow the result with a `property` filter or a smaller `limit`, then read individual items with get_content_fragment.') ?? envelope;
       }
 
       // Status filter present: scan upstream (without the status predicate) and
@@ -359,11 +364,15 @@ export async function handleListContentFragments(args: unknown) {
         if (!cursor) break;
         if (page === MAX_STATUS_SCAN_PAGES - 1) truncated = true;
       }
-      return {
-        success: true,
+      // The status scan aggregates up to `limit` full fragment items into one result —
+      // the sharpest case for the transport cap. Guard it the same way.
+      const envelope = {
+        success: true as const,
         data: { _page: { count: items.length, next: null }, items },
         ...(truncated ? { truncated: true } : {})
       };
+      return oversizeError(envelope,
+        'Lower `limit` or add a narrower `property` filter, then read individual items with get_content_fragment.') ?? envelope;
     } catch (err) {
       return { success: false, error: buildError(err) };
     }

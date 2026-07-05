@@ -188,7 +188,11 @@ export async function handleListContentTemplates(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const data = await listTemplates(parsed.data);
-      return { success: true, data };
+      // A list of full templates (each a Visual Designer document) can exceed the ~1 MB
+      // transport cap; short-circuit with a structured RESPONSE_TOO_LARGE like get_* does.
+      const envelope = { success: true as const, data };
+      return oversizeError(envelope,
+        'Narrow the result with a `property` filter or a smaller `limit`, then read individual items with get_content_template.') ?? envelope;
     } catch (err) {
       return { success: false, error: buildError(err) };
     }

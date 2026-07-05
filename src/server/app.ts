@@ -557,9 +557,15 @@ export function createExpressApp(): express.Application {
     message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many requests', details: {} } }
   });
 
-  const authLimiter = rateLimit({
+  // Per-endpoint auth limiter. Each setup endpoint (detect-tenant, github-test,
+  // configure) gets its OWN bucket via makeAuthLimiter(), rather than sharing a single
+  // instance: a shared 5/min budget across all three — all keyed to the same loopback
+  // IP — throttled a normal setup mid-flow (detect + github-test + configure + a retry).
+  // The cap is per-endpoint and generous enough for a human iterating on credentials,
+  // while still bounding a runaway client loop.
+  const makeAuthLimiter = () => rateLimit({
     windowMs: 60 * 1000,
-    max: 5,
+    max: 10,
     message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many auth attempts', details: {} } }
   });
 
@@ -706,7 +712,7 @@ export function createExpressApp(): express.Application {
   // detection WITHOUT activating the server. The landing page calls this before
   // configuring so it can reveal the org-name input up front when the namespace
   // can't be auto-detected.
-  app.post('/api/detect-tenant', csrfGuard, authLimiter, async (req: Request, res: Response) => {
+  app.post('/api/detect-tenant', csrfGuard, makeAuthLimiter(), async (req: Request, res: Response) => {
     const parsedReq = parseConfigRequest(req.body);
     if (!parsedReq.ok) {
       return res.status(parsedReq.status).json({ success: false, error: parsedReq.error });
@@ -743,7 +749,7 @@ export function createExpressApp(): express.Application {
   // the PAT has access to the specified repo BEFORE the user activates the server,
   // so misconfigured tokens surface immediately with a clear error rather than
   // failing silently on the first content write.
-  app.post('/api/github-test', csrfGuard, authLimiter, async (req: Request, res: Response) => {
+  app.post('/api/github-test', csrfGuard, makeAuthLimiter(), async (req: Request, res: Response) => {
     const { token, owner, repo } = (req.body ?? {}) as { token?: string; owner?: string; repo?: string };
     if (!token?.trim() || !owner?.trim() || !repo?.trim()) {
       return res.status(400).json({ success: false, error: 'token, owner, and repo are required.' });
@@ -761,7 +767,7 @@ export function createExpressApp(): express.Application {
     }
   });
 
-  app.post('/api/configure', csrfGuard, authLimiter, async (req: Request, res: Response) => {
+  app.post('/api/configure', csrfGuard, makeAuthLimiter(), async (req: Request, res: Response) => {
     const parsedReq = parseConfigRequest(req.body);
     if (!parsedReq.ok) {
       return res.status(parsedReq.status).json({ success: false, error: parsedReq.error });

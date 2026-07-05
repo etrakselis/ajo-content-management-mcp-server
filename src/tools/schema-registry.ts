@@ -63,7 +63,8 @@ export async function handleListXdmSchemas(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const { container, ...rest } = parsed.data;
-      return { success: true, data: await listSchemas(container as Container, rest) };
+      const envelope = { success: true as const, data: await listSchemas(container as Container, rest) };
+      return oversizeError(envelope, 'Narrow the result with a smaller `limit`, then call get_xdm_schema on the ids you need.') ?? envelope;
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -141,7 +142,8 @@ export async function handleListXdmFieldGroups(args: unknown) {
     if (!parsed.success) return validationError(parsed.error);
     try {
       const { container, ...rest } = parsed.data;
-      return { success: true, data: await listFieldGroups(container as Container, rest) };
+      const envelope = { success: true as const, data: await listFieldGroups(container as Container, rest) };
+      return oversizeError(envelope, 'Narrow the result with a smaller `limit`, then call get_xdm_field_group on the ids you need.') ?? envelope;
     } catch (err) {
       return { success: false, error: buildError(err) };
     }
@@ -213,7 +215,8 @@ export async function handleListXdmUnionSchemas(args: unknown) {
     const parsed = ListXdmUnionSchemasSchema.safeParse(args ?? {});
     if (!parsed.success) return validationError(parsed.error);
     try {
-      return { success: true, data: await listUnionSchemas(parsed.data) };
+      const envelope = { success: true as const, data: await listUnionSchemas(parsed.data) };
+      return oversizeError(envelope, 'Narrow the result with a smaller `limit`, then call get_xdm_union_schema on the ids you need.') ?? envelope;
     } catch (err) {
       return { success: false, error: buildError(err) };
     }

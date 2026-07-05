@@ -18,11 +18,13 @@ jest.mock('../../src/adobe/client', () => ({
   buildError: (err: unknown) => ({ code: 'API_ERROR', message: String(err), details: {} }),
   getFragment: jest.fn(),
   getLiveFragment: jest.fn(),
-  getTemplate: jest.fn()
+  getTemplate: jest.fn(),
+  listFragments: jest.fn(),
+  listTemplates: jest.fn()
 }));
 
-import { handleGetContentFragment, handleGetLiveFragment } from '../../src/tools/fragments';
-import { handleGetContentTemplate } from '../../src/tools/templates';
+import { handleGetContentFragment, handleGetLiveFragment, handleListContentFragments } from '../../src/tools/fragments';
+import { handleGetContentTemplate, handleListContentTemplates } from '../../src/tools/templates';
 import * as client from '../../src/adobe/client';
 
 const mockClient = client as jest.Mocked<typeof client>;
@@ -76,6 +78,39 @@ describe('content get_* RESPONSE_TOO_LARGE guard', () => {
   test('get_live_fragment returns a structured RESPONSE_TOO_LARGE', async () => {
     mockClient.getLiveFragment.mockResolvedValue({ type: 'html', fragment: { content: hugeHtml } } as never);
     const result = await handleGetLiveFragment({ fragmentId: '33333333-3333-3333-3333-333333333333' }) as ErrResult;
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('RESPONSE_TOO_LARGE');
+    expect(result.error?.details.bytes).toBeGreaterThan(1_000_000);
+  });
+});
+
+describe('content list_* RESPONSE_TOO_LARGE guard', () => {
+  test('list_content_fragments returns a structured RESPONSE_TOO_LARGE when the aggregate exceeds the cap', async () => {
+    mockClient.listFragments.mockResolvedValue({
+      items: [{ id: 'f1', name: 'Big', type: 'html', fragment: { content: hugeHtml } }],
+      _page: { next: null }
+    } as never);
+    const result = await handleListContentFragments({}) as ErrResult;
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('RESPONSE_TOO_LARGE');
+    expect(result.error?.details.bytes).toBeGreaterThan(1_000_000);
+    expect(result.error?.message).toMatch(/get_content_fragment/);
+  });
+
+  test('list_content_fragments passes through when within the cap', async () => {
+    mockClient.listFragments.mockResolvedValue({
+      items: [{ id: 'f1', name: 'Small', type: 'html' }], _page: { next: null }
+    } as never);
+    const result = await handleListContentFragments({}) as { success: boolean; data?: unknown };
+    expect(result.success).toBe(true);
+    expect(result.data).toBeDefined();
+  });
+
+  test('list_content_templates returns a structured RESPONSE_TOO_LARGE when the aggregate exceeds the cap', async () => {
+    mockClient.listTemplates.mockResolvedValue({
+      items: [{ id: 't1', name: 'Big', template: { html: hugeHtml } }], _page: { next: null }
+    } as never);
+    const result = await handleListContentTemplates({}) as ErrResult;
     expect(result.success).toBe(false);
     expect(result.error?.code).toBe('RESPONSE_TOO_LARGE');
     expect(result.error?.details.bytes).toBeGreaterThan(1_000_000);
