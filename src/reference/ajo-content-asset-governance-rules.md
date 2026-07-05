@@ -277,6 +277,36 @@ Do not append a `_Fragment` designator. The final token is the approved Section,
 
 ---
 
+# Content Fragment Description
+
+Every Content Fragment must have a populated `description` field. The LLM must never create a Content Fragment with an empty, placeholder, or name-restating description.
+
+The description is the fragment's human-readable statement of intent. It exists so that anyone browsing the fragment library — or an LLM searching for a fragment to reuse — can understand what the fragment is for without opening it.
+
+The description must make clear:
+
+- **Purpose** — the role this fragment plays in the experience (for example, the hero section of a specific journey).
+- **Content** — what the fragment actually displays: the kind of content, its key elements, and any dynamic or personalized values it renders.
+- **Context** — the brand, trigger, and section it belongs to, where that adds clarity.
+
+The description must:
+
+- Be specific to this fragment, not generic boilerplate.
+- Describe the content, not merely restate the name.
+- Be written in plain, complete sentences.
+
+Illustrative Example (for a fragment named `LM_PD_BrowseAbandon_Hero`):
+
+```text
+Hero section for the Luma Price Drop Browse Abandonment email. Displays the primary promotional banner with the personalized product image, product name, the dropped price shown alongside the original struck-through price, and the primary "Shop Now" call-to-action.
+```
+
+The example illustrates the level of detail expected; it is not a value to copy. Derive every description from the actual content of the fragment being created.
+
+This requirement complements the Metadata Minimization Principle rather than conflicting with it: a fragment description conveys purpose and content that cannot be inferred from the name, folder, or repository, so it provides unique discovery and operational value.
+
+---
+
 # Content Template Naming
 
 A Content Template represents an entire experience. Its asset type is already established by the Content Template repository it lives in, so the name must not restate it.
@@ -573,7 +603,13 @@ Do not append asset-type designators (`_Template`, `_Fragment`). A Content Fragm
 
 ---
 
-## Step 6 — Apply Tags
+## Step 6 — Write Description (Content Fragments)
+
+When the asset is a Content Fragment, populate its `description` field with a specific statement of the fragment's purpose and the content it displays (see [Content Fragment Description](#content-fragment-description)). Never leave the description empty or set it to a restatement of the name.
+
+---
+
+## Step 7 — Apply Tags
 
 Apply required governance tags only.
 
@@ -581,7 +617,7 @@ Do not create redundant tags for metadata already represented by platform struct
 
 ---
 
-## Step 7 — Place Asset
+## Step 8 — Place Asset
 
 Place the asset in the correct repository hierarchy.
 
@@ -608,7 +644,7 @@ unless explicitly required by the platform.
 
 ---
 
-## Step 8 — Compose Templates From Fragments
+## Step 9 — Compose Templates From Fragments
 
 When the asset being produced is a Content Template, the LLM must not place HTML directly in the template. It must instead follow the Template Composition Standard: split the provided HTML into logical regions, store that HTML inside Content Fragments, and embed those fragments into the template by reference. A compliant template contains embedded fragments and no inline markup.
 
@@ -753,6 +789,7 @@ The LLM must:
 - Follow folder standards.
 - Respect repository separation.
 - Apply required governance tags.
+- Populate the `description` field of every Content Fragment with a specific statement of its purpose and the content it displays.
 - Prevent duplicates.
 - Maintain asset relationships.
 - Compose Content Templates only from embedded Content Fragments.
@@ -790,6 +827,7 @@ Before finalizing any asset:
 - Naming convention compliant
 - No asset-type designator in name
 - Folder placement compliant
+- Content Fragment description populated — states purpose and content (fragments only)
 - Required tags present
 - Asset family tag present
 - No lifecycle data in name
@@ -811,6 +849,9 @@ LM_PD_BrowseAbandon_Hero
 
 Folder:
 /LM/PD/BrowseAbandon
+
+Description:
+Hero section for the Luma Price Drop Browse Abandonment email. Displays the personalized product image, product name, the dropped price shown alongside the original struck-through price, and the primary "Shop Now" call-to-action.
 
 Tags:
 brand-lm
@@ -871,6 +912,7 @@ Validation Results:
 ✓ Naming convention compliant
 ✓ No asset-type designator in name
 ✓ Folder placement compliant
+✓ Content Fragment description populated (fragments only)
 ✓ Required tags present
 ✓ Asset family tag present
 ✓ Duplicate check completed
@@ -887,6 +929,8 @@ Names identify assets.
 Folders organize assets.
 
 Tags describe assets.
+
+Content Fragment descriptions state each fragment's purpose and content.
 
 Asset type is implied by the repository — never put it in a name or a tag.
 
