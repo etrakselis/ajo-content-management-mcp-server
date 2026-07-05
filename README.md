@@ -137,7 +137,7 @@ Push committed repo content into AJO. **Cross-sandbox** (dev → prod) uses the 
 
 ## Example Prompts
 
-Once your LLM client is connected to this MCP server, you can talk to it in plain language. Below are ready-to-use prompts organised by what you're trying to do — copy them directly or use them as inspiration.
+Once your LLM client is connected to this MCP server, you can talk to it in plain language. Below are ready-to-use prompts organised by what you're trying to do — hover over any prompt and click the **copy** icon in its top-right corner to copy it, then paste it into your client (or use it as inspiration).
 
 ---
 
@@ -146,52 +146,99 @@ Once your LLM client is connected to this MCP server, you can talk to it in plai
 Before doing any real work, confirm *what* you're connected to and *what you can do*. These are the prompts to run first.
 
 **Which server / tenant / sandbox am I on, and who am I acting as?**
-> "Call get_server_context and tell me who this server is acting on behalf of, which sandbox and tenant it's on, and whether write access is enabled."
 
-> "Before we start, confirm the Adobe Journey Optimizer environment: author email, tenant namespace, and sandbox name."
+```text
+Call get_server_context and tell me who this server is acting on behalf of, which sandbox and tenant it's on, and whether write access is enabled.
+```
 
-> "List one content template and tell me the org, tenant, sandbox, and author it came from." *(Every tool result is prefixed with `[tenant: … | sandbox: … | author: …]` — plus `org: …` if an org name was supplied during setup — so this is the most reliable way to see the exact target. The `get_server_context` tool returns the same details on demand, without performing any content operation.)*
+```text
+Before we start, confirm the Adobe Journey Optimizer environment: author email, tenant namespace, and sandbox name.
+```
+
+```text
+List one content template and tell me the org, tenant, sandbox, and author it came from.
+```
+*(Every tool result is prefixed with `[tenant: … | sandbox: … | author: …]` — plus `org: …` if an org name was supplied during setup — so this is the most reliable way to see the exact target. The `get_server_context` tool returns the same details on demand, without performing any content operation.)*
 
 **What can I do right now (read-only vs read-write)?**
-> "Are you currently allowed to create or modify content through the ajo-content server, or is it read-only?"
 
-> "Try to tell me whether write access is enabled. If it isn't, what do I need to do to turn it on?" *(If writes are off, write attempts return a `READ_ONLY_MODE` error pointing you to `http://localhost:3000`.)*
+```text
+Are you currently allowed to create or modify content through the ajo-content server, or is it read-only?
+```
+
+```text
+Try to tell me whether write access is enabled. If it isn't, what do I need to do to turn it on?
+```
+*(If writes are off, write attempts return a `READ_ONLY_MODE` error pointing you to `http://localhost:3000`.)*
 
 **What tools are available?**
-> "Call get_server_context and list every tool this server exposes, grouped by domain." *(`get_server_context` returns the full tool catalog, so this works even if some tools didn't surface in an initial search.)*
 
-> "What AJO content tools do you have access to? Group them into read vs. write operations."
+```text
+Call get_server_context and list every tool this server exposes, grouped by domain.
+```
+*(`get_server_context` returns the full tool catalog, so this works even if some tools didn't surface in an initial search.)*
 
-> "Summarize what each ajo-content tool does, so I know what I can ask for."
+```text
+What AJO content tools do you have access to? Group them into read vs. write operations.
+```
+
+```text
+Summarize what each ajo-content tool does, so I know what I can ask for.
+```
 
 ---
 
 ### 🔍 Browsing & Discovery
 
 **List everything**
-> "Show me all the content templates in this sandbox."
 
-> "List all content fragments, sorted by most recently modified."
+```text
+Show me all the content templates in this sandbox.
+```
 
-> "How many content templates do we have? Give me a summary grouped by channel."
+```text
+List all content fragments, sorted by most recently modified.
+```
+
+```text
+How many content templates do we have? Give me a summary grouped by channel.
+```
 
 **Search and filter**
-> "Find all email templates whose name starts with 'Cyber Monday'."
 
-> "Show me all push notification templates created in the last 30 days."
+```text
+Find all email templates whose name starts with 'Cyber Monday'.
+```
 
-> "List all content fragments that are currently in DRAFT status."
+```text
+Show me all push notification templates created in the last 30 days.
+```
 
-> "Find all fragments of type 'expression' on the shared channel."
+```text
+List all content fragments that are currently in DRAFT status.
+```
 
-> "Are there any templates that came from AEM? List them."
+```text
+Find all fragments of type 'expression' on the shared channel.
+```
+
+```text
+Are there any templates that came from AEM? List them.
+```
 
 **Inspect a specific item**
-> "Get the full details of template ID b6d70a45-a149-453b-85ba-809a5d40066d."
 
-> "Show me the HTML content inside the 'Welcome Email' template."
+```text
+Get the full details of template ID b6d70a45-a149-453b-85ba-809a5d40066d.
+```
 
-> "Fetch fragment b6d70a45-a149-453b-85ba-809a5d40066d and tell me what channel it targets and what its current status is."
+```text
+Show me the HTML content inside the 'Welcome Email' template.
+```
+
+```text
+Fetch fragment b6d70a45-a149-453b-85ba-809a5d40066d and tell me what channel it targets and what its current status is.
+```
 
 ---
 
@@ -199,89 +246,158 @@ Before doing any real work, confirm *what* you're connected to and *what you can
 
 These use the Schema Registry (XDM) tools to find the attributes that actually exist in your sandbox, so content references real paths instead of generic guesses. (Requires the AEP Schema Registry API on your Developer Console project.)
 
-> "What custom field groups are defined in this sandbox? List them."
+```text
+What custom field groups are defined in this sandbox? List them.
+```
 
-> "Show me the full Profile union schema and list the personalization attributes available, with their paths."
+```text
+Show me the full Profile union schema and list the personalization attributes available, with their paths.
+```
 
-> "Find the loyalty-related attributes in our XDM schemas and tell me the exact paths I'd use for personalization."
+```text
+Find the loyalty-related attributes in our XDM schemas and tell me the exact paths I'd use for personalization.
+```
 
-> "Create a welcome email fragment, but first look up our actual profile attributes and use the real first-name and loyalty-tier paths instead of the default XDM ones."
+```text
+Create a welcome email fragment, but first look up our actual profile attributes and use the real first-name and loyalty-tier paths instead of the default XDM ones.
+```
 
-> "Before personalizing this template, check our tenant field groups and map each placeholder I want (first name, city, points balance) to its real attribute path."
+```text
+Before personalizing this template, check our tenant field groups and map each placeholder I want (first name, city, points balance) to its real attribute path.
+```
 
-> "Show me the AJO personalization syntax for a loyalty-points expiry countdown with a fallback — use get_personalization_syntax, don't improvise Handlebars."
+```text
+Show me the AJO personalization syntax for a loyalty-points expiry countdown with a fallback — use get_personalization_syntax, don't improvise Handlebars.
+```
 
-> "Build a conditional block that greets Gold-tier members differently from everyone else, using real AJO operator and if/else syntax."
+```text
+Build a conditional block that greets Gold-tier members differently from everyone else, using real AJO operator and if/else syntax.
+```
 
 ---
 
 ### ✏️ Creating Content
 
 **Templates**
-> "Create an HTML email template called 'Summer Sale Header' with this HTML: `<div>Hi {{profile.person.name}}, our summer sale is live!</div>`"
 
-> "Create a push notification template called 'Flash Sale Alert' with the title 'Limited time offer 🔥' and message 'Tap to see deals ending in 2 hours.'"
+```text
+Create an HTML email template called 'Summer Sale Header' with this HTML: <div>Hi {{profile.person.name}}, our summer sale is live!</div>
+```
 
-> "Create an SMS template called 'Order Shipped' with the text 'Hi {{profile.person.name}}, your order {{order.id}} has shipped and will arrive by {{order.estimatedDelivery}}.'"
+```text
+Create a push notification template called 'Flash Sale Alert' with the title 'Limited time offer 🔥' and message 'Tap to see deals ending in 2 hours.'
+```
 
-> "Create a new in-app message template called 'Loyalty Milestone' with an HTML body that congratulates the user on reaching Gold status."
+```text
+Create an SMS template called 'Order Shipped' with the text 'Hi {{profile.person.name}}, your order {{order.id}} has shipped and will arrive by {{order.estimatedDelivery}}.'
+```
 
-> "Create a direct mail template called 'Holiday Catalog 2025' with a fileName of 'holiday-catalog' and include fields for first name, last name, and postal address."
+```text
+Create a new in-app message template called 'Loyalty Milestone' with an HTML body that congratulates the user on reaching Gold status.
+```
 
-> "Create a code-based template called 'Hero Banner JSON' on the code channel with subType JSON."
+```text
+Create a direct mail template called 'Holiday Catalog 2025' with a fileName of 'holiday-catalog' and include fields for first name, last name, and postal address.
+```
+
+```text
+Create a code-based template called 'Hero Banner JSON' on the code channel with subType JSON.
+```
 
 **Fragments**
-> "Create an HTML fragment called 'Global Footer' with this content: `<footer>© 2025 Acme Corp | <a href='/unsubscribe'>Unsubscribe</a></footer>`. It should target the email channel."
 
-> "Create an expression fragment called 'Personalised Greeting' with the expression `Hello {{profile.person.firstName}}, welcome back!` on the shared channel."
+```text
+Create an HTML fragment called 'Global Footer' with this content: <footer>© 2025 Acme Corp | <a href='/unsubscribe'>Unsubscribe</a></footer>. It should target the email channel.
+```
 
-> "Create a new draft HTML fragment called 'Promo Banner' for the email channel. The content should be a red banner div with the text 'Up to 50% off selected items'."
+```text
+Create an expression fragment called 'Personalised Greeting' with the expression Hello {{profile.person.firstName}}, welcome back! on the shared channel.
+```
+
+```text
+Create a new draft HTML fragment called 'Promo Banner' for the email channel. The content should be a red banner div with the text 'Up to 50% off selected items'.
+```
 
 ---
 
 ### 🔄 Updating Content
 
 **Rename or re-describe**
-> "Rename template b6d70a45-... to 'Black Friday Email — v2'."
 
-> "Update the description of fragment b6d70a45-... to 'Used in all promotional campaigns Q4 2025'."
+```text
+Rename template b6d70a45-... to 'Black Friday Email — v2'.
+```
 
-> "Move template b6d70a45-... into folder a49dbe03-..."
+```text
+Update the description of fragment b6d70a45-... to 'Used in all promotional campaigns Q4 2025'.
+```
+
+```text
+Move template b6d70a45-... into folder a49dbe03-...
+```
 
 **Edit content**
-> "Update the 'Welcome Email' template. Keep everything the same but change the HTML to include a new hero image tag: `<img src='https://cdn.acme.com/hero.jpg' />`."
 
-> "The 'Order Shipped' SMS template needs updating. Change the text to also include a tracking URL: `Track here: {{order.trackingUrl}}`."
+```text
+Update the 'Welcome Email' template. Keep everything the same but change the HTML to include a new hero image tag: <img src='https://cdn.acme.com/hero.jpg' />.
+```
 
-> "I need to update fragment b6d70a45-... — fetch it first, then replace its HTML content with `<div class='banner'>New Year Sale — 40% off everything!</div>`."
+```text
+The 'Order Shipped' SMS template needs updating. Change the text to also include a tracking URL: Track here: {{order.trackingUrl}}.
+```
+
+```text
+I need to update fragment b6d70a45-... — fetch it first, then replace its HTML content with <div class='banner'>New Year Sale — 40% off everything!</div>.
+```
 
 ---
 
 ### 🚀 Publishing Fragments
 
-> "Publish fragment b6d70a45-... so it's ready to use in campaigns."
+```text
+Publish fragment b6d70a45-... so it's ready to use in campaigns.
+```
 
-> "Publish the 'Global Footer' fragment and then check whether the publication succeeded."
+```text
+Publish the 'Global Footer' fragment and then check whether the publication succeeded.
+```
 
-> "What is the publication status of fragment b6d70a45-...? Is it live yet?"
+```text
+What is the publication status of fragment b6d70a45-...? Is it live yet?
+```
 
-> "Publish fragment b6d70a45-... and keep checking the status every few seconds until it's complete, then confirm it's live."
+```text
+Publish fragment b6d70a45-... and keep checking the status every few seconds until it's complete, then confirm it's live.
+```
 
-> "Show me the live published content of fragment b6d70a45-... — what HTML is actually being served to campaigns right now?"
+```text
+Show me the live published content of fragment b6d70a45-... — what HTML is actually being served to campaigns right now?
+```
 
 ---
 
 ### 🗑️ Deleting & Archiving Content
 
-> "Delete template b6d70a45-a149-453b-85ba-809a5d40066d."
+```text
+Delete template b6d70a45-a149-453b-85ba-809a5d40066d.
+```
 
-> "I need to clean up. List all templates with 'test' or 'draft' in the name, then delete them."
+```text
+I need to clean up. List all templates with 'test' or 'draft' in the name, then delete them.
+```
 
-> "Delete all email templates that haven't been modified since January 2024." *(The LLM will list first and confirm before deleting.)*
+```text
+Delete all email templates that haven't been modified since January 2024.
+```
+*(The LLM will list first and confirm before deleting.)*
 
-> "Archive fragment b6d70a45-... — I no longer need it in the active library."
+```text
+Archive fragment b6d70a45-... — I no longer need it in the active library.
+```
 
-> "Archive all fragments that are still in DRAFT status and haven't been modified since January 2024."
+```text
+Archive all fragments that are still in DRAFT status and haven't been modified since January 2024.
+```
 
 ---
 
@@ -289,17 +405,29 @@ These use the Schema Registry (XDM) tools to find the attributes that actually e
 
 These prompts ask the LLM to chain multiple tools together autonomously.
 
-> "Create a complete email template called 'Abandoned Cart' with a subject of 'You left something behind…' and HTML body reminding the user of their cart items using `{{cart.items}}`. Then show me the ID so I can reference it."
+```text
+Create a complete email template called 'Abandoned Cart' with a subject of 'You left something behind…' and HTML body reminding the user of their cart items using {{cart.items}}. Then show me the ID so I can reference it.
+```
 
-> "I want to set up a reusable unsubscribe footer fragment. Create an HTML fragment called 'Unsubscribe Footer' for the email channel, publish it, and confirm it's live."
+```text
+I want to set up a reusable unsubscribe footer fragment. Create an HTML fragment called 'Unsubscribe Footer' for the email channel, publish it, and confirm it's live.
+```
 
-> "Clone the template at ID b6d70a45-... — fetch its full content, create a new template with the same content but named 'Copy of [original name]', and return the new ID."
+```text
+Clone the template at ID b6d70a45-... — fetch its full content, create a new template with the same content but named 'Copy of [original name]', and return the new ID.
+```
 
-> "Audit our fragment library: list all fragments, identify which ones are still in DRAFT status, and give me a summary of how many are PUBLISHED vs DRAFT vs PUBLISHING."
+```text
+Audit our fragment library: list all fragments, identify which ones are still in DRAFT status, and give me a summary of how many are PUBLISHED vs DRAFT vs PUBLISHING.
+```
 
-> "We're doing a Q4 cleanup. List all templates that have 'summer' in the name and delete each one. Walk me through what you're deleting before you do it."
+```text
+We're doing a Q4 cleanup. List all templates that have 'summer' in the name and delete each one. Walk me through what you're deleting before you do it.
+```
 
-> "Create three SMS templates for an onboarding sequence: 'Onboarding Day 1', 'Onboarding Day 3', and 'Onboarding Day 7'. Each should have personalised text referencing `{{profile.person.firstName}}` and a relevant message for that day of onboarding."
+```text
+Create three SMS templates for an onboarding sequence: 'Onboarding Day 1', 'Onboarding Day 3', and 'Onboarding Day 7'. Each should have personalised text referencing {{profile.person.firstName}} and a relevant message for that day of onboarding.
+```
 
 ---
 
@@ -716,13 +844,21 @@ This file lands at `my-sandbox/content-fragments/NV/BIS/Wishlist/NV_BIS_Wishlist
 
 ### Example prompts for GitHub integration
 
-> "What's the status of the PR at [PR URL]?"
+```text
+What's the status of the PR at [PR URL]?
+```
 
-> "Deploy the approved changes from [PR URL] to AJO."
+```text
+Deploy the approved changes from [PR URL] to AJO.
+```
 
-> "Create a content fragment for our new promo banner, but open a PR for review instead of writing directly."
+```text
+Create a content fragment for our new promo banner, but open a PR for review instead of writing directly.
+```
 
-> "Is the GitHub integration enabled? What repo is it pointing to?"
+```text
+Is the GitHub integration enabled? What repo is it pointing to?
+```
 
 ---
 
@@ -794,15 +930,25 @@ Promotion writes to the **target** sandbox, which **must be the sandbox currentl
 
 ### Example prompts
 
-> "Plan a promotion of the template `NV_BIS_RestockAlert` from this sandbox to `prod` — show me what it would create."
+```text
+Plan a promotion of the template NV_BIS_RestockAlert from this sandbox to prod — show me what it would create.
+```
 
-> "Promote the fragment `NV_BIS_Wishlist_Hero` and everything it depends on to `prod`."
+```text
+Promote the fragment NV_BIS_Wishlist_Hero and everything it depends on to prod.
+```
 
-> "I've merged the fragment PRs — continue the promotion of `NV_BIS_RestockAlert` to `prod`."
+```text
+I've merged the fragment PRs — continue the promotion of NV_BIS_RestockAlert to prod.
+```
 
-> "I changed the `NV_BIS_RestockAlert_Hero` fragment in dev — re-promote it to `prod` so prod picks up the edit."
+```text
+I changed the NV_BIS_RestockAlert_Hero fragment in dev — re-promote it to prod so prod picks up the edit.
+```
 
-> "Do a dry run of promoting `NV_BIS_RestockAlert` to `prod` and tell me about any blockers."
+```text
+Do a dry run of promoting NV_BIS_RestockAlert to prod and tell me about any blockers.
+```
 
 ---
 
@@ -821,11 +967,17 @@ Cross-sandbox promotion (above) requires `source ≠ target`. The related but di
 
 ### Example prompts
 
-> "List what's in the `etrakselis-sandbox` subtree of the repo."
+```text
+List what's in the etrakselis-sandbox subtree of the repo.
+```
 
-> "Deploy everything in the repo's `etrakselis-sandbox` subtree into this sandbox — dry run first."
+```text
+Deploy everything in the repo's etrakselis-sandbox subtree into this sandbox — dry run first.
+```
 
-> "Deploy the `NV_BIS_Restock` template and its fragments from the repo into this sandbox."
+```text
+Deploy the NV_BIS_Restock template and its fragments from the repo into this sandbox.
+```
 
 ---
 
@@ -944,7 +1096,9 @@ Once connected, you should see both connectors active in the connectors dropdown
 
 The LLM does not automatically know where your assets live. When you start a conversation that involves images, mention the folder name explicitly, for example:
 
-> *"The assets for this campaign are in the AEM folder named **summer-promo-2026**. Please use images from that folder when building the email template."*
+```text
+The assets for this campaign are in the AEM folder named summer-promo-2026. Please use images from that folder when building the email template.
+```
 
 The LLM will then use the AEM connector to look up the available images in that folder and embed the correct asset URLs into the AJO content it creates.
 

@@ -247,7 +247,9 @@ Once connected, you should see both connectors active in the connectors dropdown
 
 The LLM does not automatically know where your assets live. When you start a conversation that involves images, mention the folder name explicitly, for example:
 
-> *"The assets for this campaign are in the AEM folder named **summer-promo-2026**. Please use images from that folder when building the email template."*
+```text
+The assets for this campaign are in the AEM folder named summer-promo-2026. Please use images from that folder when building the email template.
+```
 
 The LLM will then use the AEM connector to look up the available images in that folder and embed the correct asset URLs into the AJO content it creates.
 
