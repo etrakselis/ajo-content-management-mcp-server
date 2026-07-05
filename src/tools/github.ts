@@ -1,4 +1,4 @@
-import { isClientConfigured, getConfiguredGitHubIntegration, getConfiguredSandboxName, getConfiguredAuthorEmail, findContentIdByName } from '../adobe/client.js';
+import { isClientConfigured, getConfiguredGitHubIntegration, getConfiguredSandboxName, getConfiguredAuthorEmail, findContentIdByName, getFragment, getTemplate } from '../adobe/client.js';
 import { checkPRStatus, readMergedPRContent } from '../github/sync.js';
 import { notConfiguredError, withTelemetry, buildOutputSchema } from './utils.js';
 
@@ -36,6 +36,35 @@ const DEPLOY_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   update_tag: handleUpdateTag,
   delete_tag: handleDeleteTag
 };
+
+// Apply one operation read from a merged PR to AJO. UPDATE ops are the subtle case:
+// the etag was captured when the PR was PROPOSED, but a full-replace update requires the
+// CURRENT etag, and by the time a human reviews+merges the PR that baked-in etag is very
+// likely stale — replaying it verbatim fails with CONFLICT. So for update_* ops, re-fetch
+// the live object's etag immediately before applying and retry once if AJO still reports a
+// conflict (a concurrent edit landed between fetch and write). Mirrors the promotion
+// engine's deployOp, which already does this. All other ops apply their args unchanged
+// (create dedup is handled by the caller; patch/delete carry no etag).
+async function applyDeployOp(
+  op: { toolName: string; args: Record<string, unknown> },
+  handler: (args: unknown) => Promise<unknown>
+): Promise<unknown> {
+  const idKey = op.toolName === 'update_content_template' ? 'templateId'
+    : op.toolName === 'update_content_fragment' ? 'fragmentId'
+    : undefined;
+  if (!idKey) return handler(op.args);
+  const id = op.args[idKey];
+  if (typeof id !== 'string') return handler(op.args); // let the handler's own validation surface it
+  let result: { success?: boolean; error?: { code?: string } } | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const current = op.toolName === 'update_content_template'
+      ? await getTemplate(id)
+      : await getFragment(id);
+    result = await handler({ ...op.args, etag: current.etag }) as { success?: boolean; error?: { code?: string } };
+    if (result?.success !== false || result.error?.code !== 'CONFLICT' || attempt === 1) break;
+  }
+  return result;
+}
 
 // ─── check_pr_status ──────────────────────────────────────────────────────────
 
@@ -199,7 +228,7 @@ export async function handleDeployMergedChanges(args: unknown) {
         }
       }
       try {
-        const result = await handler(op.args);
+        const result = await applyDeployOp(op, handler);
         const ok = (result as { success?: boolean }).success !== false;
         results.push({ toolName: op.toolName, filePath: op.filePath, success: ok, result });
       } catch (err) {

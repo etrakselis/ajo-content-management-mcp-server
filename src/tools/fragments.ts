@@ -311,7 +311,12 @@ function matchStatus(status: unknown, { op, value }: StatusPredicate): boolean {
 export async function handleListContentFragments(args: unknown) {
   if (!isClientConfigured()) return notConfiguredError();
   return withTelemetry('list_content_fragments', async () => {
-    const parsed = ListFragmentsSchema.safeParse(args);
+    // `args ?? {}`: the MCP `arguments` field is optional, so a no-filter "list
+    // everything" call arrives as undefined on clients that omit it. ListFragmentsSchema
+    // is a z.object (all fields optional) and rejects undefined, which would turn the
+    // most basic list call into a spurious VALIDATION_ERROR. Matches the sibling list
+    // handlers (list_tags, list_xdm_*), which all guard the same way.
+    const parsed = ListFragmentsSchema.safeParse(args ?? {});
     if (!parsed.success) return validationError(parsed.error);
 
     // Split out status predicates (AJO rejects `status` in the property filter with
