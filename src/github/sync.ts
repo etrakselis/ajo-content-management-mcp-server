@@ -187,11 +187,19 @@ async function pruneRelocatedCopies(
       e.path.startsWith(typeDirPrefix) &&
       e.path.slice(e.path.lastIndexOf('/') + 1) === basename
     );
+    const idOf = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
     for (const c of candidates) {
-      // Confirm it is the SAME asset (identical AJO id) before deleting.
-      const payload = await readCommittedPayload(token, owner, repo, c.path, branch);
+      // Confirm it is the SAME asset (identical AJO id) before deleting. Match the id
+      // wherever the committed file records it: the _meta.ajoId marker (audit-trail
+      // commits + delete tombstones) OR the id carried in the payload body itself
+      // (fragmentId/templateId from an update/patch's args). The body-id fallback catches
+      // orphans left by commits that never stamped _meta.ajoId — e.g. an approval-gate
+      // update committed to the wrong (root) path before folder resolution was fixed —
+      // so a relocated file self-heals instead of lingering forever.
+      const payload = await readCommittedPayload(token, owner, repo, c.path, branch) as Record<string, unknown> | null;
       const meta = payload?._meta as { ajoId?: unknown } | undefined;
-      if (meta?.ajoId !== ajoId) continue;
+      const committedId = idOf(meta?.ajoId) ?? idOf(payload?.fragmentId) ?? idOf(payload?.templateId);
+      if (committedId !== ajoId) continue;
       await deleteFile(
         token, owner, repo, c.path, c.sha,
         `${toolName}: relocated ${basename} → ${keepPath}; remove stale copy [${authorEmail}]`,

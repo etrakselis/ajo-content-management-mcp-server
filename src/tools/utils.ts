@@ -150,6 +150,31 @@ export function oversizeError(envelope: unknown, recovery: string) {
   };
 }
 
+// ─── Full-replace update: preserve omitted metadata ─────────────────────────
+// update_content_fragment / update_content_template are full PUTs — AJO replaces the
+// WHOLE object, so any field the caller omits is WIPED. Callers routinely resend only
+// the content they changed and forget metadata, so these "sticky" fields are backfilled
+// from the current object before the PUT. The content itself (type/channels/fragment,
+// templateType/template) is schema-required and always resent, so it is never backfilled.
+// To CLEAR one of these, send it explicitly (e.g. description: "", tagIds: []).
+export const UPDATE_STICKY_METADATA_KEYS = ['name', 'description', 'subType', 'tagIds', 'labels'] as const;
+
+// Backfill (in place) each of `keys` omitted from `rest` with the current object's
+// value, when the current object has a non-null value for it. Used by the update
+// handlers so a partial update doesn't silently wipe metadata.
+export function backfillOmittedMetadata(
+  rest: Record<string, unknown>,
+  currentData: Record<string, unknown> | undefined,
+  keys: readonly string[] = UPDATE_STICKY_METADATA_KEYS
+): void {
+  for (const k of keys) {
+    if (rest[k] === undefined) {
+      const v = currentData?.[k];
+      if (v !== undefined && v !== null) rest[k] = v;
+    }
+  }
+}
+
 // Scan a serialized content payload for fragment embeds and split them into
 // well-formed (a required ajo:/aem:/external: prefix + UUID) and malformed ones
 // (e.g. a bare UUID with no prefix). The embed mechanism is the Handlebars-style

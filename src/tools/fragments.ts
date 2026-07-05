@@ -9,7 +9,7 @@ import {
   UpdateFragmentSchema, PatchFragmentSchema, PublishFragmentSchema,
   GetLiveFragmentSchema, GetPublicationStatusSchema, ArchiveFragmentSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, oversizeError, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, malformedFragmentWarnings, scanSelfFragmentIds, normalizeMetadataPatches, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, oversizeError, backfillOmittedMetadata, UPDATE_STICKY_METADATA_KEYS, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, malformedFragmentWarnings, scanSelfFragmentIds, normalizeMetadataPatches, FRAGMENT_OBJECT, FRAGMENT_LIST } from './utils.js';
 
 // Non-fatal advisories for a fragment write that still succeeds: Compatibility-mode
 // HTML (email html fragments) plus any prefix-less {{ fragment }} helper embeds in the body.
@@ -656,24 +656,28 @@ export async function handleUpdateContentFragment(args: unknown) {
     // follow-up PATCH instead of silently ignoring it, so re-filing works the same
     // way everywhere. tagIds/labels stay in the body.
     const { fragmentId, etag, parentFolderId, ...rest } = parsed.data;
-    // Backfill an omitted name from the current fragment so a content-only update
-    // doesn't hard-fail with "name Required" — the AJO PUT replaces the whole object
-    // and requires name, but callers routinely forget it when only changing content.
-    // One cheap read; a clear error (not the opaque validation rejection) if it can't
-    // be resolved. This is a convenience net, NOT a license to skip fetch-then-mutate
-    // for the content itself (which the caller must still resend in full).
-    let name = rest.name;
-    if (name == null) {
+    const restRec = rest as Record<string, unknown>;
+    // A full PUT replaces the WHOLE fragment, so any metadata the caller omits is WIPED
+    // (e.g. an update that only changes content silently blanks the description, subType,
+    // tags, or labels). Callers routinely resend only what they changed, so backfill the
+    // omitted sticky-metadata fields from the current fragment — one read. The content
+    // itself (type/channels/fragment) is schema-required and always resent, so it is not
+    // backfilled. To CLEAR a field, send it explicitly (description: "", tagIds: []).
+    const missing = UPDATE_STICKY_METADATA_KEYS.filter(k => restRec[k] === undefined);
+    if (missing.length > 0) {
       try {
-        const current = await getFragment(fragmentId) as { data?: { name?: unknown } };
-        if (typeof current.data?.name === 'string' && current.data.name) name = current.data.name;
+        const current = await getFragment(fragmentId) as { data?: Record<string, unknown> };
+        backfillOmittedMetadata(restRec, current.data, missing);
       } catch (err) {
         return { success: false, error: buildError(err) };
       }
-      if (name == null) {
-        return { success: false, error: { code: 'VALIDATION_ERROR', message: 'name was omitted and could not be backfilled from the current fragment. Provide name explicitly.', details: {} } };
-      }
     }
+    // name is required by the PUT; a clear error (not the opaque AJO rejection) if it was
+    // omitted and could not be backfilled.
+    if (restRec.name == null) {
+      return { success: false, error: { code: 'VALIDATION_ERROR', message: 'name was omitted and could not be backfilled from the current fragment. Provide name explicitly.', details: {} } };
+    }
+    const name = restRec.name as string;
     // The fragment id is known here, so rewrite the data-fragment-id="ajo:SELF"
     // self-reference sentinel to the real ref in-place — this is already a PUT, so
     // no follow-up write is needed for that part (unlike create).

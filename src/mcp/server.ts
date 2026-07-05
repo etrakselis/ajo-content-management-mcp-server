@@ -295,42 +295,57 @@ async function resolveGitHubFolderPath(
 
 const asStr = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
 
-// Resolve an asset's canonical NAME (+ parentFolderId) for metadata ops — patch_/
-// archive_/delete_, which are addressed by id and carry no `name` in their args. The
-// GitHub commit then lands on the asset's canonical <sandbox>/<type>/<folder>/<name>.json
-// path instead of an orphan id-named file at the type-dir root. Read BEFORE the AJO
-// write because a hard delete makes the asset un-gettable afterward (audit-trail mode
-// commits post-write). create_/update_ already carry `name`, so this returns {} for
-// them (a no-op — their existing path resolution is unchanged). Best-effort: any failure
-// returns {} and the commit falls back to the previous id-based path.
-async function resolveCanonicalNaming(
+// Resolve an asset's canonical NAME and parentFolderId for the GitHub commit path, so
+// the mirror lands on <sandbox>/<type>/<folder>/<name>.json instead of an orphan file.
+// Two independent needs:
+//  • NAME — metadata ops (patch_/archive_/delete_) are addressed by id and carry no
+//    `name` in their args, so it is fetched.
+//  • parentFolderId — the folder the commit files into, resolved with this precedence:
+//      1. a folder THIS op explicitly sets (create/update args.parentFolderId, or a
+//         patch /parentFolderId op) — a placement/move the op itself specifies;
+//      2. otherwise the object's CURRENT folder, fetched from AJO. This is the case
+//         that was missing and orphaned files: a content-only update carries `name`
+//         but NOT parentFolderId (update strips it from the PUT body, so AJO leaves the
+//         fragment where it is), so the mirror must follow it into its existing folder
+//         rather than land at the type-dir root.
+// Read BEFORE the AJO write because a hard delete makes the asset un-gettable afterward
+// (audit-trail mode commits post-write). Nothing to fetch for a create (no id in args).
+// Best-effort: any failure returns what args carried and the commit falls back to the
+// per-call folder resolution / id-based path.
+export async function resolveCanonicalNaming(
   toolName: string, args: unknown
 ): Promise<{ name?: string; parentFolderId?: string }> {
   const a = (args ?? {}) as Record<string, unknown>;
-  if (asStr(a.name)) return {}; // create/update already carry the name
+  const nameInArgs = asStr(a.name);
+  // A parentFolderId THIS op sets: args.parentFolderId or a /parentFolderId patch op.
+  // extractParentFolderId with no result ignores result-echo — we want only what the op
+  // itself specifies; an omitted folder falls through to the fetched current folder below.
+  const explicitParent = extractParentFolderId(a);
+  // If the op already carries both a name and an explicit folder, args are authoritative.
+  if (nameInArgs && explicitParent) return { name: nameInArgs, parentFolderId: explicitParent };
   try {
     if (asStr(a.fragmentId)) {
       const r = await getFragment(a.fragmentId as string) as { data?: Record<string, unknown> };
-      return { name: asStr(r.data?.name), parentFolderId: asStr(r.data?.parentFolderId) };
+      return { name: nameInArgs ?? asStr(r.data?.name), parentFolderId: explicitParent ?? asStr(r.data?.parentFolderId) };
     }
     if (asStr(a.templateId)) {
       const r = await getTemplate(a.templateId as string) as { data?: Record<string, unknown> };
-      return { name: asStr(r.data?.name), parentFolderId: asStr(r.data?.parentFolderId) };
+      return { name: nameInArgs ?? asStr(r.data?.name), parentFolderId: explicitParent ?? asStr(r.data?.parentFolderId) };
     }
     if (asStr(a.tagId)) {
       const t = await getTag(a.tagId as string) as Record<string, unknown>;
-      return { name: asStr(t?.name) };
+      return { name: nameInArgs ?? asStr(t?.name) };
     }
     if (asStr(a.folderId) && asStr(a.folderType)) {
       const f = await getFolder(a.folderType as string, a.folderId as string) as Record<string, unknown>;
-      return { name: asStr(f?.name) };
+      return { name: nameInArgs ?? asStr(f?.name) };
     }
   } catch (err) {
-    logger.warn('Canonical naming resolution failed (non-fatal); commit falls back to the id-based path', {
+    logger.warn('Canonical naming/folder resolution failed (non-fatal); commit falls back to the id-based path', {
       tool: toolName, error: err instanceof Error ? err.message : String(err)
     });
   }
-  return {};
+  return { name: nameInArgs, parentFolderId: explicitParent };
 }
 
 // Create tools that accept a validateOnly flag (dry-run: validate + return warnings

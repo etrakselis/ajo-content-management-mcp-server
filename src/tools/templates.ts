@@ -7,7 +7,7 @@ import {
   ListTemplatesSchema, CreateTemplateSchema, GetTemplateSchema,
   UpdateTemplateSchema, PatchTemplateSchema, DeleteTemplateSchema
 } from '../validation/schemas.js';
-import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, oversizeError, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, scanFragmentEmbeds, malformedFragmentWarnings, normalizeMetadataPatches, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
+import { notConfiguredError, validationError, withTelemetry, buildOutputSchema, oversizeError, backfillOmittedMetadata, UPDATE_STICKY_METADATA_KEYS, ETAG_FIELD, WARNINGS_FIELD, compatibilityModeWarning, scanFragmentEmbeds, malformedFragmentWarnings, normalizeMetadataPatches, TEMPLATE_OBJECT, TEMPLATE_LIST } from './utils.js';
 
 // Pull the email HTML out of a template payload for the native-format check. The
 // "content" shape carries it at template.html.body (an object); the legacy "html"
@@ -446,22 +446,26 @@ export async function handleUpdateContentTemplate(args: unknown) {
     // follow-up PATCH instead of silently ignoring it, so re-filing works the same way
     // everywhere. tagIds/labels stay in the body.
     const { templateId, etag, parentFolderId, ...payload } = parsed.data;
-    // Backfill an omitted name from the current template so a content-only update
-    // doesn't hard-fail with "name Required" — the AJO PUT replaces the whole object
-    // and requires name, but callers routinely forget it when only changing content.
-    // One cheap read; a clear error (not the opaque validation rejection) if it can't
-    // be resolved. A convenience net, NOT a license to skip fetch-then-mutate for the
-    // content itself (which the caller must still resend in full).
-    if (payload.name == null) {
+    const payloadRec = payload as Record<string, unknown>;
+    // A full PUT replaces the WHOLE template, so any metadata the caller omits is WIPED
+    // (e.g. an update that only changes content silently blanks the description, subType,
+    // tags, or labels). Callers routinely resend only what they changed, so backfill the
+    // omitted sticky-metadata fields from the current template — one read. The content
+    // itself (templateType/channels/template) is schema-required and always resent, so it
+    // is not backfilled. To CLEAR a field, send it explicitly (description: "", tagIds: []).
+    const missing = UPDATE_STICKY_METADATA_KEYS.filter(k => payloadRec[k] === undefined);
+    if (missing.length > 0) {
       try {
-        const current = await getTemplate(templateId) as { data?: { name?: unknown } };
-        if (typeof current.data?.name === 'string' && current.data.name) payload.name = current.data.name;
+        const current = await getTemplate(templateId) as { data?: Record<string, unknown> };
+        backfillOmittedMetadata(payloadRec, current.data, missing);
       } catch (err) {
         return { success: false, error: buildError(err) };
       }
-      if (payload.name == null) {
-        return { success: false, error: { code: 'VALIDATION_ERROR', message: 'name was omitted and could not be backfilled from the current template. Provide name explicitly.', details: {} } };
-      }
+    }
+    // name is required by the PUT; a clear error (not the opaque AJO rejection) if it was
+    // omitted and could not be backfilled.
+    if (payloadRec.name == null) {
+      return { success: false, error: { code: 'VALIDATION_ERROR', message: 'name was omitted and could not be backfilled from the current template. Provide name explicitly.', details: {} } };
     }
     try {
       const result = await updateTemplate(templateId, payload, etag) as { success: boolean; etag?: string };

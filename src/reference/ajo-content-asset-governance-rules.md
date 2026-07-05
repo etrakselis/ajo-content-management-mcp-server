@@ -144,7 +144,7 @@ Format:
 [Brand]_[TriggerCategory]_[TriggerName]_[AssetPurpose]
 ```
 
-The Asset Purpose token applies to **Content Fragments**, where it is the approved Section (for example, `Hero`). **Content Templates omit the Asset Purpose token**: a template is named with Brand, Trigger Category, and Trigger Name only, because the template represents the whole experience and its type is already implied by its repository.
+The Asset Purpose token applies to **Content Fragments**, where it is the fragment's Section (for example, `Hero`). **Content Templates omit the Asset Purpose token**: a template is named with Brand, Trigger Category, and Trigger Name only, because the template represents the whole experience and its type is already implied by its repository.
 
 Illustrative Examples:
 
@@ -160,7 +160,7 @@ LM_UNIT_OrderConfirmation
 
 # Controlled Vocabulary Registry
 
-Only approved vocabulary may be used.
+Brand and Trigger Category values must come from the approved vocabulary below. Fragment sections are extensible — see the **Fragment Sections** note below.
 
 ## Brands
 
@@ -177,7 +177,9 @@ Only approved vocabulary may be used.
 | Back In Stock | BIS |
 | Unitary | UNIT |
 
-## Approved Fragment Sections
+## Fragment Sections
+
+These are the **common** fragment sections — **examples, not a closed list and not a cap** on how many sections a template may have:
 
 ```text
 TopBanner
@@ -185,7 +187,9 @@ Hero
 BottomBanner
 ```
 
-New vocabulary requires governance approval before use.
+Break an experience into **as many sections as its content logically requires** — a template is not limited to these three. When a region matches one of the common sections above, reuse that name; when it doesn't, give it a concise, descriptive Section token in the same PascalCase style (for example, `Body`, `ProductGrid`, `Testimonial`, `Countdown`, `Footer`) per the naming standard, rather than forcing unrelated content into an ill-fitting section.
+
+Brand and Trigger Category vocabulary (above) stays controlled — new brands or trigger categories require governance approval before use. Fragment sections are the exception: the LLM may introduce additional descriptive sections at its own discretion when the content warrants, with no approval required.
 
 ---
 
@@ -273,7 +277,7 @@ Illustrative Example:
 LM_PD_BrowseAbandon_Hero
 ```
 
-Do not append a `_Fragment` designator. The final token is the approved Section, and the Content Fragment repository already establishes that the asset is a fragment.
+Do not append a `_Fragment` designator. The final token is the fragment's Section, and the Content Fragment repository already establishes that the asset is a fragment.
 
 ---
 
@@ -429,10 +433,10 @@ The LLM must never place raw or inline HTML directly inside a Content Template. 
 
 When the LLM is given HTML for an experience, it must:
 
-1. Analyze the HTML and identify its logical, reusable regions (for example: top banner, hero, body, bottom banner).
+1. Analyze the HTML and identify **all** of its logical, reusable regions — as many as the content warrants (for example: top banner, hero, body, product grid, bottom banner, footer). The common sections are examples, not a limit on how many you may create.
 2. Split the HTML along those logical boundaries.
 3. Create (or reuse) one Content Fragment per region, placing the corresponding HTML inside that fragment.
-4. Name and tag each fragment per the standards in this document, using the approved Section vocabulary for the fragment's purpose.
+4. Name and tag each fragment per the standards in this document, using a common Section name where one fits the region's purpose and a new descriptive Section name where none does (there is no fixed number of sections).
 5. Embed the resulting Content Fragments into the Content Template by reference.
 
 ## Why Composition Is Required
@@ -444,10 +448,10 @@ When the LLM is given HTML for an experience, it must:
 
 ## Decomposition Guidance
 
-- Map each visually or functionally distinct region to its own fragment.
-- Prefer the approved Section vocabulary (`TopBanner`, `Hero`, `BottomBanner`) when a region matches one of those purposes.
+- Map each visually or functionally distinct region to its own fragment. Create **as many fragments as the content needs** — a template is not limited to three sections.
+- Use one of the common Section names (`TopBanner`, `Hero`, `BottomBanner`) when a region matches that purpose.
 - Reuse an existing fragment when one already satisfies the region (search and reuse rules still apply).
-- If a region does not map cleanly to an existing approved Section, request governance approval for new Section vocabulary rather than inventing a name or falling back to inline HTML.
+- When a region does not match a common Section, create a new, concise, descriptive Section name in the same PascalCase style (per the naming standard) — do not force the content into an ill-fitting section, and never fall back to inline HTML.
 
 ## Prohibited
 
@@ -481,6 +485,8 @@ trigger-{triggername}
 ```
 
 ## Fragment Section (Fragments Only)
+
+The section tag is `section-{section}` for whatever section the fragment is — the entries below are **examples**, and any additional section follows the same pattern (e.g. `section-body`, `section-productgrid`, `section-footer`):
 
 ```text
 section-hero
@@ -593,13 +599,13 @@ Identify:
 
 ## Step 5 — Generate Name
 
-Construct the name using approved vocabulary only.
+Construct the name using approved Brand and Trigger Category vocabulary. The final Section token of a Content Fragment may be a common section or a new descriptive one (see [Fragment Sections](#fragment-sections)) — it is not restricted to a fixed list.
 
 Generate from request context.
 
 Do not generate from example values.
 
-Do not append asset-type designators (`_Template`, `_Fragment`). A Content Fragment name ends in its approved Section; a Content Template name ends in the Trigger Name.
+Do not append asset-type designators (`_Template`, `_Fragment`). A Content Fragment name ends in its Section; a Content Template name ends in the Trigger Name.
 
 ---
 
@@ -784,7 +790,7 @@ The LLM must:
 
 - Search before creating.
 - Reuse before creating.
-- Follow approved vocabulary.
+- Follow approved Brand/Trigger Category vocabulary (fragment sections are extensible — create as many as the content needs).
 - Follow naming standards.
 - Follow folder standards.
 - Respect repository separation.

@@ -452,6 +452,8 @@ Create three SMS templates for an onboarding sequence: 'Onboarding Day 1', 'Onbo
 
 > ✅ "Publish fragment b6d70a45-... and tell me when it's done."
 
+> ⚠️ **Exception — fragments that embed AEM assets must be published by you in the AJO UI.** The server can't publish them, because doing so also publishes the referenced AEM assets and its credentials lack that permission. See [AEM Assets in AJO Content](#aem-assets-in-ajo-content-optional).
+
 **Pagination is handled automatically.** If you ask to list all templates, the LLM can page through results on your behalf.
 
 > ✅ "List all templates in this sandbox, even if there are more than 20."
@@ -1102,6 +1104,12 @@ The assets for this campaign are in the AEM folder named summer-promo-2026. Plea
 
 The LLM will then use the AEM connector to look up the available images in that folder and embed the correct asset URLs into the AJO content it creates.
 
+### 4. Publishing a fragment that uses AEM assets — do this in the AJO UI
+
+Once the fragment is built, **publishing it must be done manually by you in the Adobe Journey Optimizer UI — the LLM cannot publish it through the server.** Publishing a fragment that embeds AEM-hosted images also publishes those **AEM assets**, and that requires AEM asset-publish permissions the MCP server's technical-account credentials do **not** have. So `publish_content_fragment` cannot complete for such a fragment. Ask the LLM to create/update and save the fragment, then open it in the AJO UI and **publish it there** — which publishes the referenced AEM assets under your own permissions.
+
+> Fragments that contain **no** AEM assets can still be published normally through the server (e.g. via `publish_content_fragment` or the `publish-fragment` prompt).
+
 ---
 
 ## Available Tools — Detailed
@@ -1225,6 +1233,8 @@ Metadata-only changes via JSON Patch. Supported paths: `/name`, `/description`, 
 { "fragmentId": "b6d70a45-a149-453b-85ba-809a5d40066d" }
 ```
 Publication is async. Poll `get_fragment_publication_status` until `status === "complete"`.
+
+> **Fragments that embed AEM assets can't be published through the server.** Publishing such a fragment also publishes its referenced AEM assets, which the server's technical-account credentials aren't permitted to do — publish those fragments manually in the AJO UI instead. See [AEM Assets in AJO Content](#aem-assets-in-ajo-content-optional).
 
 #### `get_live_fragment` *(read)*
 ```json

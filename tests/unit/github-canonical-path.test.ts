@@ -347,3 +347,34 @@ describe('parallel-write safety (branch uniqueness + per-asset dedup lock)', () 
     expect(r1.filePath).toBe('sbx/content-fragments/Frag_Same.json');
   });
 });
+
+describe('relocation prune self-heals an orphan matched by its body id (no _meta.ajoId)', () => {
+  test('an update filed into a folder removes the stale root orphan carrying the same fragmentId', async () => {
+    const keepPath = 'etrakselis-sandbox/content-fragments/ND/PD/ShopBag/ND_PD_ShopBag_Hero.json';
+    const orphanPath = 'etrakselis-sandbox/content-fragments/ND_PD_ShopBag_Hero.json';
+    (getFileSha as jest.Mock).mockResolvedValue(null); // new file at the folder path
+    (listRepoTree as jest.Mock).mockResolvedValue({
+      tree: [{ type: 'blob', path: orphanPath, sha: 'orphansha' }],
+      truncated: false
+    });
+    // The orphan was written by an earlier approval-gate update: it carries the op's
+    // fragmentId in the body but NO _meta.ajoId — the old matcher could not identify it.
+    (getFileContent as jest.Mock).mockImplementation(async (_t: unknown, _o: unknown, _r: unknown, path: string) =>
+      path === orphanPath
+        ? JSON.stringify({ _meta: { operation: 'update_content_fragment' }, fragmentId: 'frag-1', name: 'ND_PD_ShopBag_Hero', type: 'html' })
+        : null
+    );
+
+    await createApprovalPR(
+      config, 'etrakselis-sandbox', 'update_content_fragment',
+      { fragmentId: 'frag-1', etag: '"e"', name: 'ND_PD_ShopBag_Hero', type: 'html', channels: ['email'], fragment: { content: 'x' } },
+      'me@x', 'ND/PD/ShopBag'
+    );
+
+    // New content lands in the folder...
+    expect((commitFile as jest.Mock).mock.calls[0][3]).toBe(keepPath);
+    // ...and the stale root orphan (matched by its body fragmentId) is removed.
+    expect(deleteFile).toHaveBeenCalledTimes(1);
+    expect((deleteFile as jest.Mock).mock.calls[0][3]).toBe(orphanPath);
+  });
+});

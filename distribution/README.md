@@ -253,6 +253,12 @@ The assets for this campaign are in the AEM folder named summer-promo-2026. Plea
 
 The LLM will then use the AEM connector to look up the available images in that folder and embed the correct asset URLs into the AJO content it creates.
 
+### 5d. Publishing a fragment that uses AEM assets — do this in the AJO UI
+
+**A content fragment that embeds AEM assets must be published by you, manually, in the Adobe Journey Optimizer UI — the LLM cannot publish it through the server.** Publishing such a fragment also publishes its referenced **AEM assets**, and that requires AEM asset-publish permissions the MCP server's credentials do **not** have. So the `publish_content_fragment` tool cannot complete for it. Have the LLM create/update and save the fragment, then open it in the AJO UI and **publish it there**, which publishes the referenced AEM assets under your own permissions.
+
+> Fragments that contain **no** AEM assets can still be published normally through the server.
+
 ---
 
 Full documentation: **[github.com/etrakselis/ajo-content-management-mcp-server](https://github.com/etrakselis/ajo-content-management-mcp-server/blob/main/README.md)**

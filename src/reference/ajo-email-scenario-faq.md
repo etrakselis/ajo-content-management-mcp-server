@@ -27,7 +27,18 @@ The worked reference behind every pattern here is a Luma "shopping‑bag price�
 - **Never invent AJO syntax, function names, attribute paths, or fragment/dataset IDs.** If unsure whether a function exists, say so and verify against the AJO personalization syntax library (call **`get_personalization_syntax`**) rather than inventing one.
 - **Discover the sandbox's XDM schema paths yourself — don't ask the user for them.** Attribute paths are *discoverable*: enumerate this sandbox's schema with the XDM tools (`list_xdm_union_schemas` → `get_xdm_union_schema` (`full=false`) → `get_xdm_field_group` on each ref) or the **`discover-personalization-paths`** prompt, and resolve every profile attribute path from what actually exists — standard XDM under `profile.…`, tenant‑custom under `profile._<tenantId>.…` (the tenant namespace is discoverable too — don't ask for it). Only ask the user for what the schema *can't* tell you: **which** discovered field a value maps to when it's ambiguous, event‑payload keys, dataset/result IDs, and business rules — never for the paths themselves. If you can't find a path, say so and re‑check the schema; never invent one.
 - **Confirm the two things that break silently:** (1) that the output must open in the Visual Email Designer (native `acr-*` format, not Compatibility mode); (2) that URLs/attributes use **triple‑brace `{{{ }}}`** (unescaped) output, never `{{ }}` (which HTML‑escapes `&`/`=` and breaks links).
-- **Preserve pixel‑exact retail markup inside custom‑HTML components.** Don't rebuild a complex product layout from catalog components; keep the original table markup in a `data-component-id="html"` component and personalize it in place.
+- **Prefer out‑of‑the‑box components; reserve custom HTML for the highly dynamic modules.** Build the email from the native Visual Email Designer components (text, image, button, divider, structures) so it stays drag‑and‑drop editable for the marketer — simple personalization (a `{{token}}`, a `?:` fallback) goes *directly inside* a native text/button/image component and needs no custom HTML. Drop to a custom `data-component-id="html"` component **only** when a block is too dynamic for a native component to express: the iterated **product / item module** (a `{{#each}}` loop with per‑item sort/filter/price/rating logic — S5–S11) or the **product‑recommendations module** (S14). For *those*, preserve the pixel‑exact retail markup inside the HTML component and personalize it in place rather than rebuilding a complex per‑item layout from catalog components. If a block needs no loop, no per‑item computed logic, and no recommendation feed, it does **not** belong in an HTML component.
+
+### Custom HTML vs. out‑of‑the‑box components (decide this per block)
+
+**Default to the out‑of‑the‑box Visual Email Designer components** (text, image, button, divider, and the structure/column layouts). They keep the email drag‑and‑drop editable for the marketer and accept inline personalization on their own — a `{{token}}` or a `?:` fallback in a native text/button/image component does **not** need custom HTML.
+
+**Use a custom `data-component-id="html"` component ONLY for a block that is too dynamic for a native component** — one that needs **iteration, per‑item computed logic, or a recommendation feed.** In practice that is exactly two things:
+
+- the **dynamic product / item module** — a `{{#each}}` loop over a product collection with sort / eligibility / price / rating / counter logic (S5–S11), and
+- the **product‑recommendations module** — the recommendation tray (S14).
+
+Everything else — header/logo bar, hero, body copy, standalone images, CTAs, banners, footer, a simply‑personalized greeting — belongs in native components. **Quick test:** *does this block need a loop, a per‑item conditional, or a recommendation feed?* If not, it is **not** an HTML component. Over‑using custom HTML collapses the email into a raw block the marketer can no longer edit in the designer — the opposite of what native format is for.
 
 ### Session flow (suggested)
 
@@ -100,7 +111,7 @@ Only include what the detected scenarios actually require — pull the relevant 
 
 **Recognize it when:** the input is generic email HTML — nested `<table>`s, arbitrary `<head>`, no `acr-container`/`acr-structure`/`acr-component` classes.
 
-**AJO pattern:** wrap the body in `div.acr-container`; break the email into full‑width `1-1-column` Structures (one per logical section); paste each section's original markup into a `data-component-id="html"` component; replace the `<head>` with the required Visual Designer `<head>` (content‑version meta + the named style blocks) plus any brand CSS. The `html` component is the workhorse — most of the email lives there.
+**AJO pattern:** wrap the body in `div.acr-container`; break the email into full‑width `1-1-column` Structures (one per logical section). Then, **section by section, rebuild each with native Visual Designer components** (text, image, button, divider) — this is the default and is what keeps the email editable in the designer. **Only** the highly dynamic sections go into a `data-component-id="html"` component: the product / item module (S5) and the recommendation tray (S14), whose `{{#each}}` / per‑item logic a native component can't express. Replace the `<head>` with the required Visual Designer `<head>` (content‑version meta + the named style blocks) plus any brand CSS. Do **not** dump the whole email into one custom‑HTML component — reserve it for the dynamic modules.
 
 **Ask the user if unclear:**
 - Should the result be **drag‑and‑drop editable in the Visual Email Designer** (native format), or is Compatibility mode acceptable?
@@ -164,7 +175,7 @@ A fragment can also define shared variables (e.g. `utmLinkParams`, `enterpriseId
 
 **Recognize it when:** the input shows one or more **repeated product blocks** (image + brand + name + price + CTA, maybe stars). In the input these are usually **hard‑coded** sample products.
 
-**AJO pattern:** replace the hard‑coded block(s) with a single **template** rendered inside a loop over a data collection, extracting each field with fallbacks:
+**AJO pattern:** this is one of the two blocks that legitimately needs a custom `data-component-id="html"` component — the loop and per‑item logic can't be expressed by a native component. Replace the hard‑coded block(s) with a single **template** rendered inside a loop over a data collection, extracting each field with fallbacks:
 ```handlebars
 {% let product_arr = context.journey.datasetLookups.`<lookupId>`.entities %}
 {{#each product_arr as |product|}}
@@ -326,7 +337,7 @@ Common `data-nl-type` values: `DEEPLINK`, `mirrorPage` (view‑online), `unsubsc
 
 **Recognize it when:** there's a "Recommended for you"/"You may also like" grid — often visually similar to the product feed but conceptually different.
 
-**AJO pattern:** this is frequently **not** a data collection but a **recommendation‑service URL**. Build the image/link endpoints once with `concat`, then render fixed slots appending a per‑slot index:
+**AJO pattern:** like the item module (S5), the recommendation tray belongs in a custom `data-component-id="html"` component (fixed slots + service URLs are still too dynamic for a native component). It is frequently **not** a data collection but a **recommendation‑service URL**. Build the image/link endpoints once with `concat`, then render fixed slots appending a per‑slot index:
 ```handlebars
 {% let catRecUrl = concat(concat(baseURL,"url"), coreParams) %}   {{!-- + apikey, placement, shopper_id, style_id, offset= --}}
 ```
@@ -437,6 +448,7 @@ Guards: `isNotNull/isNull` for objects, `isNotEmpty/isEmpty` for strings.
   - **`{{!-- … --}}` (handlebars comments)** for the **personalization logic** — variable declarations, loops, conditionals, sorting/suppression. AJO strips these at render (they never reach the inbox), and they are the same form AJO's own markers use. Examples drawn from a real template: `{{!-- Global Variables and the logics to be defined here --}}`, `{{!-- dataset lookup output results --}}`, `{{!-- sort the products based on the highest new price --}}`, `{{!-- only show up to 4 products --}}`, `{{!-- increment eligible product counter --}}`.
   - **`<!-- … -->` (HTML comments)** to **label layout sections/components** in the rendered markup, usually as BEGIN/END pairs around a block. Examples: `<!-- BEGIN PREHEADER -->` … `<!-- END PREHEADER -->`, `<!-- BEGIN NAVIGATION -->` … `<!-- END NAVIGATION -->`, `<!-- brand -->`, `<!-- Name -->`, `<!-- Price -->`, `<!-- star rating -->`, `<!-- CTA Section -->`, `<!-- BEGIN FOOTER -->` … `<!-- END FOOTER -->`.
   - **Preserve AJO's own markers verbatim** — the fragment markers `{{!-- [acr-start-fragment] --}}` / `{{!-- [acr-end-fragment] --}}` and any product-block markers such as `<!--BLOCK_METADATA_PREFIX-{…}-BLOCK_METADATA_POSTFIX-->` — and never let a comment or reformatting change the required `acr-*` nesting or the verbatim `<head>`.
+- **Out‑of‑the‑box components by default; custom HTML only for the dynamic modules.** A block belongs in a `data-component-id="html"` component **only** if it needs iteration (a `{{#each}}` loop), per‑item computed logic, or a recommendation feed — i.e. the **product / item module (S5)** and the **recommendations module (S14)**. Everything else (header, hero, copy, standalone images, CTAs, banners, footer, simply‑personalized text) must use native Visual Designer components so the email stays editable in the designer. Over‑using custom HTML forces the whole message into a raw block the marketer can't edit — the opposite of what native format is for.
 - **Embed fragments by reference** (`{{ fragment … }}`), never inline; never use a `data-fragment=` attribute.
 - **Don't invent** function names, attribute paths, schema fields, or IDs. If a field like `replace`, `trim`, `substr`, `titleCase`, the `?:` fallback operator, or the `if(cond,a,b)` function is needed, use it as shown here but **verify against the AJO personalization syntax library (`get_personalization_syntax`)** before introducing anything new.
 - **Fallbacks everywhere:** `?:` for defaults, `isNotEmpty`/`isNotNull` guards for optional data.
