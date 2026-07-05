@@ -1274,6 +1274,18 @@ Deploys the **active** sandbox's repo subtree into the **active** AJO sandbox (s
 
 Read-only reference content, delivered as tools so the model can fetch it on its own even in clients that can't read MCP resources directly (e.g. Claude Desktop). The `create_*` / `update_*` tools' descriptions point the model here before it authors HTML or personalization.
 
+> **Lean mode.** When the server is started with `MCP_LEAN_MODE=1` (see the lean tool-surface note under [Run](#run)), the five reference tools below are **not advertised individually** — they are consolidated into a single `get_reference` tool that takes a `topic`:
+>
+> | `get_reference` topic | Stands in for |
+> |------|------|
+> | `visual-designer` | `get_visual_designer_requirements` |
+> | `personalization-syntax` | `get_personalization_syntax` *(also accepts `category`)* |
+> | `personalization-guidance` | `get_personalization_guidance` |
+> | `email-scenario-faq` | `get_email_scenario_faq` |
+> | `aem-image-embed` | `get_aem_image_embed_instructions` |
+>
+> The returned content is byte-for-byte identical, and the individual tools stay callable by name so any tool description that points at one still works. This is an opt-in for connecting alongside many other MCP servers; leave it unset (the default) for the full, individually-advertised surface documented below.
+
 #### `get_visual_designer_requirements` *(read)*
 ```json
 {}
@@ -1557,6 +1569,7 @@ Each client gets its own MCP **session**, and the **Connected client** panel tra
 │   │   ├── aem-assets.ts       get_aem_image_embed_instructions tool — AEM image embed-attribute procedure (read-only)
 │   │   ├── personalization.ts  get_personalization_syntax + get_personalization_guidance tools (read-only)
 │   │   ├── email-scenario.ts   get_email_scenario_faq tool — AJO email scenario FAQ & clarifying-question playbook (read-only)
+│   │   ├── reference.ts        get_reference — lean-mode umbrella that stands in for the 5 reference get_* tools when MCP_LEAN_MODE is set (read-only)
 │   │   ├── context.ts          get_server_context + get_naming_convention tools (read-only)
 │   │   └── utils.ts            Shared tool helpers — output-schema envelope, telemetry wrapper, RESPONSE_TOO_LARGE guard, content-warning/embed scanners
 │   ├── promotion/
