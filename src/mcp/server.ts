@@ -29,7 +29,7 @@ import { getPersonalizationGuidance } from './personalization-guidance.js';
 import { getEmailScenarioFaq } from './email-scenario-faq.js';
 import { logger } from '../telemetry/index.js';
 import { recordAudit } from '../telemetry/audit.js';
-import { UI_BASE_URL, RESPONSE_BYTE_CAP } from '../tools/utils.js';
+import { UI_BASE_URL, RESPONSE_BYTE_CAP, isLeanMode } from '../tools/utils.js';
 
 // Template tools
 import {
@@ -93,6 +93,9 @@ import { getVisualDesignerRequirementsDefinition, handleGetVisualDesignerRequire
 import { getAemImageEmbedInstructionsDefinition, handleGetAemImageEmbedInstructions } from '../tools/aem-assets.js';
 import { getPersonalizationSyntaxDefinition, handleGetPersonalizationSyntax, getPersonalizationGuidanceDefinition, handleGetPersonalizationGuidance } from '../tools/personalization.js';
 import { getEmailScenarioFaqDefinition, handleGetEmailScenarioFaq } from '../tools/email-scenario.js';
+// Lean-mode reference umbrella — one tool that stands in for the individual
+// reference get_* tools when the advertised surface is trimmed (see isLeanMode).
+import { getReferenceDefinition, handleGetReference, REFERENCE_TOPIC_SLUGS } from '../tools/reference.js';
 // GitHub integration tools
 import { checkPRStatusDefinition, handleCheckPRStatus, deployMergedChangesDefinition, handleDeployMergedChanges } from '../tools/github.js';
 // Cross-sandbox content promotion (plan + phased executor) and same-sandbox repo deploy
@@ -173,13 +176,27 @@ const ALL_TOOLS = [
   deployRepoAssetsDefinition
 ];
 
-// Catalog derived from the live tool list (so it never drifts). Registered into
-// the get_server_context handler and also rendered into the server instructions —
-// two independent discovery channels so the model can find every tool by exact
-// name even when the client defers tools and a fuzzy search misses one.
-const TOOL_CATALOG = buildToolCatalog(ALL_TOOLS);
-const TOOL_CATALOG_TEXT = formatToolCatalog(TOOL_CATALOG);
-setToolCatalog(TOOL_CATALOG);
+// The static reference tools that lean mode collapses into the single get_reference
+// umbrella (see tools/reference.ts + isLeanMode). Hidden from the advertised list in
+// lean mode, but their handlers stay registered (below) so any tool description that
+// still names them by exact name remains callable.
+const LEAN_HIDDEN_TOOL_NAMES = new Set<string>([
+  'get_visual_designer_requirements',
+  'get_aem_image_embed_instructions',
+  'get_personalization_guidance',
+  'get_personalization_syntax',
+  'get_email_scenario_faq'
+]);
+
+// The exact set of tool DEFINITIONS advertised for the current mode. Full by default;
+// in lean mode the five reference tools above are replaced by get_reference. The tool
+// catalog + server instructions are derived from this (so they never drift), and it's
+// read live per createMcpServer call so MCP_LEAN_MODE can be set at launch (and
+// toggled by tests) without a module reload.
+function activeToolDefinitions() {
+  if (!isLeanMode()) return ALL_TOOLS;
+  return [...ALL_TOOLS.filter(t => !LEAN_HIDDEN_TOOL_NAMES.has(t.name)), getReferenceDefinition];
+}
 
 // Tools that modify content. When the server is in read-only mode these are
 // hidden from tool discovery and rejected if called anyway.
@@ -593,6 +610,10 @@ const TOOL_HANDLERS: Record<string, (args: unknown) => Promise<unknown>> = {
   get_personalization_guidance: handleGetPersonalizationGuidance,
   // AJO email scenario FAQ & clarifying-question playbook — read-only reference
   get_email_scenario_faq: handleGetEmailScenarioFaq,
+  // Lean-mode reference umbrella. Registered in BOTH modes: in full mode it is not
+  // advertised (harmless — a client can still call it), and in lean mode it is the
+  // advertised entry point while the five individual handlers above stay callable.
+  get_reference: handleGetReference,
   // GitHub integration
   check_pr_status: handleCheckPRStatus,
   deploy_merged_changes: handleDeployMergedChanges,
@@ -634,6 +655,15 @@ function logAdvertisedToolSetSize(tools: ReadonlyArray<unknown>, instructions?: 
 }
 
 export function createMcpServer(transport: TransportKind = 'http'): Server {
+  // Resolve the advertised tool set for this session's mode (full vs lean), then
+  // derive the catalog + its one-line rendering from it so both discovery channels
+  // (server instructions + get_server_context) reflect exactly what is advertised.
+  const lean = isLeanMode();
+  const activeTools = activeToolDefinitions();
+  const toolCatalog = buildToolCatalog(activeTools);
+  const toolCatalogText = formatToolCatalog(toolCatalog);
+  setToolCatalog(toolCatalog);
+
   const sandbox = getConfiguredSandboxName();
   const orgName = getConfiguredOrgName();
   const tenantId = getConfiguredTenantId();
@@ -688,7 +718,18 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   // get_server_context tool returns the same catalog as a high-salience fallback
   // for clients that don't surface these instructions.
   const toolIndexNote = ` This server exposes the following tools — call any by its exact name ` +
-    `(or call get_server_context for the same catalog as structured data): ${TOOL_CATALOG_TEXT}.`;
+    `(or call get_server_context for the same catalog as structured data): ${toolCatalogText}.`;
+
+  // Lean mode collapses the individual reference get_* tools into get_reference. Steer
+  // the model to the umbrella; the individual names remain callable (their handlers are
+  // still registered) but aren't advertised, so name them here as topic equivalents.
+  const leanNote = lean
+    ? ` Reference documentation is consolidated under a single tool in this configuration: call get_reference ` +
+      `with a topic (${REFERENCE_TOPIC_SLUGS.join(', ')}) to fetch any spec, guide, or FAQ. Where another tool's ` +
+      `description says to call get_visual_designer_requirements, get_personalization_syntax, ` +
+      `get_personalization_guidance, get_aem_image_embed_instructions, or get_email_scenario_faq, use the matching ` +
+      `get_reference topic instead.`
+    : '';
 
   // Surface the self-declared author identity to the LLM. Captured at setup like
   // the tenant/sandbox above, so it shares their lifecycle (present once the user
@@ -749,7 +790,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
       `sandbox "${sandbox}"${tenantNamespace ? ` (tenant: ${tenantNamespace})` : ''} is the intended target.`
     : `You are connected to an AJO Content MCP server. ` +
       `No sandbox has been configured yet — ask the user to open http://localhost:3000 and complete setup before making any content changes.`)
-    + authorNote + dynamicNote + namingConventionNote + personalizationNote + resourceNote + promptNote + toolIndexNote;
+    + authorNote + dynamicNote + namingConventionNote + personalizationNote + resourceNote + leanNote + promptNote + toolIndexNote;
 
   const server = new Server(
     {
@@ -936,7 +977,7 @@ export function createMcpServer(transport: TransportKind = 'http'): Server {
   // the confirmWrite flag (see augmentWriteTool); name-assigning tools get the enforced
   // naming convention inline (see augmentNamingTool) so weaker models that skip
   // get_server_context still discover it. Shared by ListTools and the startup size log.
-  const buildAdvertisedTools = () => ALL_TOOLS.map(t => {
+  const buildAdvertisedTools = () => activeTools.map(t => {
     const augmented = isWriteTool(t.name) ? augmentWriteTool(t) : t;
     const named = withAnnotationTitle(augmentNamingTool(augmented, namingRulesBlock, namingPointer));
     // Final step: strip any JSON-Schema keywords Anthropic's input_schema rejects

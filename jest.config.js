@@ -16,11 +16,12 @@ module.exports = {
     // and require integration tests with a real repo — excluded from unit coverage.
     '!src/github/client.ts',
     '!src/github/sync.ts',
-    // Cross-sandbox promotion: the engine and tool orchestrate live AJO + GitHub
-    // calls across two sandboxes (graph build, phased PRs, deploy) and need
-    // integration tests against real sandboxes. The pure transforms they rely on
-    // (in tools/utils.ts) ARE unit-tested — see promotion-transforms.test.ts.
-    '!src/promotion/engine.ts',
+    // Cross-sandbox promotion: engine.ts (graph build, phasing, the phased-PR executor,
+    // and same-sandbox deploy) is now unit-tested with GitHub + AJO mocked — see
+    // promotion-plan.test.ts, promotion-execute.test.ts, and the pure transforms in
+    // promotion-transforms.test.ts — so it counts toward coverage. The thin tool wrapper
+    // (tools/promotion.ts) still orchestrates live dispatch (read-only + confirm gates)
+    // and is covered by integration, not unit tests, so it stays excluded here.
     '!src/tools/promotion.ts'
   ],
   // Thresholds track the suite's current floor (kept a point or two under measured

@@ -6,6 +6,19 @@ import { toolCallCounter, toolCallDuration, createRequestLogger } from '../telem
 // deployments where the UI is not at localhost (e.g. a container with a proxy).
 export const UI_BASE_URL = process.env.MCP_UI_BASE_URL ?? `http://localhost:${process.env.PORT ?? '3000'}`;
 
+// Opt-in "lean mode": trims the advertised tool surface for context-constrained
+// clients (many MCP servers connected → deferred tool loading + semantic search,
+// where every advertised tool costs budget and can skew ranking). When on, the
+// server collapses the several static reference get_* tools into ONE get_reference
+// umbrella (see tools/reference.ts) — cutting the advertised tool count without
+// losing the capability. Default OFF: the full, maximally-discoverable surface is
+// unchanged. Read LIVE (not cached) so it can be set per process at launch and so
+// tests can toggle it before each createMcpServer() call.
+export function isLeanMode(): boolean {
+  const v = (process.env.MCP_LEAN_MODE ?? '').toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
 export function notConfiguredError() {
   return {
     success: false,

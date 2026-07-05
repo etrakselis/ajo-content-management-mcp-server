@@ -432,6 +432,7 @@ services:
       - HOST=0.0.0.0
       - LOG_LEVEL=info
       - AUDIT_LOG_PATH=/audit/audit-log.jsonl
+      # - MCP_LEAN_MODE=1   # optional: collapse the 5 reference get_* tools into one get_reference tool (see note below)
     volumes:
       - ./audit:/audit
     restart: unless-stopped
@@ -464,6 +465,8 @@ docker compose up -d       # start it again later
 ```
 
 > **Want to pin a version?** Replace `:latest` with a specific tag (e.g. `:1.0.0`) for reproducible deployments.
+
+> **Optional — lean tool surface (`MCP_LEAN_MODE`).** By default the server advertises its full tool set, including five individual read-only reference tools: `get_visual_designer_requirements`, `get_aem_image_embed_instructions`, `get_personalization_guidance`, `get_personalization_syntax`, and `get_email_scenario_faq`. If you connect this server **alongside many other MCP servers** — where the client switches to deferred tool loading + semantic search and every advertised tool competes for the model's context budget — set `MCP_LEAN_MODE=1` (uncomment the line in `docker-compose.yml`, then `docker compose up -d`) to collapse those five into a single `get_reference` tool. Call it with a `topic`: `visual-designer`, `aem-image-embed`, `personalization-guidance`, `personalization-syntax` (also accepts a `category`), or `email-scenario-faq`. This trims the advertised tool count with **no loss of capability** — the reference content is byte-for-byte identical, and the original `get_*` tools remain callable by name so nothing that references them breaks. Leave it unset for the full, maximally-discoverable surface (the recommended default for a standalone connection). Accepted truthy values: `1`, `true`, `yes`, `on`.
 
 > **Building from source instead?** Contributors can build the image locally rather than pulling it — see [Development](#development).
 

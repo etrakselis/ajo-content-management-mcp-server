@@ -21,6 +21,10 @@ services:
       # Where the content-change audit trail (JSONL) is written. Points at the
       # writable volume below so it survives restarts and lands on the host.
       - AUDIT_LOG_PATH=/audit/audit-log.jsonl
+      # Optional: trim the advertised tool surface for context-constrained clients by
+      # collapsing the 5 reference get_* tools into one get_reference tool (see README).
+      # Uncomment to enable; leave unset for the full, maximally-discoverable surface.
+      # - MCP_LEAN_MODE=1
     volumes:
       # Bind-mount a host directory for the audit log. Writable even though the
       # container rootfs is read-only (volumes override the read-only mount).
