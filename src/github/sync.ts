@@ -1,6 +1,6 @@
 import type { GitHubConfig } from './types.js';
 import {
-  getFileSha, getBranchSha, createBranch, commitFile,
+  getFileSha, getBranchSha, createBranch, commitFile, deleteFile, listRepoTree,
   createPullRequest, updatePullRequest, listPullRequests, getPullRequest, getPRFiles, getFileContent, parsePRUrl
 } from './client.js';
 import { getTag } from '../adobe/unified-tags-client.js';
@@ -117,6 +117,71 @@ function applyMetadataPatch(content: Record<string, unknown>, patches: unknown):
   return out;
 }
 
+// ─── Relocation prune ─────────────────────────────────────────────────────────
+// The repo path is derived from an asset's folder placement AT WRITE TIME
+// (assetFilePath). Filing a previously-unfiled asset into a folder — or moving it
+// between folders — therefore writes a FRESH file at the new path and, without this
+// prune, ORPHANS the file at the old path. That is exactly the create-at-root →
+// file-into-folder-later pattern: create commits <type>/<name>.json, a later
+// patch of /parentFolderId commits <type>/<folder>/<name>.json, and the root copy
+// is left behind.
+//
+// After a create/update/patch commits an asset to its canonical path, remove any
+// OTHER copy of the SAME asset. Candidates are same-basename files (a folder move
+// keeps the asset name, hence the filename) within the asset-type subtree, and each
+// is CONFIRMED by _meta.ajoId before deletion so a genuinely different asset that
+// happens to share a name under another folder is never touched. Best-effort: any
+// failure is logged and swallowed — a failed prune only leaves an orphan (today's
+// behavior); it never fails the write that already succeeded.
+async function pruneRelocatedCopies(
+  config: GitHubConfig,
+  branch: string,
+  sandboxName: string,
+  toolName: string,
+  keepPath: string,
+  ajoId: string | undefined,
+  authorEmail: string
+): Promise<void> {
+  const { token, owner, repo } = config;
+  if (!ajoId) return; // no stable identity to match on → cannot safely prune
+  try {
+    const typeDirPrefix = `${sandboxName}/${assetTypeDir(toolName)}/`;
+    const basename = keepPath.slice(keepPath.lastIndexOf('/') + 1);
+    const branchSha = await getBranchSha(token, owner, repo, branch);
+    const { tree, truncated } = await listRepoTree(token, owner, repo, branchSha);
+    if (truncated) {
+      logger.warn('GitHub sync: repo tree truncated during relocation prune; some orphans may remain', {
+        tool: toolName, keepPath, sandbox: sandboxName
+      });
+    }
+    const candidates = tree.filter(e =>
+      e.type === 'blob' &&
+      e.path !== keepPath &&
+      e.path.startsWith(typeDirPrefix) &&
+      e.path.slice(e.path.lastIndexOf('/') + 1) === basename
+    );
+    for (const c of candidates) {
+      // Confirm it is the SAME asset (identical AJO id) before deleting.
+      const payload = await readCommittedPayload(token, owner, repo, c.path, branch);
+      const meta = payload?._meta as { ajoId?: unknown } | undefined;
+      if (meta?.ajoId !== ajoId) continue;
+      await deleteFile(
+        token, owner, repo, c.path, c.sha,
+        `${toolName}: relocated ${basename} → ${keepPath}; remove stale copy [${authorEmail}]`,
+        branch
+      );
+      logger.info('GitHub sync: removed stale relocated copy', {
+        from: c.path, to: keepPath, sandbox: sandboxName, ajoId
+      });
+    }
+  } catch (err) {
+    logger.warn('GitHub sync: relocation prune failed (non-fatal)', {
+      tool: toolName, keepPath, sandbox: sandboxName,
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
+}
+
 // ─── Audit Trail (non-blocking) ──────────────────────────────────────────────
 
 /**
@@ -204,6 +269,9 @@ export async function commitAuditTrail(
         defaultBranch,
         existingSha
       );
+      // This write may have filed the asset into a folder (or moved it), changing its
+      // canonical path — remove any stale copy left at the previous path.
+      await pruneRelocatedCopies(config, defaultBranch, sandboxName, toolName, filePath, resultId ?? argId, authorEmail);
     }
 
     logger.info('GitHub audit trail committed', { tool: toolName, filePath, sandbox: sandboxName });
@@ -320,6 +388,13 @@ export async function createApprovalPR(
     branch,
     existingSha
   );
+  // If this approval-gate write files/moves an asset into a folder, stage removal of any
+  // stale copy at its previous path onto the PR branch so merging cleans up the orphan
+  // (deploy_merged_changes skips removed files, so it never replays a spurious delete).
+  // Skipped for promotion (it passes its own branchName and manages its own PR flow).
+  if (!isDeleteOp(toolName) && !branchName) {
+    await pruneRelocatedCopies(config, branch, sandboxName, toolName, filePath, argId, authorEmail);
+  }
 
   const operationLabel = toolName.replace(/_/g, ' ');
   const prTitle = `[AJO] ${operationLabel}: ${argName}`;

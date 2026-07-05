@@ -21,6 +21,8 @@ jest.mock('../../src/github/client', () => ({
   getFileSha: jest.fn().mockResolvedValue('existingsha'),
   getFileContent: jest.fn(),
   commitFile: jest.fn().mockResolvedValue(undefined),
+  deleteFile: jest.fn().mockResolvedValue(undefined),
+  listRepoTree: jest.fn().mockResolvedValue({ tree: [], truncated: false }),
   createPullRequest: jest.fn().mockResolvedValue({ number: 7, html_url: 'https://github.com/o/r/pull/7' }),
   updatePullRequest: jest.fn().mockResolvedValue(undefined),
   listPullRequests: jest.fn().mockResolvedValue([]),
@@ -28,7 +30,7 @@ jest.mock('../../src/github/client', () => ({
 }));
 
 import { createApprovalPR, commitAuditTrail } from '../../src/github/sync';
-import { commitFile, getFileSha, getFileContent, createBranch, createPullRequest, updatePullRequest, listPullRequests, getPRFiles } from '../../src/github/client';
+import { commitFile, getFileSha, getFileContent, deleteFile, listRepoTree, createBranch, createPullRequest, updatePullRequest, listPullRequests, getPRFiles } from '../../src/github/client';
 
 const config = { token: 't', owner: 'o', repo: 'r', defaultBranch: 'main', requireApproval: true } as never;
 const committedPath = () => (commitFile as jest.Mock).mock.calls[0][3] as string;
@@ -45,6 +47,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   (getFileSha as jest.Mock).mockResolvedValue('existingsha');
   (getFileContent as jest.Mock).mockResolvedValue(PRIOR_FRAGMENT);
+  (deleteFile as jest.Mock).mockResolvedValue(undefined);
+  (listRepoTree as jest.Mock).mockResolvedValue({ tree: [], truncated: false });
   (createPullRequest as jest.Mock).mockResolvedValue({ number: 7, html_url: 'https://github.com/o/r/pull/7' });
   (listPullRequests as jest.Mock).mockResolvedValue([]);
   (getPRFiles as jest.Mock).mockResolvedValue([]);
@@ -229,5 +233,69 @@ describe('content mirror — audit trail (commitAuditTrail)', () => {
     expect(body.fragment.content).toBe('<div>HERO BODY</div>');
     // Audit-trail files are pure mirrors (no deploy) — no patch plumbing leaks in.
     expect(body.patches).toBeUndefined();
+  });
+});
+
+// Filing a previously-unfiled asset into a folder (or moving it between folders) changes
+// its canonical repo path. The mirror writes a fresh file at the new path; without a prune
+// the file at the OLD path is orphaned (the create-at-root → file-into-folder pattern).
+describe('relocation prune (remove the stale copy after a folder move)', () => {
+  const AJO_ID = 'b9426d74-aaaa';
+  const ROOT = 'prod/content-fragments/LM_PD_ClaudeReview_Hero.json';               // old (orphan) path
+  const FOLDERED = 'prod/content-fragments/LM/PD/ClaudeReview/LM_PD_ClaudeReview_Hero.json'; // new canonical path
+  const fileWithId = (id: unknown) => JSON.stringify({
+    _meta: { operation: 'create_content_fragment', ajoId: id },
+    name: 'LM_PD_ClaudeReview_Hero', fragment: { content: '<div>x</div>' }
+  });
+
+  beforeEach(() => {
+    (listRepoTree as jest.Mock).mockResolvedValue({
+      tree: [
+        { path: ROOT, type: 'blob', sha: 'rootblob' },
+        { path: FOLDERED, type: 'blob', sha: 'foldblob' },
+        { path: 'prod/content-fragments/LM/PD/ClaudeReview/OTHER.json', type: 'blob', sha: 'otherblob' },
+      ],
+      truncated: false,
+    });
+    (getFileContent as jest.Mock).mockResolvedValue(fileWithId(AJO_ID));
+  });
+
+  const fileIntoFolder = () => commitAuditTrail(
+    config, 'prod', 'patch_content_fragment',
+    { fragmentId: AJO_ID, etag: '"e"', patches: [{ op: 'add', path: '/parentFolderId', value: 'folder-1' }] },
+    { success: true }, 'me@x', 'LM/PD/ClaudeReview', undefined, 'LM_PD_ClaudeReview_Hero'
+  );
+
+  test('deletes the stale root copy (same ajoId) by its blob sha, keeping the foldered file', async () => {
+    await fileIntoFolder();
+    expect((commitFile as jest.Mock).mock.calls[0][3]).toBe(FOLDERED); // committed to the new path
+    expect(deleteFile).toHaveBeenCalledWith('t', 'o', 'r', ROOT, 'rootblob', expect.any(String), 'main');
+    // the just-written canonical file is never deleted, and a different-named sibling is untouched
+    const deleted = (deleteFile as jest.Mock).mock.calls.map(c => c[3]);
+    expect(deleted).not.toContain(FOLDERED);
+    expect(deleted).not.toContain('prod/content-fragments/LM/PD/ClaudeReview/OTHER.json');
+  });
+
+  test('does NOT delete a same-named file that belongs to a DIFFERENT asset', async () => {
+    (getFileContent as jest.Mock).mockImplementation(async (_t, _o, _r, path: string) =>
+      fileWithId(path === ROOT ? 'a-different-asset' : AJO_ID)
+    );
+    await fileIntoFolder();
+    expect(deleteFile).not.toHaveBeenCalled();
+  });
+
+  test('a create/patch with no resolvable id skips the scan entirely (no listRepoTree)', async () => {
+    await commitAuditTrail(
+      config, 'prod', 'create_content_fragment',
+      { name: 'BrandNew', type: 'html', channels: ['email'] }, {}, 'me@x', undefined, undefined, undefined
+    );
+    expect(listRepoTree).not.toHaveBeenCalled();
+    expect(deleteFile).not.toHaveBeenCalled();
+  });
+
+  test('a failed prune never fails the write (best-effort)', async () => {
+    (listRepoTree as jest.Mock).mockRejectedValue(new Error('tree listing blew up'));
+    await expect(fileIntoFolder()).resolves.toBe(true); // commit still reported success
+    expect(commitFile).toHaveBeenCalled();
   });
 });

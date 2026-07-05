@@ -22,9 +22,10 @@ The worked reference behind every pattern here is a Luma "shopping‑bag price�
 
 ## How to use this FAQ (session posture)
 
-- **Be interactive, not heroic.** Do not guess IDs, schema paths, dataset/event IDs, API keys, or business rules. When a scenario needs a value the input doesn't contain, **ask** (batch related questions — see the master list at the end).
+- **Be interactive, not heroic.** Do not guess IDs, schema paths, dataset/event IDs, API keys, or business rules. When a scenario needs a value the input doesn't contain, **ask** — and batch related questions into a single **interactive form** the user fills in directly in the client UI (see *Collecting answers: present the questions as an interactive form* below), drawing from the master list at the end. Don't dump a wall of plain‑text questions.
 - **Triage first, build second.** Scan the input, list the scenarios you detect, tell the user your plan, ask the open questions, *then* build section by section.
 - **Never invent AJO syntax, function names, attribute paths, or fragment/dataset IDs.** If unsure whether a function exists, say so and verify against the AJO personalization syntax library (call **`get_personalization_syntax`**) rather than inventing one.
+- **Discover the sandbox's XDM schema paths yourself — don't ask the user for them.** Attribute paths are *discoverable*: enumerate this sandbox's schema with the XDM tools (`list_xdm_union_schemas` → `get_xdm_union_schema` (`full=false`) → `get_xdm_field_group` on each ref) or the **`discover-personalization-paths`** prompt, and resolve every profile attribute path from what actually exists — standard XDM under `profile.…`, tenant‑custom under `profile._<tenantId>.…` (the tenant namespace is discoverable too — don't ask for it). Only ask the user for what the schema *can't* tell you: **which** discovered field a value maps to when it's ambiguous, event‑payload keys, dataset/result IDs, and business rules — never for the paths themselves. If you can't find a path, say so and re‑check the schema; never invent one.
 - **Confirm the two things that break silently:** (1) that the output must open in the Visual Email Designer (native `acr-*` format, not Compatibility mode); (2) that URLs/attributes use **triple‑brace `{{{ }}}`** (unescaped) output, never `{{ }}` (which HTML‑escapes `&`/`=` and breaks links).
 - **Preserve pixel‑exact retail markup inside custom‑HTML components.** Don't rebuild a complex product layout from catalog components; keep the original table markup in a `data-component-id="html"` component and personalize it in place.
 
@@ -32,9 +33,23 @@ The worked reference behind every pattern here is a Luma "shopping‑bag price�
 
 1. **Triage** the input against the recognition checklist below.
 2. **Summarize** to the user: "I see these scenarios: A, B, C. Here's what each becomes in AJO. Before I build, I need to confirm N things."
-3. **Ask** the batched clarifying questions for the detected scenarios.
+3. **Ask** the batched clarifying questions for the detected scenarios — present them as an **interactive form** the user fills in (see *Collecting answers* below), not a wall of text.
 4. **Build** one Structure/section at a time; show the user each and iterate.
 5. **Validate** against the checklist at the end.
+
+### Collecting answers: present the questions as an interactive form
+
+Once you know which scenarios are in play, **do not** paste the clarifying questions as a long plain‑text list — that is tedious to answer and easy to answer only partially. Instead, **generate an interactive form on the fly** so the user can answer everything in one place, directly in the client UI:
+
+- **If the client can render interactive artifacts/UI (e.g., Claude Desktop), build a single self‑contained HTML form artifact** containing only the questions relevant to the scenarios you detected. Pick the right control for each question:
+  - **Radio buttons / dropdown** for either‑or choices — e.g. *event‑triggered* vs *audience‑based*; *journey‑contextual* vs *in‑email* dataset lookup; Visual‑Designer‑editable yes/no; sort ascending/descending.
+  - **Checkboxes** for multi‑select — e.g. which product fields to show (brand/name/price/image/rating/CTA); which tracking types are needed (deep link, mirror page, unsubscribe).
+  - **Short text / textarea** for free‑form values the schema can't give you — UTM conventions, fragment IDs, URL patterns, dataset/result IDs, event‑payload keys. (Do **not** ask for XDM attribute paths or the tenant namespace — discover those from the sandbox schema yourself.)
+  - **Group the fields by topic** (Message type & data, Products/feed, Links & images, Recommendations, Reuse/conditions/compliance, Output), pre‑fill sensible defaults, and clearly mark which answers are **required**.
+- **Make the answers easy to hand back to you.** An artifact's form state is **not** automatically sent back to the chat, so include a **"Copy my answers" button** (or a read‑only summary box) that assembles every response into one structured block the user can paste into the conversation. Wait for that block before you start building.
+- **If the client can't render an interactive form,** fall back to a compact, **numbered** checklist the user can fill in inline (still grouped by topic, defaults shown).
+
+Only include what the detected scenarios actually require — pull the relevant items from each scenario's *"Ask the user if unclear"* list and the master list at the end. Re‑surface the form (or a short follow‑up form) if their answers reveal new scenarios or leave required fields blank.
 
 ### 60‑second triage checklist (what to look for in ANY input)
 
@@ -76,7 +91,7 @@ The worked reference behind every pattern here is a Luma "shopping‑bag price�
 **Ask the user if unclear:**
 - Is this email **triggered by an event** (and if so, what's in the event payload) or **audience/segment‑based**?
 - For each dynamic value: does it live on the **profile**, in the **event payload**, in **journey context**, or in an **AEP dataset** (lookup)?
-- What is the **tenant namespace** (`_yourTenant`) and can you confirm the exact **schema paths**? (Never invent these.)
+- **Don't ask for the tenant namespace or schema paths — discover them** from this sandbox's XDM schema yourself (XDM tools / `discover-personalization-paths`). Only confirm with the user *which* discovered field a value maps to when it's ambiguous. (Never invent paths.)
 - If a dataset lookup is involved: is it a **journey-contextual lookup** (a Lookup action on the canvas whose result is passed into the email as a variable) or an **in-email inline `datasetLookup`** call (run inside the template at render time)? What is the **dataset ID / result ID**, and the **primary key** used to match a row?
 
 ---
@@ -379,7 +394,7 @@ Guards: `isNotNull/isNull` for objects, `isNotEmpty/isEmpty` for strings.
 
 **Message type & data**
 - Is this **event‑triggered** or **audience‑based**? What triggers it, and what's in the event payload?
-- What's the **tenant namespace**, and can you confirm the exact **schema paths** for every dynamic field?
+- **Tenant namespace & schema paths:** discover these from the sandbox's XDM schema yourself (don't ask the user); only confirm *which* discovered field a value maps to when it's ambiguous.
 - For each dynamic value: **profile / journey context / event payload / dataset lookup**?
 - If a dataset lookup is used: **journey-contextual** (Lookup action on the canvas → passed in as a variable) or **in-email inline `datasetLookup`** (dataset id + key)?
 

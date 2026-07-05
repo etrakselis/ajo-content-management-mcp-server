@@ -173,11 +173,44 @@ For other clients (Claude Code, Cursor, Codex), see the **[Client Connection Gui
 
 ---
 
-## 4. Optional: reference AEM-hosted assets in AJO content
+## 4. Start authoring — starter prompts
+
+Once your client is connected, talk to the server in plain language. Below are a few prompts to get going — copy them directly or adapt them.
+
+### Orient yourself first
+
+> "Call `get_server_context` and tell me which tenant and sandbox I'm on, who I'm acting as, and whether write access is enabled — then list the tools you have available, grouped by what they do."
+
+### ⭐ Before building any AJO email — run this first
+
+AJO email content has strict, non-obvious requirements (native Visual Email Designer HTML, real personalization paths, scenario-specific configuration) that live behind dedicated reference tools. The model will sometimes skip those tools and guess, which produces email that opens in **Compatibility mode** (drag-and-drop editing lost) or uses invented personalization. **Paste this at the start of any template or fragment build** so it consults them *before* planning:
+
+> "Before you plan or write anything for this AJO email, call these three tools first and base your entire plan on what they return — do **not** guess or use generic email HTML:
+> 1. **`get_email_scenario_faq`** — triage which personalization scenarios this content involves, then ask me the clarifying questions it lists.
+> 2. **`get_visual_designer_requirements`** — so the HTML stays in AJO's native Visual Email Designer format (never Compatibility mode).
+> 3. **`get_personalization_guidance`** — to decide what to personalize and how.
+>
+> For any personalization, **discover the real XDM schema paths from this sandbox yourself** (use the XDM schema tools / the `discover-personalization-paths` prompt) instead of asking me for them — only ask me *which* discovered field a value maps to when it's genuinely ambiguous. Never invent or guess paths.
+>
+> Keep the output **organized**: file every template and fragment you create into a descriptive **folder** (reuse an existing one, or create one with `create_folder`) and **apply relevant tags** (reuse existing tags via `list_tags`, or add them with `create_tag`) so the assets are easy to find and govern — don't leave them untagged at the folder root.
+>
+> Only after you've reviewed all three tools, discovered the schema paths, and asked me your clarifying questions should you propose a plan for the template build-out — including where you'll file the assets and which tags you'll apply. If you skip any of them, stop and start over."
+
+> **Why this matters:** these reference tools are the guardrails that keep generated content valid and editable in AJO. Anchoring the model to them up front is far more reliable than correcting the output afterward.
+
+### Everyday tasks
+
+> "Show me all the content templates in this sandbox, then summarize what each one is for."
+
+> "Create a new AJO email template for a summer-promo announcement. Remember to triage the scenario, confirm the Visual Designer format, and plan personalization before writing any markup."
+
+---
+
+## 5. Optional: reference AEM-hosted assets in AJO content
 
 If you want the LLM to embed images stored in AEM (Adobe Experience Manager) into AJO content fragments or templates, you need to do three additional things.
 
-### 4a. Upload your assets to an AJO/AEM folder
+### 5a. Upload your assets to an AJO/AEM folder
 
 Before the LLM can reference an image, the image must already exist in AEM and be accessible from your AJO sandbox.
 
@@ -186,7 +219,7 @@ Before the LLM can reference an image, the image must already exist in AEM and b
 
 > Keep all assets for a given campaign in the same folder. This makes it easy to tell the LLM exactly where to look.
 
-### 4b. Add the AEM MCP connector to Claude Desktop
+### 5b. Add the AEM MCP connector to Claude Desktop
 
 The `et-ajo-content-mgmt` server handles AJO content, but it cannot browse AEM Assets on its own. You need the **Adobe Experience Manager** MCP connector running alongside it.
 
@@ -200,7 +233,7 @@ Once connected, you should see both connectors active in the connectors dropdown
 
 <a href="../readme_images/claude-connector-aem-example.png"><img src="../readme_images/claude-connector-aem-example.png" alt="Claude Desktop connectors dropdown showing the AEM MCP connector connected" width="400"></a>
 
-### 4c. Tell the LLM which folder to use
+### 5c. Tell the LLM which folder to use
 
 The LLM does not automatically know where your assets live. When you start a conversation that involves images, mention the folder name explicitly, for example:
 

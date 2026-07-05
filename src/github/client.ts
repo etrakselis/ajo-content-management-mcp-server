@@ -173,6 +173,27 @@ export async function commitFile(
 }
 
 
+// Delete a file (DELETE /contents/:path). Requires the file's current blob sha
+// (the tree-entry sha or a getFileSha result). Used to remove a stale mirror copy
+// left at an asset's previous path after it was filed into / moved between folders
+// (see pruneRelocatedCopies in sync.ts).
+export async function deleteFile(
+  token: string,
+  owner: string,
+  repo: string,
+  filePath: string,
+  sha: string,
+  message: string,
+  branch?: string | null
+): Promise<void> {
+  const body: Record<string, unknown> = { message, sha };
+  if (branch) body.branch = branch;
+  await ghRequest(token, `/repos/${owner}/${repo}/contents/${filePath}`, {
+    method: 'DELETE',
+    body: JSON.stringify(body)
+  });
+}
+
 export async function createPullRequest(
   token: string,
   owner: string,
