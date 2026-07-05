@@ -6,6 +6,12 @@ services:
     # Pin a specific version (e.g. :1.0.0) for reproducibility, or use :latest.
     # Contributors building from source instead: see docker-compose.build.yml.
     image: ghcr.io/etrakselis/ajo-content-mcp:latest
+    # Re-check the registry on every `docker compose up` and pull a newer image if the
+    # published :latest changed — so you always run the most up-to-date build without a
+    # separate `docker compose pull`. Requires network access at start-up. (If you pin a
+    # version tag above, this just re-verifies that exact image; to freeze on the cached
+    # image, set this to `missing` or run `docker compose up -d --pull never`.)
+    pull_policy: always
     container_name: ajo-content-mcp
     ports:
       # Publish to the host's loopback only — never expose to the LAN. The app has

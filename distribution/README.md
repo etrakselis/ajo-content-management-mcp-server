@@ -59,7 +59,7 @@ From this folder (the one containing `docker-compose.yml`):
 docker compose up -d
 ```
 
-The first run **pulls** the multi-arch image automatically and starts it in the background. Docker selects the right build for your CPU (Apple Silicon or Intel/AMD).
+This **pulls the latest published image and starts it** in the background, selecting the right build for your CPU (Apple Silicon or Intel/AMD). The compose file sets `pull_policy: always`, so **every** `docker compose up -d` re-checks the registry and pulls a newer image if one was published — you always run the most up-to-date build, no separate pull step needed. (This means starting the server requires internet access to reach the registry.)
 
 Then open **http://localhost:3000**.
 
@@ -68,17 +68,19 @@ Then open **http://localhost:3000**.
 ### Everyday commands
 
 ```bash
+docker compose up -d       # start — always pulls the latest published image first (pull_policy: always)
+```
+```bash
 docker compose logs -f     # watch logs (Ctrl+C to stop watching)
 ```
 ```bash
-docker compose pull        # fetch the latest published image
-```
-```bash
-docker compose up -d       # start (or restart after a pull)
+docker compose pull        # optional: pre-fetch the latest image without starting
 ```
 ```bash
 docker compose down        # stop and remove the container
 ```
+
+> To pick up a new release, just run `docker compose up -d` again — it re-pulls the latest image and recreates the container if it changed. `docker compose pull` is now optional (kept for pre-fetching or to see what would update).
 
 > **Pin a version** for reproducibility: edit `docker-compose.yml` and replace `:latest` with a specific tag, e.g. `ghcr.io/etrakselis/ajo-content-mcp:1.0.0`.
 
@@ -178,6 +180,20 @@ For other clients (Claude Code, Cursor, Codex), see the **[Client Connection Gui
 ## 4. Start authoring — starter prompts
 
 Once your client is connected, talk to the server in plain language. Below are a few prompts to get going — hover over any prompt and click the **copy** icon in its top-right corner, then paste it into your client (or adapt it).
+
+### 📹 Video walkthrough
+
+New here? Watch the three-part instructional walkthrough for a guided tour of using the server — **click a thumbnail to open the video** (hosted on Adobe SharePoint; sign in with your Adobe account):
+
+<table>
+  <tr>
+    <td align="center"><a href="https://adobe.sharepoint.com/:v:/s/AJO-CONTENT-MANAGEMENTMCPSERVER/IQC6mx8EMLW-TaVK431Vv4CwAYxwVO_deLrO2rxJTRfRioc?e=X7lqBL"><img src="../readme_images/instructional_video_thumbnail.png" alt="MCP Server instructional video — Part 1" width="240"></a><br/><b>Part 1</b></td>
+    <td align="center"><a href="https://adobe.sharepoint.com/:v:/s/AJO-CONTENT-MANAGEMENTMCPSERVER/IQAGK6-aUohdRp1bMT2-mmbsAXEWHon0cyxZ0PYsyCVK74s?e=UFQeDF&amp;nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D"><img src="../readme_images/instructional_video_thumbnail.png" alt="MCP Server instructional video — Part 2" width="240"></a><br/><b>Part 2</b></td>
+    <td align="center"><a href="https://adobe.sharepoint.com/:v:/s/AJO-CONTENT-MANAGEMENTMCPSERVER/IQAAChiVYAcCQYF2DzD93DZAAXlI-8R6h75WEGKlvsIhMsM?e=YfDJp3&amp;nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D"><img src="../readme_images/instructional_video_thumbnail.png" alt="MCP Server instructional video — Part 3" width="240"></a><br/><b>Part 3</b></td>
+  </tr>
+</table>
+
+> The thumbnails link out to Adobe SharePoint — SharePoint videos can't play inline in a GitHub README, so each opens in your browser (Adobe sign-in required).
 
 ### Orient yourself first
 

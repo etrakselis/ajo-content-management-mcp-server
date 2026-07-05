@@ -579,7 +579,7 @@ services:
 docker compose up -d
 ```
 
-The first run **pulls** the image automatically (no `--build`); `-d` runs it detached so your terminal stays free. Docker picks the right build for your CPU architecture.
+This **pulls the latest published image** automatically (no `--build`) and runs it detached (`-d`) so your terminal stays free; Docker picks the right build for your CPU architecture. The `docker-compose.yml` sets `pull_policy: always`, so **every** `docker compose up -d` re-checks the registry and pulls a newer image if one was published — you always run the newest build (this needs internet access at start-up).
 
 The setup UI is now available at **http://localhost:3000** — continue to [Configuration](#mcp-server-configuration).
 
@@ -588,13 +588,15 @@ The setup UI is now available at **http://localhost:3000** — continue to [Conf
 Common follow-up commands:
 
 ```bash
+docker compose up -d       # start — always pulls the latest published image first (pull_policy: always)
 docker compose logs -f     # watch the server logs (Ctrl+C to stop watching)
-docker compose pull        # fetch the latest published image
+docker compose pull        # optional: pre-fetch the latest image without starting
 docker compose down        # stop and remove the container
-docker compose up -d       # start it again later
 ```
 
-> **Want to pin a version?** Replace `:latest` with a specific tag (e.g. `:1.0.0`) for reproducible deployments.
+> **Automatic updates:** `docker-compose.yml` sets `pull_policy: always`, so every `docker compose up -d` re-checks the registry and pulls a newer image if one was published — just re-run it to pick up a new release (requires internet at start-up). `docker compose pull` is therefore optional.
+
+> **Want to pin a version?** Replace `:latest` with a specific tag (e.g. `:1.0.0`) for reproducible deployments — with `pull_policy: always` this simply re-verifies that exact image on each start.
 
 > **Optional — lean tool surface (`MCP_LEAN_MODE`).** By default the server advertises its full tool set, including five individual read-only reference tools: `get_visual_designer_requirements`, `get_aem_image_embed_instructions`, `get_personalization_guidance`, `get_personalization_syntax`, and `get_email_scenario_faq`. If you connect this server **alongside many other MCP servers** — where the client switches to deferred tool loading + semantic search and every advertised tool competes for the model's context budget — set `MCP_LEAN_MODE=1` (uncomment the line in `docker-compose.yml`, then `docker compose up -d`) to collapse those five into a single `get_reference` tool. Call it with a `topic`: `visual-designer`, `aem-image-embed`, `personalization-guidance`, `personalization-syntax` (also accepts a `category`), or `email-scenario-faq`. This trims the advertised tool count with **no loss of capability** — the reference content is byte-for-byte identical, and the original `get_*` tools remain callable by name so nothing that references them breaks. Leave it unset for the full, maximally-discoverable surface (the recommended default for a standalone connection). Accepted truthy values: `1`, `true`, `yes`, `on`.
 
