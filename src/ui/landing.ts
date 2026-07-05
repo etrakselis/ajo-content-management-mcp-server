@@ -826,7 +826,7 @@ export const landingPageHtml = `<!DOCTYPE html>
       z-index: 1;
     }
     .md-dropzone-wrap.drag-over .md-drop-overlay { display: flex; }
-    .md-editor-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+    .md-editor-footer { display: flex; align-items: center; justify-content: flex-start; gap: 12px; margin-top: 8px; }
     .upload-md-btn {
       padding: 4px 10px;
       border: 1px solid var(--adobe-border);
@@ -843,6 +843,9 @@ export const landingPageHtml = `<!DOCTYPE html>
     .md-editor-msg.show { display: block; }
     .md-editor-msg.error { color: #C9252D; }
     .md-editor-msg.warn { color: var(--adobe-warn); }
+    .md-editor-count { font-size: 12px; color: var(--adobe-mid); text-align: right; margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .md-editor-count.near { color: var(--adobe-warn); }
+    .md-editor-count.at { color: #C9252D; font-weight: 500; }
   </style>
 </head>
 <body>
@@ -1025,10 +1028,11 @@ export const landingPageHtml = `<!DOCTYPE html>
       </label>
       <div id="namingConventionEditor" class="naming-editor-wrap" style="display:none">
         <div class="md-dropzone-wrap" id="namingMdDropzone">
-          <textarea id="namingConventionMarkdown" class="md-editor" maxlength="20000" placeholder="Define your naming rules in markdown. The LLM will read and apply these rules to templates, fragments, folders, and tags.">{{DEFAULT_NAMING_CONVENTION}}</textarea>
+          <textarea id="namingConventionMarkdown" class="md-editor" maxlength="25000" placeholder="Define your naming rules in markdown. The LLM will read and apply these rules to templates, fragments, folders, and tags.">{{DEFAULT_NAMING_CONVENTION}}</textarea>
           <div class="md-drop-overlay">Drop .md file here</div>
           <input type="file" id="namingMdFileInput" accept=".md,text/markdown,text/plain" style="display:none" />
         </div>
+        <div class="md-editor-count" id="namingMdCount" aria-live="polite"></div>
         <div class="md-editor-footer">
           <span class="hint">If needed, edit/replace the above default for your use-case, otherwise leave as is.</span>
           <button class="upload-md-btn" type="button" id="namingMdUploadBtn">Upload .md file</button>
@@ -1411,6 +1415,7 @@ export const landingScript = `
       document.getElementById('namingConventionToggle').checked = false;
       document.getElementById('namingConventionEditor').style.display = 'none';
       document.getElementById('namingConventionMarkdown').value = DEFAULT_NAMING_MD;
+      updateNamingCount();
       document.getElementById('githubToggle').checked = false;
       document.getElementById('githubEditor').style.display = 'none';
       document.getElementById('githubToken').value = '';
@@ -1908,8 +1913,20 @@ export const landingScript = `
     // these guards bound file uploads, which set .value programmatically and so
     // bypass maxlength. The byte guard rejects an absurd/binary file before reading
     // it into memory; the char guard is the authoritative check after decoding.
-    const MAX_NAMING_MD_LEN = 20000;
+    const MAX_NAMING_MD_LEN = 25000;
     const MAX_NAMING_FILE_BYTES = 100 * 1024;
+
+    // Live character counter under the naming-convention editor. Function declaration
+    // (hoisted) so it's callable from the form reset above as well as the setup IIFE below.
+    function updateNamingCount() {
+      const ta = document.getElementById('namingConventionMarkdown');
+      const el = document.getElementById('namingMdCount');
+      if (!ta || !el) return;
+      const len = ta.value.length;
+      el.textContent = len.toLocaleString() + ' / ' + MAX_NAMING_MD_LEN.toLocaleString() + ' characters';
+      el.classList.toggle('at', len >= MAX_NAMING_MD_LEN);
+      el.classList.toggle('near', len >= MAX_NAMING_MD_LEN * 0.9 && len < MAX_NAMING_MD_LEN);
+    }
 
     (function setupNamingConvention() {
       const dropzone = document.getElementById('namingMdDropzone');
@@ -1944,6 +1961,7 @@ export const landingScript = `
           }
           clearMsg();
           textarea.value = text;
+          updateNamingCount();
           invalidate();
         };
         reader.onerror = () => showMsg('Could not read that file. Try again or paste the markdown directly.', 'error');
@@ -1980,8 +1998,11 @@ export const landingScript = `
       textarea.addEventListener('input', () => {
         // maxlength caps typed/pasted length; clear any stale over-limit message.
         if (textarea.value.length <= MAX_NAMING_MD_LEN) clearMsg();
+        updateNamingCount();
         invalidate();
       });
+
+      updateNamingCount(); // seed the counter with the pre-filled default on load
     })();
 
     // ─── GitHub integration ────────────────────────────────────────────────────

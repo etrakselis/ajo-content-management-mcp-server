@@ -138,8 +138,8 @@ function parseConfigRequest(body: Record<string, unknown>): ParsedConfigRequest 
 // Over-limit input is REJECTED rather than silently truncated — truncating a
 // governance ruleset mid-sentence would hand the LLM a partial, misleading spec.
 // Counts UTF-16 code units (String#length), matching the client's maxlength so the
-// two layers agree on what "20,000 characters" means.
-const MAX_CONVENTION_MARKDOWN_LEN = 20_000;
+// two layers agree on what "25,000 characters" means.
+const MAX_CONVENTION_MARKDOWN_LEN = 25_000;
 
 type ParsedNamingConvention =
   | { ok: true; value: NamingConventionConfig | undefined }
