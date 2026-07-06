@@ -630,13 +630,18 @@ describe('Template Tools Integration', () => {
     expect(payload.name).toBe('Existing Template');
   });
 
-  test('update_content_template does NOT re-fetch when name is provided (#4)', async () => {
+  test('update_content_template re-fetches to preserve omitted metadata even when name is provided (#4)', async () => {
+    // A full PUT would WIPE any metadata the caller omits, so update re-fetches the current
+    // template and backfills omitted sticky fields (here: description) — even when name is given.
+    mockClient.getTemplate.mockResolvedValue({ data: { id: VALID_UUID, name: 'Given', description: 'Keep me' }, etag: '"v1"' });
     mockClient.updateTemplate.mockResolvedValue({ success: true, etag: '"v2"' });
     await handleUpdateContentTemplate({
       templateId: VALID_UUID, etag: '"v1"', name: 'Given', templateType: 'content', channels: ['email'],
-      template: { subject: 'S', html: { body: '<html></html>' } }
+      template: { subject: 'S', html: { body: '<html></html>' } } // description omitted → backfilled
     });
-    expect(mockClient.getTemplate).not.toHaveBeenCalled();
+    expect(mockClient.getTemplate).toHaveBeenCalledWith(VALID_UUID);
+    const payload = mockClient.updateTemplate.mock.calls[0][1] as { description?: string };
+    expect(payload.description).toBe('Keep me');
   });
 });
 
@@ -934,13 +939,18 @@ describe('Fragment Tools Integration', () => {
     expect(mockClient.updateFragment).not.toHaveBeenCalled();
   });
 
-  test('update_content_fragment does NOT re-fetch when name is provided (#4)', async () => {
+  test('update_content_fragment re-fetches to preserve omitted metadata even when name is provided (#4)', async () => {
+    // A full PUT would WIPE any metadata the caller omits, so update re-fetches the current
+    // fragment and backfills omitted sticky fields (here: description) — even when name is given.
+    mockClient.getFragment.mockResolvedValue({ data: { id: VALID_UUID, name: 'Given', description: 'Keep me' }, etag: '"v1"' });
     mockClient.updateFragment.mockResolvedValue({ success: true, etag: '"v2"' });
     await handleUpdateContentFragment({
       fragmentId: VALID_UUID, etag: '"v1"', name: 'Given', type: 'html', channels: ['email'],
-      fragment: { content: '<div>x</div>' }
+      fragment: { content: '<div>x</div>' } // description omitted → backfilled
     });
-    expect(mockClient.getFragment).not.toHaveBeenCalled();
+    expect(mockClient.getFragment).toHaveBeenCalledWith(VALID_UUID);
+    const payload = mockClient.updateFragment.mock.calls[0][1] as { description?: string };
+    expect(payload.description).toBe('Keep me');
   });
 
   test('create_content_fragment validateOnly returns warnings WITHOUT persisting (Issue 4b dry-run)', async () => {
