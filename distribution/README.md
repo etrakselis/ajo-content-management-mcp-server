@@ -26,6 +26,8 @@ Run the **AJO Content MCP Server** from its pre-built container image — no sou
 
 If you haven't already, clone the repository and navigate into the distribution folder.
 
+> **Authenticate to GitHub first.** This repository requires GitHub access, so the `git clone` below fails with *"repository not found / could not be reached"* unless you're signed in. The simplest fix is the **GitHub CLI**: install it ([cli.github.com](https://cli.github.com/)), then run **`gh auth login`** — choose **HTTPS** and answer **Yes** to *"Authenticate Git with your GitHub credentials?"*, which configures git so the clone just works. (An SSH key or an existing git credential helper works too.)
+
 **macOS** (Terminal):
 ```bash
 git clone --depth 1 --filter=blob:none --sparse https://github.com/etrakselis/ajo-content-management-mcp-server.git && cd ajo-content-management-mcp-server && git sparse-checkout set distribution && cd distribution
