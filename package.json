@@ -24,7 +24,7 @@
     "isomorphic-git": "^1.38.5",
     "memfs": "^4.57.8",
     "prom-client": "^15.1.0",
-    "uuid": "^9.0.0",
+    "uuid": "^11.1.1",
     "winston": "^3.11.0",
     "zod": "^3.22.4"
   },
@@ -34,7 +34,6 @@
     "@types/jest": "^29.5.10",
     "@types/node": "^24.0.0",
     "@types/supertest": "^6.0.2",
-    "@types/uuid": "^9.0.7",
     "@typescript-eslint/eslint-plugin": "^6.13.1",
     "@typescript-eslint/parser": "^6.13.1",
     "eslint": "^8.55.0",
@@ -43,5 +42,8 @@
     "ts-jest": "^29.1.1",
     "ts-node": "^10.9.1",
     "typescript": "^5.3.2"
+  },
+  "overrides": {
+    "minimatch@9": "^9.0.7"
   }
 }
