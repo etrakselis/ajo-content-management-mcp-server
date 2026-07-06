@@ -39,10 +39,12 @@ describe('getFileSha — 404 is expected, not a warning', () => {
     );
   });
 
-  test('an unexpected status (500) still logs at warn', async () => {
+  test('an unexpected status (500) PROPAGATES — not swallowed as "file absent"', async () => {
     fetchMock.mockResolvedValue(ghResponse(500, { message: 'Server Error' }));
-    const sha = await getFileSha('tok', 'o', 'r', 'a/b.json');
-    expect(sha).toBeNull(); // getFileSha still swallows the throw
+    // A transient 5xx must NOT be reported as null ("file doesn't exist"); that would
+    // make callers commit a tombstone without preserved content, PUT without a sha, or
+    // skip a delete. Only a real 404 returns null.
+    await expect(getFileSha('tok', 'o', 'r', 'a/b.json')).rejects.toThrow(/GitHub API 500/);
     expect(logger.warn).toHaveBeenCalledWith(
       'GitHub API error',
       expect.objectContaining({ status: 500 })

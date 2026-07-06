@@ -155,6 +155,37 @@ describe('executePromotion — deploy merged PR then advance a phase', () => {
   });
 });
 
+describe('executePromotion — merged PR that fails to deploy is NOT marked deployed (regression)', () => {
+  test('an empty/failed deploy leaves the PR unlabeled and blocks the asset so it retries', async () => {
+    mockRepo({
+      [`${SB}/content-fragments/Hero.json`]: {
+        name: 'Hero', type: 'html', channels: ['email'], fragment: { content: '<div>hero</div>' }
+      }
+    });
+    // A merged-but-undeployed PR exists for Hero...
+    (listPullRequests as jest.Mock).mockResolvedValue([
+      { number: 7, state: 'closed', html_url: 'https://github.com/o/r/pull/7', head: { ref: 'ajo-promote-fragment-Hero-123' } }
+    ]);
+    (getPullRequest as jest.Mock).mockResolvedValue({
+      number: 7, merged: true, labels: [], html_url: 'https://github.com/o/r/pull/7'
+    });
+    (readMergedPRContent as jest.Mock).mockResolvedValue([
+      { toolName: 'create_content_fragment', args: { name: 'Hero', type: 'html', channels: ['email'], fragment: { content: '<div>hero</div>' } } }
+    ]);
+    // ...but applying it fails (deployOp returns undefined → deployMergedPr yields no results).
+    (handleCreateContentFragment as jest.Mock).mockResolvedValue({ success: false, error: { code: 'VALIDATION_ERROR', message: 'nope' } });
+
+    const res = await executePromotion({ fragmentName: 'Hero' }, SB, TB, false);
+
+    expect(res.deployed).toEqual([]);
+    // The fix: the deployed-label must NOT be stamped when nothing applied — otherwise the
+    // PR flips to merged-deployed and the asset is skipped (update silently lost) forever.
+    expect(addLabelsToPr).not.toHaveBeenCalled();
+    expect(res.status).toBe('blocked');
+    expect(res.blockers.join(' ')).toMatch(/did not deploy cleanly/i);
+  });
+});
+
 describe('executePromotion — rejected PR', () => {
   test('a closed-unmerged leaf PR blocks the leaf and everything that embeds it', async () => {
     mockRepo(newsletterEmbeddingHero());

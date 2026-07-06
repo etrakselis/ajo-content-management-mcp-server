@@ -38,7 +38,11 @@ async function ghRequest(
     const meta = { method, path, status: res.status, message: msg };
     if (quietStatuses.includes(res.status)) logger.debug('GitHub API expected non-2xx', meta);
     else logger.warn('GitHub API error', meta);
-    throw new Error(`GitHub API ${res.status} on ${method} ${path}: ${msg}`);
+    // Attach the HTTP status so a caller can branch on it (e.g. getFileSha treats ONLY a
+    // 404 as "file absent" and must propagate every other status) without parsing the message.
+    const error = new Error(`GitHub API ${res.status} on ${method} ${path}: ${msg}`) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
   }
   const ct = res.headers.get('content-type') ?? '';
   if (ct.includes('json')) return res.json();
@@ -124,8 +128,13 @@ export async function getFileSha(
     // is the normal case for a new file on a fresh PR branch — quiet it (debug, not warn).
     const data = await ghRequest(token, `/repos/${owner}/${repo}/contents/${path}${q}`, {}, [404]) as { sha: string };
     return data.sha ?? null;
-  } catch {
-    return null;
+  } catch (err) {
+    // ONLY a 404 means "file absent" (→ caller creates it). Any OTHER failure — a 5xx, a
+    // 403 rate-limit, an auth blip — must NOT be reported as absent: doing so makes callers
+    // commit a delete tombstone with no preserved content, PUT without a sha (→ 422), or
+    // skip a delete entirely, all while the operation still looks successful. Propagate it.
+    if ((err as { status?: number })?.status === 404) return null;
+    throw err;
   }
 }
 

@@ -120,11 +120,14 @@ export async function resolveAjoFolderSegments(folderType: string, folderId: str
 
   const segments: string[] = [];
   let currentId: string | undefined = folderId;
-  for (let depth = 0; depth < 12 && currentId; depth++) {
+  let brokeEarly = false;
+  let depth = 0;
+  for (; depth < 12 && currentId; depth++) {
     const folder = await getFolder(folderType, currentId) as Record<string, unknown>;
     const name = typeof folder.name === 'string' ? folder.name : undefined;
     if (!name) {
       logger.warn('resolveAjoFolderSegments: unexpected folder response shape', { folderType, folderId: currentId, keys: Object.keys(folder) });
+      brokeEarly = true;
       break;
     }
     segments.unshift(name);
@@ -132,7 +135,18 @@ export async function resolveAjoFolderSegments(folderType: string, folderId: str
     currentId = typeof parent === 'string' ? parent : undefined;
   }
 
-  folderPathCache.set(cacheKey, segments);
+  // Cache ONLY a fully-resolved walk — one that reached the root (currentId became falsy)
+  // within the depth budget and never hit an unexpected shape. A walk that broke early,
+  // hit the depth==12 cap, or a parent-pointer cycle yields a TRUNCATED path; caching it
+  // would poison every later lookup with a wrong directory (committed as the GitHub mirror
+  // path) until the next folder mutation clears the cache. Returning the best-effort
+  // segments UNCACHED lets the next call retry instead of persisting a bad result.
+  const complete = !brokeEarly && !currentId;
+  if (complete) {
+    folderPathCache.set(cacheKey, segments);
+  } else {
+    logger.warn('resolveAjoFolderSegments: incomplete folder walk — not caching (will retry next call)', { folderType, folderId, depthReached: depth });
+  }
   return segments;
 }
 

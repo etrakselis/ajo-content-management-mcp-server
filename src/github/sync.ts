@@ -551,6 +551,10 @@ export interface PendingOperation {
   toolName: string;
   args: Record<string, unknown>;
   filePath: string;
+  // The sandbox this change was PROPOSED for (from _meta.sandbox, falling back to the
+  // committed path's leading segment). The deploy handler compares it to the active
+  // sandbox so a merged PR can't be applied to a sandbox it wasn't reviewed for.
+  sandbox?: string;
 }
 
 /**
@@ -598,7 +602,12 @@ export async function readMergedPRContent(
 
       // Strip _meta so what remains is the clean args for the tool handler.
       const { _meta: _omit, ...args } = parsed;
-      results.push({ toolName: meta.operation, args, filePath: file.filename });
+      // The sandbox the change was proposed for: _meta.sandbox is authoritative; fall
+      // back to the committed path's leading segment (<sandbox>/<type>/…) for older files.
+      const proposedSandbox = typeof meta.sandbox === 'string' && meta.sandbox
+        ? meta.sandbox
+        : (file.filename.includes('/') ? file.filename.split('/')[0] : undefined);
+      results.push({ toolName: meta.operation, args, filePath: file.filename, sandbox: proposedSandbox });
     } catch (err) {
       logger.warn('Failed to parse PR file', {
         filename: file.filename,

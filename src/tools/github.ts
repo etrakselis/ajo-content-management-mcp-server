@@ -199,6 +199,29 @@ export async function handleDeployMergedChanges(args: unknown) {
     const author = getConfiguredAuthorEmail();
 
     const operations = await readMergedPRContent(config, prUrl.trim());
+
+    // Wrong-sandbox guard: the deploy handlers write to whatever sandbox is ACTIVE now
+    // (the Adobe client reads it live), but this PR was proposed for a specific sandbox.
+    // If the active sandbox was switched since the PR was proposed, applying it here would
+    // land the reviewed changes in the wrong sandbox. Refuse the whole deploy — before any
+    // write — rather than silently mis-target it.
+    if (sandbox) {
+      const mismatched = [...new Set(
+        operations.map(op => op.sandbox).filter((s): s is string => !!s && s !== sandbox)
+      )];
+      if (mismatched.length > 0) {
+        return {
+          success: false,
+          error: {
+            code: 'SANDBOX_MISMATCH',
+            message: `This PR proposes changes for sandbox "${mismatched.join('", "')}", but the server is currently pointed at "${sandbox}". ` +
+              `Switch the active sandbox to "${mismatched[0]}" (setup page) and retry, so the merged changes are deployed to the sandbox they were reviewed for. ` +
+              `Refusing to deploy to avoid a wrong-sandbox write.`
+          }
+        };
+      }
+    }
+
     const results: Array<{ toolName: string; filePath: string; success: boolean; result: unknown }> = [];
 
     for (const op of operations) {

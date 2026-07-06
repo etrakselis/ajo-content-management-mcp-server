@@ -681,11 +681,21 @@ export async function executePromotion(
     if (st.kind !== 'merged-undeployed') continue;
     try {
       const results = await deployMergedPr(config, st.url, targetSandbox);
-      const num = parsePRUrlNumber(st.url);
-      if (num) await addLabelsToPr(config.token, config.owner, config.repo, num, [DEPLOYED_LABEL]);
-      const mine = results.find(r => r.type === a.type && normName(r.name) === normName(a.name)) ?? results[0];
-      if (mine) { live.set(k, mine.targetId); deployedKeys.add(k); deployed.push({ name: a.name, type: a.type, targetId: mine.targetId, action: mine.action }); }
-      else { blockers.push(`${a.name}: merged PR ${st.url} deployed but returned no usable result.`); blockedKeys.add(k); }
+      // Match this asset's op; fall back to the sole result ONLY on a single-op PR
+      // (promotion PRs are single-op). Never guess on a multi-op PR — that could map the
+      // asset to a DIFFERENT asset's target id.
+      const mine = results.find(r => r.type === a.type && normName(r.name) === normName(a.name))
+        ?? (results.length === 1 ? results[0] : undefined);
+      if (mine) {
+        // Stamp the deployed-label ONLY after confirming an op actually applied. Labeling
+        // an empty/failed deploy would flip the PR to "merged-deployed" and permanently
+        // skip the retry on the next run — silently losing an update whose deployOp
+        // returned undefined (a persistent CONFLICT or a handler success:false).
+        const num = parsePRUrlNumber(st.url);
+        if (num) await addLabelsToPr(config.token, config.owner, config.repo, num, [DEPLOYED_LABEL]);
+        live.set(k, mine.targetId); deployedKeys.add(k); deployed.push({ name: a.name, type: a.type, targetId: mine.targetId, action: mine.action });
+      }
+      else { blockers.push(`${a.name}: merged PR ${st.url} did not deploy cleanly — no operation applied (check target write access and the PR contents). Left unlabeled so it is retried on the next run.`); blockedKeys.add(k); }
     } catch (err) {
       blockers.push(`${a.name}: deploying merged PR ${st.url} failed: ${err instanceof Error ? err.message : String(err)}`);
       blockedKeys.add(k);

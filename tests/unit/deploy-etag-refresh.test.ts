@@ -81,6 +81,30 @@ describe('deploy_merged_changes re-fetches a fresh etag for update ops', () => {
     expect(mockUpdate.mock.calls[0][0].etag).not.toBe('STALE');
   });
 
+  test('refuses to deploy a PR proposed for a DIFFERENT sandbox (no AJO write attempted)', async () => {
+    // The active sandbox is 'sbx'; this op was proposed for 'other-sbx'.
+    mockReadPR.mockResolvedValue([{ ...updateOp, filePath: 'other-sbx/content-fragments/F.json', sandbox: 'other-sbx' }]);
+
+    const result = await handleDeployMergedChanges({ prUrl: 'https://github.com/o/r/pull/9' }) as { success: boolean; error?: { code?: string } };
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('SANDBOX_MISMATCH');
+    // Guard runs BEFORE the deploy loop — nothing is fetched or written.
+    expect(mockGetFragment).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  test('deploys when the PR sandbox matches the active sandbox', async () => {
+    mockReadPR.mockResolvedValue([{ ...updateOp, sandbox: 'sbx' }]);
+    mockGetFragment.mockResolvedValue({ data: { id: 'id1' }, etag: 'FRESH' });
+    mockUpdate.mockResolvedValue({ success: true, id: 'id1' });
+
+    const result = await handleDeployMergedChanges({ prUrl: 'https://github.com/o/r/pull/1' }) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+  });
+
   test('retries once with a re-fetched etag on a CONFLICT', async () => {
     mockReadPR.mockResolvedValue([updateOp]);
     mockGetFragment
