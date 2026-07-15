@@ -191,6 +191,35 @@ describe('Express App', () => {
       expect(res.body.authorEmail).toBe('author@example.com');
     });
 
+    test('accepts flat environment-variable credentials export', async () => {
+      const res = await request(app).post('/api/configure').send({
+        credentials: {
+          ORG_ID: 'org@AdobeOrg',
+          CLIENT_ID: 'my-api-key',
+          CLIENT_SECRETS: ['my-secret'],
+          SCOPES: ['openid', 'AdobeID', 'read_organizations'],
+          TECHNICAL_ACCOUNT_ID: 'acct@techacct.adobe.com'
+        },
+        sandboxName: 'my-sandbox',
+        authorEmail: 'author@example.com'
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    test('flat export missing ORG_ID reports IMS_ORG as missing', async () => {
+      const res = await request(app).post('/api/configure').send({
+        credentials: {
+          CLIENT_ID: 'my-api-key',
+          CLIENT_SECRETS: ['my-secret']
+        },
+        sandboxName: 'my-sandbox',
+        authorEmail: 'author@example.com'
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/IMS_ORG/);
+    });
+
     test('returns 400 when author email is missing', async () => {
       const res = await request(app).post('/api/configure').send({
         credentials: {

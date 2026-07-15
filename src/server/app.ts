@@ -71,7 +71,7 @@ function extractCredentials(credentials: unknown): ExtractedCredentials {
     if (oauth.technical_account_id) creds.TECHNICAL_ACCOUNT_ID = oauth.technical_account_id;
     if (oauth.scopes) creds.SCOPES = oauth.scopes;
     if (project.org?.ims_org_id) creds.IMS_ORG = project.org.ims_org_id;
-  } else {
+  } else if ('values' in parsed.data) {
     // Legacy flat key/value export.
     for (const val of parsed.data.values) {
       if (!val.enabled && val.enabled !== undefined) continue;
@@ -86,6 +86,20 @@ function extractCredentials(credentials: unknown): ExtractedCredentials {
           : String(val.value);
       }
     }
+  } else {
+    // Flat top-level environment-variable export. Same OAuth Server-to-Server
+    // login material as the other formats, just named with UPPER_SNAKE_CASE keys:
+    // CLIENT_ID -> API_KEY, CLIENT_SECRETS[0] (or CLIENT_SECRET) -> CLIENT_SECRET,
+    // ORG_ID (or IMS_ORG) -> IMS_ORG. TECHNICAL_ACCOUNT_EMAIL is identity metadata
+    // that IMS does not need for the client_credentials grant, so it is ignored.
+    const env = parsed.data;
+    creds.API_KEY = env.CLIENT_ID;
+    const secret = env.CLIENT_SECRETS?.[0] ?? env.CLIENT_SECRET;
+    if (secret) creds.CLIENT_SECRET = secret;
+    if (env.TECHNICAL_ACCOUNT_ID) creds.TECHNICAL_ACCOUNT_ID = env.TECHNICAL_ACCOUNT_ID;
+    if (env.SCOPES) creds.SCOPES = env.SCOPES;
+    const org = env.ORG_ID ?? env.IMS_ORG;
+    if (org) creds.IMS_ORG = org;
   }
 
   const required: (keyof AdobeCredentials)[] = ['API_KEY', 'IMS_ORG'];

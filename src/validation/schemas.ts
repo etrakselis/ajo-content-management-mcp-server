@@ -343,10 +343,30 @@ export const ProjectCredentialsFileSchema = z.object({
   }).passthrough()
 });
 
-// Accept both the current project export and the legacy flat key/value export.
+// Flat environment-variable export: a single top-level object of UPPER_SNAKE_CASE
+// keys, as emitted by some Adobe tooling / hand-authored .env-style credential
+// files (CLIENT_ID / CLIENT_SECRETS / ORG_ID / SCOPES / TECHNICAL_ACCOUNT_ID).
+// CLIENT_ID is the discriminator (neither the project nor the legacy export carry
+// it at the top level). CLIENT_SECRETS is the plural array form seen in the wild;
+// the singular CLIENT_SECRET and IMS_ORG aliases are tolerated so equivalent files
+// authored either way still load. Unknown keys are stripped, not rejected.
+export const FlatEnvCredentialsFileSchema = z.object({
+  CLIENT_ID: z.string(),
+  CLIENT_SECRETS: z.array(z.string()).optional(),
+  CLIENT_SECRET: z.string().optional(),
+  ORG_ID: z.string().optional(),
+  IMS_ORG: z.string().optional(),
+  SCOPES: z.array(z.string()).optional(),
+  TECHNICAL_ACCOUNT_ID: z.string().optional(),
+  TECHNICAL_ACCOUNT_EMAIL: z.string().optional()
+});
+
+// Accept the current project export, the legacy flat key/value export, and the
+// flat top-level environment-variable export.
 export const CredentialsFileSchema = z.union([
   ProjectCredentialsFileSchema,
-  LegacyCredentialsFileSchema
+  LegacyCredentialsFileSchema,
+  FlatEnvCredentialsFileSchema
 ]);
 
 // ─── Schema Registry (XDM) ──────────────────────────────────────────────────

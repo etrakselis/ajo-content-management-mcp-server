@@ -907,7 +907,7 @@ export const landingPageHtml = `<!DOCTYPE html>
     <div class="step-label">Step 1 — Credentials</div>
     <div class="card">
       <h2>Upload environment file</h2>
-      <p>Select your <code>oauth_server_to_server.json</code> file. Credentials are stored in memory only — never written to disk or logged.</p>
+      <p>Select your credentials file — an Adobe Developer Console project export, an <code>oauth_server_to_server.json</code>, or a flat environment-variables JSON (<code>CLIENT_ID</code> / <code>CLIENT_SECRETS</code> / <code>ORG_ID</code>). Credentials are stored in memory only — never written to disk or logged.</p>
       <div class="dropzone" id="dropzone">
         <input type="file" id="fileInput" accept=".json" />
         <div class="dropzone-icon">
@@ -1339,7 +1339,12 @@ export const landingScript = `
           const oauth = project.workspace && project.workspace.details && Array.isArray(project.workspace.details.credentials)
             ? (project.workspace.details.credentials.find(c => c && c.oauth_server_to_server) || {}).oauth_server_to_server
             : null;
-          const techAcctId = oauth && typeof oauth.technical_account_id === 'string' ? oauth.technical_account_id.trim() : '';
+          // Tech account id lives under the OAuth credential in the project export,
+          // or as a top-level TECHNICAL_ACCOUNT_ID key in the flat env-var export.
+          const techAcctId =
+            (oauth && typeof oauth.technical_account_id === 'string') ? oauth.technical_account_id.trim()
+            : (typeof credentials.TECHNICAL_ACCOUNT_ID === 'string') ? credentials.TECHNICAL_ACCOUNT_ID.trim()
+            : '';
           document.getElementById('techAcctValue').textContent = techAcctId;
           document.getElementById('techAcctRow').style.display = techAcctId ? '' : 'none';
 

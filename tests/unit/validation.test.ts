@@ -254,5 +254,25 @@ describe('Validation Schemas', () => {
       const result = CredentialsFileSchema.safeParse({ name: 'Test' });
       expect(result.success).toBe(false);
     });
+
+    test('accepts flat environment-variable export', () => {
+      const result = CredentialsFileSchema.safeParse({
+        ORG_ID: 'C735552962AB1A800A495FFD@AdobeOrg',
+        CLIENT_SECRETS: ['p8e-secret'],
+        CLIENT_ID: '546fc40eb1fa459f936381a4b9585e81',
+        SCOPES: ['openid', 'AdobeID', 'read_organizations'],
+        TECHNICAL_ACCOUNT_ID: '276381656A3DB8D60A495FC5@techacct.adobe.com',
+        TECHNICAL_ACCOUNT_EMAIL: 'e7da6295@techacct.adobe.com'
+      });
+      expect(result.success).toBe(true);
+    });
+
+    test('rejects flat export missing CLIENT_ID', () => {
+      const result = CredentialsFileSchema.safeParse({
+        ORG_ID: 'org@AdobeOrg',
+        CLIENT_SECRETS: ['secret']
+      });
+      expect(result.success).toBe(false);
+    });
   });
 });
