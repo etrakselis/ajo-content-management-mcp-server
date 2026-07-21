@@ -28,3 +28,4 @@ shop_bag_pd_example.html
 # Maintainer-local mirror-sync scripts (reference internal Adobe repos; never committed
 # so they don't propagate into the mirrored repos). Keeps scripts/build.mjs tracked.
 scripts/sync-*.sh
+CONTENT_PREVIEW_README.md
